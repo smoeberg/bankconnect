@@ -1,0 +1,12 @@
+BankConnectReconcile=Afstemning
+BankConnectImport=Importér
+BankConnectImportOk=Importerede %s transaktioner
+BankConnectImportFailed=Import fejlede
+BankConnectUnmatchedCount=%s uafstemte transaktioner
+BankConnectRunMatching=Kør matching
+BankConnectAwaitingApproval=Afventer godkendelse
+BankConnectApprove=Godkend
+BankConnectReject=Afvis
+BankConnectApproved=Match godkendt — postering sker i næste trin
+BankConnectRejected=Match afvist
+BankConnectNothingPending=Ingen matches afventer godkendelse

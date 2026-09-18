@@ -1,0 +1,12 @@
+BankConnectReconcile=Reconciliation
+BankConnectImport=Import
+BankConnectImportOk=Imported %s transactions
+BankConnectImportFailed=Import failed
+BankConnectUnmatchedCount=%s unmatched transactions
+BankConnectRunMatching=Run matching
+BankConnectAwaitingApproval=Awaiting approval
+BankConnectApprove=Approve
+BankConnectReject=Reject
+BankConnectApproved=Match approved — posting happens in the next step
+BankConnectRejected=Match rejected
+BankConnectNothingPending=No matches pending approval
