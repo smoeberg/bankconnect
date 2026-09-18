@@ -91,8 +91,8 @@ class ReconciliationEngine
         }
 
         $aiResults = $this->ai->matchBatch($aiItems);
-        foreach ($aiResults as $j => $r) {
-            $results[$aiIndexes[$j]] = $r;
+        foreach ($aiResults as $aiKey => $r) {
+            $results[$aiKey] = $r;
         }
 
         ksort($results);

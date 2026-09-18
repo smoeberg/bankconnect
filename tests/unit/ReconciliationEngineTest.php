@@ -34,7 +34,7 @@ class ReconciliationEngineTest extends TestCase
     public function testPartialWhenReferenceMatchesButAmountDiffers(): void
     {
         $engine = $this->engine(null);
-        $r = $engine->reconcile(bcMakeTx(['amount' => -10000.00]), bcMakeCandidates());
+        $r = $engine->reconcile(bcMakeTx(['amount' => -10000.00, 'reference' => 'FA240891']), bcMakeCandidates());
         $this->assertSame('partial', $r->matchType);
         $this->assertSame(0.7, $r->confidence);
         $this->assertSame(1842, $r->suggested[0]['id']);

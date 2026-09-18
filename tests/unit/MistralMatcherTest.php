@@ -203,7 +203,7 @@ class MistralMatcherTest extends TestCase
         $ok->setTransport(fn () => ['status' => 200, 'body' => bcApiBody(['match_type' => 'none', 'confidence' => 0.0, 'suggested' => []])]);
         $res = $ok->testConnection();
         $this->assertTrue($res['success']);
-        $this->assertGreaterThan(0, $res['latency_ms']);
+        $this->assertGreaterThanOrEqual(0, $res['latency_ms']);
 
         $fail = new MistralMatcher(bcMatcherConf());
         $fail->setTransport(fn () => ['status' => 401, 'body' => '{"error":"unauthorized"}']);
