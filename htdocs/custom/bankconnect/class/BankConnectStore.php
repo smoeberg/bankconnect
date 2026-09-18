@@ -66,6 +66,16 @@ class BankConnectStore
 		}
 	}
 
+	public function transactionState(int $txRowid): string
+	{
+		$sql = "SELECT state FROM llx_bankconnect_transaction WHERE rowid = ".(int)$txRowid;
+		$res = $this->db->query($sql);
+		if ($res && $o = $this->db->fetch_object($res)) {
+			return (string)$o->state;
+		}
+		throw new RuntimeException('BankConnect: transaction not found: '.$txRowid);
+	}
+
 	public function audit(int $userId, string $eventType, string $detail): void
 	{
 		$sql = "INSERT INTO llx_bankconnect_audit (datetime_event, fk_user, event_type, detail)

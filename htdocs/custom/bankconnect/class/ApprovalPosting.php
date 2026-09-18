@@ -72,18 +72,18 @@ class ApprovalPosting
 	/** Post all approved-but-unposted matches for an account. Returns count posted. */
 	public function postAllApproved(int $userId, int $bankAccountId): int
 	{
-		$sql = "SELECT m.rowid AS mid
-				FROM llx_bankconnect_match m
-				JOIN llx_bankconnect_transaction t ON t.rowid = m.fk_transaction
-				WHERE t.fk_bank_account = ".(int)$bankAccountId."
-				  AND m.approved_by IS NOT NULL
-				  AND t.state = 'approved'
-				ORDER BY t.tx_date ASC";
+		$sql = "SELECT rowid FROM llx_bankconnect_transaction WHERE fk_bank_account = ".(int)$bankAccountId." AND state = 'approved' ORDER BY tx_date ASC";
 		$res = $this->db->query($sql);
-		$n = 0;
+		$txids = [];
 		while ($res && $o = $this->db->fetch_object($res)) {
-			$this->postApprovedMatch((int)$o->mid, $userId, $bankAccountId);
-			$n++;
+			$txids[] = (int)$o->rowid;
+		}
+		foreach ($txids as $txid) {
+			$mres = $this->db->query("SELECT rowid FROM llx_bankconnect_match WHERE fk_transaction = ".$txid." AND approved_by IS NOT NULL ORDER BY rowid ASC");
+			while ($mres && $mo = $this->db->fetch_object($mres)) {
+				$this->postApprovedMatch((int)$mo->rowid, $userId, $bankAccountId);
+				$n++;
+			}
 		}
 		if ($n > 0) {
 			$this->store->audit($userId, 'posted_batch', $n.' approved matches posted for account '.$bankAccountId);
@@ -95,15 +95,13 @@ class ApprovalPosting
 
 	private function loadMatch(int $rowid): array
 	{
-		$sql = "SELECT m.rowid, m.fk_transaction, m.approved_by, t.state";
-		$sql .= " FROM llx_bankconnect_match m";
-		$sql .= " JOIN llx_bankconnect_transaction t ON t.rowid = m.fk_transaction";
-		$sql .= " WHERE m.rowid = ".(int)$rowid;
+		$sql = "SELECT rowid, fk_transaction, approved_by FROM llx_bankconnect_match WHERE rowid = ".(int)$rowid;
 		$res = $this->db->query($sql);
 		if (!$res || !($o = $this->db->fetch_object($res))) {
 			throw new RuntimeException('BankConnect: match not found: '.$rowid);
 		}
-		return ['rowid' => (int)$o->rowid, 'fk_transaction' => (int)$o->fk_transaction, 'approved_by' => $o->approved_by, 'state' => $o->state];
+		$state = $this->store->transactionState((int)$o->fk_transaction);
+		return ['rowid' => (int)$o->rowid, 'fk_transaction' => (int)$o->fk_transaction, 'approved_by' => $o->approved_by, 'state' => $state];
 	}
 
 	private function loadTransaction(int $rowid): array
