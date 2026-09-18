@@ -115,8 +115,8 @@ class MockDoliDB
 				if (($row[$m[1]] ?? null) !== null) return false;
 				continue;
 			}
-			if (!preg_match('/^(\w+)\s*(=|<|>|<=|>=|LIKE|IN)\s*(.+)$/is', $p, $m)) return false;
-			$field = $m[1]; $op = strtoupper($m[2]); $val = trim($m[3]);
+			if (!preg_match('/^(\w+\.)?(\w+)\s*(=|<|>|<=|>=|LIKE|IN)\s*(.+)$/is', $p, $m)) return false;
+			$field = $m[2]; $op = strtoupper($m[3]); $val = trim($m[4]);
 			if (preg_match('/^IN \((.*)\)$/i', $val, $im)) {
 				$vals = array_map(fn($v) => trim($v, " '"), explode(',', $im[1]));
 				$cur = $row[$field] ?? null;
