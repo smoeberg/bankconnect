@@ -90,7 +90,13 @@ class MockDoliDB
 			if ($keepAll) { $out[] = $r; continue; }
 			$sel = [];
 			foreach ($colList as $c) {
-				// strip aliases for simplicity (x AS y unsupported; keep raw key)
+				$c = trim($c);
+				if (preg_match('/^(\w+(\.\w+)?)\s+AS\s+(\w+)$/i', $c, $am)) {
+					$c = $am[3];
+				} else {
+					// strip table prefix: m.rowid -> rowid
+					$c = preg_replace('/^\w+\./', '', $c);
+				}
 				$sel[$c] = $r[$c] ?? null;
 			}
 			$out[] = $sel;
