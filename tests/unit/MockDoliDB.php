@@ -66,13 +66,23 @@ class MockDoliDB
 	private function select(string $table, string $cols, string $rest)
 	{
 		$rows = $this->rows($table);
-		if (preg_match('/WHERE\s+(.*?)(\s+ORDER BY\s+.*|\s+LIMIT\s+\d+(\s+OFFSET\s+\d+)?)*$/is', $rest, $wm)) {
-			$where = trim($wm[1]);
-			if ($where !== '') {
-				$rows = array_values(array_filter($rows, function ($r) use ($where) {
-					return $this->evalWhere($r, $where);
-				}));
+		// Split WHERE / ORDER BY / LIMIT with string ops (regex with nested
+		// quantifiers catastrophically backtracks on LIKE patterns).
+		$where = null;
+		$wpos = stripos($rest, 'WHERE ');
+		if ($wpos !== false) {
+			$after = substr($rest, $wpos + 6);
+			$cut = strlen($after);
+			foreach (['ORDER BY ', 'LIMIT '] as $kw) {
+				$p = stripos($after, $kw);
+				if ($p !== false && $p < $cut) $cut = $p;
 			}
+			$where = trim(substr($after, 0, $cut));
+		}
+		if ($where !== null && $where !== '') {
+			$rows = array_values(array_filter($rows, function ($r) use ($where) {
+				return $this->evalWhere($r, $where);
+			}));
 		}
 		if (preg_match('/ORDER BY\s+(\w+)\s+(ASC|DESC)/i', $rest, $om)) {
 			$key = $om[1]; $dir = strtoupper($om[2]) === 'DESC' ? -1 : 1;
