@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS llx_bankconnect_match (
 	approved_by integer,
 	approved_at datetime,
 	KEY idx_bc_match_tx (fk_transaction),
+	UNIQUE KEY uk_bc_match_bankentry (fk_bankentry),
 	CONSTRAINT fk_bc_match_tx FOREIGN KEY (fk_transaction) REFERENCES llx_bankconnect_transaction(rowid)
 ) ENGINE=innodb;
 

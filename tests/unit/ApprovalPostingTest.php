@@ -86,6 +86,39 @@ class ApprovalPostingTest extends TestCase
 		$this->assertSame('proposed', $this->db->txState($c));
 	}
 
+
+	public function testPostingRollsBackOnStateTransitionFailure(): void
+	{
+		$txid = $this->db->seedTransaction('2026-09-01', -150.00, 'FAIL1', 'Testkunden ApS');
+		$mid  = $this->db->seedMatch($txid, 'ai', null, 0.92);
+		$this->store->approveMatch($mid, 7);
+
+		$this->db->failNextQueryContaining('UPDATE llx_bankconnect_transaction SET state', 'simulated state failure');
+		$this->expectException(RuntimeException::class);
+		$this->expectExceptionMessage('state update failed');
+		$this->posting->postApprovedMatch($mid, 7, 1);
+		$this->assertSame(0, $this->db->countRows('llx_bank'));
+		$this->assertSame('approved', $this->db->txState($txid));
+	}
+
+	public function testCommittedPostingIdentitySurvivesAuditFailure(): void
+	{
+		$txid = $this->db->seedTransaction('2026-09-01', -150.00, 'AUDIT1', 'Testkunden ApS');
+		$mid  = $this->db->seedMatch($txid, 'ai', null, 0.92);
+		$this->store->approveMatch($mid, 7);
+
+		$this->db->failNextQueryContaining('INSERT INTO llx_bankconnect_audit', 'simulated audit failure');
+		$this->expectException(RuntimeException::class);
+		$this->expectExceptionMessage('audit insert failed');
+		$this->posting->postApprovedMatch($mid, 7, 1);
+		$this->assertSame(1, $this->db->countRows('llx_bank'));
+		$this->assertSame('posted', $this->db->txState($txid));
+
+		$again = $this->posting->postApprovedMatch($mid, 7, 1);
+		$this->assertSame(1, $again);
+		$this->assertSame(1, $this->db->countRows('llx_bank'));
+	}
+
 	public function testAmountSignAndCentsPreserved(): void
 	{
 		$txid = $this->db->seedTransaction('2026-09-01', 250.75, 'IN+', 'Kunde indbetalte');
