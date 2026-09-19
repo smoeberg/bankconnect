@@ -13,6 +13,8 @@ class MockDoliDB
 	private $failQueryContaining = null;
 	private $lastRowCount = 0;
 	private $raceInsertTransaction = null;
+	private $lastRowCount = 0;
+	private $raceInsertTransaction = null;
 
 	public function escape($s)
 	{
@@ -63,6 +65,9 @@ class MockDoliDB
 			$this->lastError = $this->failQueryContaining[1];
 			$this->failQueryContaining = null;
 			return false;
+		}
+		if (preg_match('/^SELECT\s+ROW_COUNT\(\)\s+AS\s+(\w+)$/i', $s, $m)) {
+			return [[$m[1] => $this->lastRowCount]];
 		}
 		if (preg_match('/^SELECT\s+ROW_COUNT\(\)\s+AS\s+(\w+)$/i', $s, $m)) {
 			return [[$m[1] => $this->lastRowCount]];
