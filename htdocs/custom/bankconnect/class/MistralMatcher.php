@@ -23,6 +23,9 @@ class MistralMatcher
     private int $timeout;
     private float $temperature;
     private int $maxTokens;
+    private int $rateLimitMaxCalls = 10;
+    private int $rateLimitWindowSeconds = 60;
+    private string $rateLimitFile;
 
     /** @var callable|null fn(string $method, string $url, array $opts): array{status:int,body:string} */
     private $transport;
@@ -36,6 +39,12 @@ class MistralMatcher
         $this->timeout = max(1, (int) ($g['BANKCONNECT_AI_TIMEOUT'] ?? 8));
         $this->temperature = (float) ($g['BANKCONNECT_AI_TEMPERATURE'] ?? 0.1);
         $this->maxTokens = max(100, (int) ($g['BANKCONNECT_AI_MAX_TOKENS'] ?? 800));
+        
+        // Rate limiting configuration
+        $this->rateLimitMaxCalls = max(1, (int) ($g['BANKCONNECT_AI_RATE_LIMIT_MAX'] ?? 10));
+        $this->rateLimitWindowSeconds = max(1, (int) ($g['BANKCONNECT_AI_RATE_LIMIT_WINDOW'] ?? 60));
+        $this->rateLimitFile = (string) ($g['BANKCONNECT_AI_RATE_LIMIT_FILE']
+            ?? (sys_get_temp_dir().'/bankconnect-ai-rate-limit.json'));
     }
 
     public function setTransport(?callable $transport): void
@@ -61,7 +70,11 @@ class MistralMatcher
 
     private function endpoint(): string
     {
-        return (string) ($this->conf->global['BANKCONNECT_MISTRAL_ENDPOINT'] ?? 'https://api.mistral.ai/v1/chat/completions');
+        $endpoint = (string) ($this->conf->global['BANKCONNECT_MISTRAL_ENDPOINT'] ?? '');
+        if ($endpoint === '') {
+            throw new BankConnectException('BANKCONNECT_MISTRAL_ENDPOINT is not configured. Please set it in Dolibarr configuration.');
+        }
+        return $endpoint;
     }
 
     private function isCloudEndpoint(): bool
@@ -161,6 +174,16 @@ class MistralMatcher
      */
     public function testConnection(): array
     {
+        try {
+            $this->endpoint(); // This will throw if not configured
+        } catch (BankConnectException $e) {
+            return ['success' => false, 'message' => $e->getMessage(), 'latency_ms' => 0];
+        }
+
+        if (!$this->consumeRateLimit()) {
+            return ['success' => false, 'message' => 'AI rate limit exceeded or unavailable', 'latency_ms' => 0];
+        }
+
         $start = microtime(true);
         $body = json_encode([
             'model'      => $this->model(),
@@ -258,6 +281,10 @@ TXT;
 
     private function callApi(array $prompts): ?string
     {
+        if (!$this->consumeRateLimit()) {
+            return null; // Graceful degradation - return none
+        }
+
         $opts = [
             'headers' => $this->headers(),
             'body'    => $prompts[0],
@@ -285,6 +312,70 @@ TXT;
             return null;
         }
         return $content;
+    }
+
+    /**
+     * Persist the AI rate-limit window across PHP requests and processes.
+     * The lock makes the check/update atomic on a single application host.
+     */
+    private function consumeRateLimit(): bool
+    {
+        $dir = dirname($this->rateLimitFile);
+        if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {
+            $this->logger->warning('rate_limit_unavailable');
+            return false;
+        }
+
+        $handle = @fopen($this->rateLimitFile, 'c+');
+        if ($handle === false || !flock($handle, LOCK_EX)) {
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
+            $this->logger->warning('rate_limit_unavailable');
+            return false;
+        }
+
+        try {
+            $contents = stream_get_contents($handle);
+            $state = json_decode($contents ?: '{}', true);
+            if (!is_array($state)) {
+                $state = [];
+            }
+
+            $key = hash('sha256', $this->endpoint().'|'.$this->apiKey());
+            $now = time();
+            $timestamps = [];
+            foreach ((array) ($state[$key] ?? []) as $timestamp) {
+                $timestamp = (int) $timestamp;
+                if ($now - $timestamp < $this->rateLimitWindowSeconds) {
+                    $timestamps[] = $timestamp;
+                }
+            }
+
+            if (count($timestamps) >= $this->rateLimitMaxCalls) {
+                $this->logger->warning('rate_limit_exceeded', [
+                    'calls' => count($timestamps),
+                    'window_seconds' => $this->rateLimitWindowSeconds,
+                ]);
+                return false;
+            }
+
+            $timestamps[] = $now;
+            $state[$key] = $timestamps;
+
+            rewind($handle);
+            ftruncate($handle, 0);
+            fwrite($handle, json_encode($state, JSON_THROW_ON_ERROR));
+            fflush($handle);
+            @chmod($this->rateLimitFile, 0600);
+            return true;
+        } catch (Throwable $e) {
+            $this->logger->warning('rate_limit_unavailable');
+            return false;
+        } finally {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
     }
 
     private function headers(): array
@@ -383,6 +474,10 @@ TXT;
                 return null;
             }
             if (!isset($s['type']) || !is_string($s['type'])) {
+                return null;
+            }
+            $candidateId = (string) $s['id'];
+            if (!isset($validIds[$candidateId])) {
                 return null;
             }
             if (!isset($s['amount']) || !is_numeric($s['amount'])) {
