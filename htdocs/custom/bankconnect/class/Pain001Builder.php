@@ -91,7 +91,8 @@ class Pain001Builder
     public function addTransaction(array $tx): self
     {
         foreach (['endToEndId', 'amount', 'currency', 'creditorName', 'creditorIban'] as $req) {
-            if (empty($tx[$req]) && $tx[$req] !== 0 && $tx[$req] !== 0.0) {
+            if (!array_key_exists($req, $tx)
+                || (empty($tx[$req]) && $tx[$req] !== 0 && $tx[$req] !== 0.0)) {
                 throw new BankConnectException("Missing required transaction field: {$req}");
             }
         }
