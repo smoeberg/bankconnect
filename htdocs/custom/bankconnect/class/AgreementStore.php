@@ -63,11 +63,8 @@ class AgreementStore
      */
     public function saveCertificate(array $data): int
     {
-        // Deactivate previous active certs for this agreement
         $fk = (int) $data['fk_agreement'];
-        $this->db->query(
-            "UPDATE llx_bankconnect_certificate SET is_active = 0 WHERE fk_agreement = $fk AND is_active = 1"
-        );
+        $requestedActive = (int) ($data['is_active'] ?? 1) === 1;
 
         $pem = $this->db->escape($data['certificate_pem']);
         $keyEnc = $this->db->escape($data['private_key_enc']);
@@ -75,16 +72,52 @@ class AgreementStore
             ? "'".$this->db->escape($data['valid_from'])."'" : 'NULL';
         $to = isset($data['valid_to']) && $data['valid_to'] !== null
             ? "'".$this->db->escape($data['valid_to'])."'" : 'NULL';
-        $active = (int) ($data['is_active'] ?? 1);
 
-        $sql = "INSERT INTO llx_bankconnect_certificate"
-             . " (fk_agreement, certificate_pem, private_key_enc, valid_from, valid_to, is_active, date_creation)"
-             . " VALUES ($fk, '$pem', '$keyEnc', $from, $to, $active, NOW())";
-
-        if (!$this->db->query($sql)) {
-            throw new BankConnectException('saveCertificate failed: '.$this->db->lasterror());
+        // Always insert first. A failed insert must never destroy the currently
+        // active certificate. Activation is then switched atomically.
+        if (!$this->db->begin()) {
+            throw new BankConnectException('saveCertificate could not start transaction: '.$this->db->lasterror());
         }
-        return (int) $this->db->last_insert_id('llx_bankconnect_certificate');
+
+        try {
+            $sql = "INSERT INTO llx_bankconnect_certificate"
+                 . " (fk_agreement, certificate_pem, private_key_enc, valid_from, valid_to, is_active, date_creation)"
+                 . " VALUES ($fk, '$pem', '$keyEnc', $from, $to, 0, NOW())";
+
+            if (!$this->db->query($sql)) {
+                throw new BankConnectException('saveCertificate insert failed: '.$this->db->lasterror());
+            }
+
+            $certificateId = (int) $this->db->last_insert_id('llx_bankconnect_certificate');
+
+            if ($requestedActive) {
+                $deactivateSql = "UPDATE llx_bankconnect_certificate"
+                    . " SET is_active = 0"
+                    . " WHERE fk_agreement = $fk AND is_active = 1";
+                if (!$this->db->query($deactivateSql)) {
+                    throw new BankConnectException('saveCertificate deactivation failed: '.$this->db->lasterror());
+                }
+
+                $activateSql = "UPDATE llx_bankconnect_certificate"
+                    . " SET is_active = 1"
+                    . " WHERE rowid = $certificateId AND fk_agreement = $fk";
+                if (!$this->db->query($activateSql)) {
+                    throw new BankConnectException('saveCertificate activation failed: '.$this->db->lasterror());
+                }
+            }
+
+            if (!$this->db->commit()) {
+                throw new BankConnectException('saveCertificate commit failed: '.$this->db->lasterror());
+            }
+
+            return $certificateId;
+        } catch (Throwable $e) {
+            $this->db->rollback();
+            if ($e instanceof BankConnectException) {
+                throw $e;
+            }
+            throw new BankConnectException('saveCertificate failed: '.$e->getMessage());
+        }
     }
 
     public function getAgreement(int $id): ?array

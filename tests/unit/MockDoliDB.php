@@ -34,26 +34,29 @@ class MockDoliDB
 		$this->failQueryContaining = [$needle, $msg];
 	}
 
-	public function begin(): void
+	public function begin(): bool
 	{
 		$this->transactionSnapshot = [
 			'tables' => $this->tables,
 			'nextId' => $this->nextId,
 		];
+		return true;
 	}
 
-	public function commit(): void
+	public function commit(): bool
 	{
 		$this->transactionSnapshot = null;
+		return true;
 	}
 
-	public function rollback(): void
+	public function rollback(): bool
 	{
 		if ($this->transactionSnapshot !== null) {
 			$this->tables = $this->transactionSnapshot['tables'];
 			$this->nextId = $this->transactionSnapshot['nextId'];
 			$this->transactionSnapshot = null;
 		}
+		return true;
 	}
 
 	public function query($sql)
@@ -269,7 +272,7 @@ class MockDoliDB
 				$changed++;
 			}
 		}
-		return $changed > 0 || count($this->rows($table)) === 0;
+		return true;
 	}
 
 	private function deleteRows(string $table, string $where)

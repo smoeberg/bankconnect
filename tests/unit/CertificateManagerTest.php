@@ -130,6 +130,115 @@ class CertificateManagerTest extends TestCase
         $this->assertSame('0010888100007', $agr['bank_connect_id']);
     }
 
+    public function testCertificateInsertFailurePreservesExistingActiveCertificate(): void
+    {
+        $db = new MockDoliDB();
+        $db->tables['llx_bankconnect_agreement'] = [];
+        $db->tables['llx_bankconnect_certificate'] = [];
+        $store = new AgreementStore($db);
+
+        $aid = $store->createAgreement(['bank_connect_id' => '001', 'label' => 'L']);
+        $oldId = $store->saveCertificate([
+            'fk_agreement' => $aid,
+            'certificate_pem' => 'OLD',
+            'private_key_enc' => 'OLDKEY',
+            'valid_from' => '2026-01-01 00:00:00',
+            'valid_to' => '2029-01-01 00:00:00',
+        ]);
+
+        $db->failNextQueryContaining(
+            'INSERT INTO llx_bankconnect_certificate',
+            'simulated certificate insert failure'
+        );
+
+        $this->expectException(BankConnectException::class);
+        try {
+            $store->saveCertificate([
+                'fk_agreement' => $aid,
+                'certificate_pem' => 'NEW',
+                'private_key_enc' => 'NEWKEY',
+                'valid_from' => '2027-01-01 00:00:00',
+                'valid_to' => '2030-01-01 00:00:00',
+            ]);
+        } finally {
+            $active = $store->getActiveCertificate($aid);
+            $this->assertSame($oldId, (int) $active['rowid']);
+            $this->assertSame(1, (int) $active['is_active']);
+            $this->assertSame(1, $db->countRows('llx_bankconnect_certificate'));
+        }
+    }
+
+    public function testCertificateActivationFailureRollsBackToExistingActiveCertificate(): void
+    {
+        $db = new MockDoliDB();
+        $db->tables['llx_bankconnect_agreement'] = [];
+        $db->tables['llx_bankconnect_certificate'] = [];
+        $store = new AgreementStore($db);
+
+        $aid = $store->createAgreement(['bank_connect_id' => '001', 'label' => 'L']);
+        $oldId = $store->saveCertificate([
+            'fk_agreement' => $aid,
+            'certificate_pem' => 'OLD',
+            'private_key_enc' => 'OLDKEY',
+            'valid_from' => '2026-01-01 00:00:00',
+            'valid_to' => '2029-01-01 00:00:00',
+        ]);
+
+        $db->failNextQueryContaining(
+            'SET is_active = 1',
+            'simulated certificate activation failure'
+        );
+
+        $this->expectException(BankConnectException::class);
+        try {
+            $store->saveCertificate([
+                'fk_agreement' => $aid,
+                'certificate_pem' => 'NEW',
+                'private_key_enc' => 'NEWKEY',
+                'valid_from' => '2027-01-01 00:00:00',
+                'valid_to' => '2030-01-01 00:00:00',
+            ]);
+        } finally {
+            $active = $store->getActiveCertificate($aid);
+            $this->assertSame($oldId, (int) $active['rowid']);
+            $this->assertSame(1, (int) $active['is_active']);
+            $this->assertSame(1, $db->countRows('llx_bankconnect_certificate'));
+        }
+    }
+
+    public function testCertificateRenewalLeavesExactlyOneActiveCertificate(): void
+    {
+        $db = new MockDoliDB();
+        $db->tables['llx_bankconnect_agreement'] = [];
+        $db->tables['llx_bankconnect_certificate'] = [];
+        $store = new AgreementStore($db);
+
+        $aid = $store->createAgreement(['bank_connect_id' => '001', 'label' => 'L']);
+        $oldId = $store->saveCertificate([
+            'fk_agreement' => $aid,
+            'certificate_pem' => 'OLD',
+            'private_key_enc' => 'OLDKEY',
+            'valid_from' => '2026-01-01 00:00:00',
+            'valid_to' => '2029-01-01 00:00:00',
+        ]);
+        $newId = $store->saveCertificate([
+            'fk_agreement' => $aid,
+            'certificate_pem' => 'NEW',
+            'private_key_enc' => 'NEWKEY',
+            'valid_from' => '2027-01-01 00:00:00',
+            'valid_to' => '2030-01-01 00:00:00',
+        ]);
+
+        $rows = array_values(array_filter(
+            $db->table('llx_bankconnect_certificate'),
+            static fn (array $row): bool => (int) $row['fk_agreement'] === $aid && (int) $row['is_active'] === 1
+        ));
+
+        $this->assertCount(1, $rows);
+        $this->assertSame($newId, (int) $rows[0]['rowid']);
+        $this->assertNotSame($oldId, $newId);
+    }
+
     public function testAgreementStoreSaveCertificate(): void
     {
         $db = new MockDoliDB();
