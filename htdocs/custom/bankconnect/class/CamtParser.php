@@ -28,6 +28,14 @@ class CamtParser
             throw new RuntimeException('Empty XML');
         }
 
+        // Protect against XML bombs (billion laughs attack) and large files
+        if (strlen($xml) > 10 * 1024 * 1024) {  // 10MB max
+            throw new RuntimeException('XML too large: maximum size is 10MB');
+        }
+
+        // Disable external entity loading to prevent XXE attacks
+        libxml_disable_entity_loader(true);
+
         $prev = libxml_use_internal_errors(true);
         $root = simplexml_load_string($xml);
         if ($root === false) {

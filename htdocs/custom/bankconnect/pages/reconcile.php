@@ -29,6 +29,15 @@ if ($writeAction) {
  */
 if ($action === 'import' && $user->rights->bankconnect->write) {
 	if (!empty($_FILES['camtfile']['tmp_name'])) {
+		// Validate file upload
+		$allowedTypes = ['text/xml', 'application/xml'];
+		$maxSize = 10 * 1024 * 1024;  // 10MB
+		if (!in_array($_FILES['camtfile']['type'], $allowedTypes)) {
+			throw new RuntimeException('Invalid file type. Only XML files are allowed.');
+		}
+		if ($_FILES['camtfile']['size'] > $maxSize) {
+			throw new RuntimeException('File too large. Maximum size is 10MB.');
+		}
 		try {
 			$service = new ImportService($store);
 			$result = $service->importFile($_FILES['camtfile']['tmp_name'], $accountid, $_FILES['camtfile']['name']);

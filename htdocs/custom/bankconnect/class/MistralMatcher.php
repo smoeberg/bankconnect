@@ -23,6 +23,9 @@ class MistralMatcher
     private int $timeout;
     private float $temperature;
     private int $maxTokens;
+    private int $rateLimitMaxCalls = 10;
+    private int $rateLimitWindowSeconds = 60;
+    private array $rateLimitTimestamps = [];
 
     /** @var callable|null fn(string $method, string $url, array $opts): array{status:int,body:string} */
     private $transport;
@@ -36,6 +39,10 @@ class MistralMatcher
         $this->timeout = max(1, (int) ($g['BANKCONNECT_AI_TIMEOUT'] ?? 8));
         $this->temperature = (float) ($g['BANKCONNECT_AI_TEMPERATURE'] ?? 0.1);
         $this->maxTokens = max(100, (int) ($g['BANKCONNECT_AI_MAX_TOKENS'] ?? 800));
+        
+        // Rate limiting configuration
+        $this->rateLimitMaxCalls = max(1, (int) ($g['BANKCONNECT_AI_RATE_LIMIT_MAX'] ?? 10));
+        $this->rateLimitWindowSeconds = max(1, (int) ($g['BANKCONNECT_AI_RATE_LIMIT_WINDOW'] ?? 60));
     }
 
     public function setTransport(?callable $transport): void
@@ -61,7 +68,11 @@ class MistralMatcher
 
     private function endpoint(): string
     {
-        return (string) ($this->conf->global['BANKCONNECT_MISTRAL_ENDPOINT'] ?? 'https://api.mistral.ai/v1/chat/completions');
+        $endpoint = (string) ($this->conf->global['BANKCONNECT_MISTRAL_ENDPOINT'] ?? '');
+        if ($endpoint === '') {
+            throw new BankConnectException('BANKCONNECT_MISTRAL_ENDPOINT is not configured. Please set it in Dolibarr configuration.');
+        }
+        return $endpoint;
     }
 
     private function isCloudEndpoint(): bool
@@ -161,6 +172,12 @@ class MistralMatcher
      */
     public function testConnection(): array
     {
+        try {
+            $this->endpoint(); // This will throw if not configured
+        } catch (BankConnectException $e) {
+            return ['success' => false, 'message' => $e->getMessage(), 'latency_ms' => 0];
+        }
+
         $start = microtime(true);
         $body = json_encode([
             'model'      => $this->model(),
@@ -258,6 +275,23 @@ TXT;
 
     private function callApi(array $prompts): ?string
     {
+        // Rate limiting check
+        $now = time();
+        $this->rateLimitTimestamps = array_filter(
+            $this->rateLimitTimestamps,
+            fn($t) => $now - $t < $this->rateLimitWindowSeconds
+        );
+        
+        if (count($this->rateLimitTimestamps) >= $this->rateLimitMaxCalls) {
+            $this->logger->warning('rate_limit_exceeded', [
+                'calls' => count($this->rateLimitTimestamps),
+                'window_seconds' => $this->rateLimitWindowSeconds,
+            ]);
+            return null; // Graceful degradation - return none
+        }
+        
+        $this->rateLimitTimestamps[] = $now;
+
         $opts = [
             'headers' => $this->headers(),
             'body'    => $prompts[0],
