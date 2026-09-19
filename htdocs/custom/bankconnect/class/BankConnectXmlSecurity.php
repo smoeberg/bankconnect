@@ -237,40 +237,34 @@ class BankConnectXmlSecurity
         $objDSig = new \RobRichards\XMLSecLibs\XMLSecurityDSig();
         $objDSig->setCanonicalMethod(\RobRichards\XMLSecLibs\XMLSecurityDSig::EXC_C14N);
 
-        // Sign serviceHeader and Body if present
+        $xpath = new DOMXPath($doc);
+        $xpath->registerNamespace('soap', 'http://schemas.xmlsoap.org/soap/envelope/');
+
         $nodes = [];
-        foreach (['serviceHeader', 'Body', 'soapenv:Body'] as $name) {
-            $list = $doc->getElementsByTagName($name);
-            if ($list->length > 0) {
-                $nodes[] = $list->item(0);
-            }
-        }
-        // local-name Body
-        if (empty($nodes)) {
-            $xpath = new DOMXPath($doc);
-            $xpath->registerNamespace('s', 'http://schemas.xmlsoap.org/soap/envelope/');
-            $body = $xpath->query('//s:Body');
-            if ($body && $body->length) {
-                $nodes[] = $body->item(0);
-            }
+
+        // ServiceHeader is expected in SOAP Header after BankConnectClient
+        // normalizes legacy callers at the transport boundary.
+        $serviceHeaders = $xpath->query(
+            '//*[local-name()="serviceHeader"]'
+        );
+        if ($serviceHeaders && $serviceHeaders->length > 0) {
+            $nodes[] = $serviceHeaders->item(0);
         }
 
-        if (empty($nodes)) {
+        // Always include the SOAP Body as a separate signed reference.
+        $bodies = $xpath->query('//soap:Body');
+        if (!$bodies || $bodies->length !== 1) {
+            throw new BankConnectException('SOAP Body is required for signed BankConnect requests');
+        }
+        $nodes[] = $bodies->item(0);
+
+        foreach ($nodes as $node) {
             $objDSig->addReference(
-                $doc,
+                $node,
                 \RobRichards\XMLSecLibs\XMLSecurityDSig::SHA256,
                 ['http://www.w3.org/2000/09/xmldsig#enveloped-signature'],
-                ['force_uri' => true]
+                ['id_name' => 'Id', 'overwrite' => false]
             );
-        } else {
-            foreach ($nodes as $node) {
-                $objDSig->addReference(
-                    $node,
-                    \RobRichards\XMLSecLibs\XMLSecurityDSig::SHA256,
-                    ['http://www.w3.org/2000/09/xmldsig#enveloped-signature'],
-                    ['id_name' => 'Id', 'overwrite' => false]
-                );
-            }
         }
 
         $objKey = new \RobRichards\XMLSecLibs\XMLSecurityKey(
@@ -285,7 +279,10 @@ class BankConnectXmlSecurity
             $objDSig->add509Cert($this->customerCertificatePem, true);
         }
 
-        $header = $doc->getElementsByTagNameNS('http://schemas.xmlsoap.org/soap/envelope/', 'Header')->item(0);
+        $header = $doc->getElementsByTagNameNS(
+            'http://schemas.xmlsoap.org/soap/envelope/',
+            'Header'
+        )->item(0);
         if ($header) {
             $objDSig->appendSignature($header);
         } else {
