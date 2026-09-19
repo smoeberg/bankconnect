@@ -9,16 +9,13 @@ class modBankConnect extends DolibarrModules
 	public $id = 500010;
 	public $name = 'BankConnect';
 	public $family = 'financial';
-	public $version = '0.2.1';
+	public $version = '0.2.2';
 	public $description = 'Bankafstemning: camt-import, regelbaseret matching med AI-fallback, godkendelse før bokføring (DK).';
 	public $editor_name = 'WM Group / Eira';
 	public $editor_url = 'https://github.com/smoeberg/bankconnect';
 
 	/**
-	 * Create BankConnect tables before the module is activated.
-	 *
-	 * Dolibarr does not execute files in the module sql/ directory merely
-	 * because they exist; the module descriptor must explicitly load them.
+	 * Create BankConnect tables and apply additive schema upgrades.
 	 */
 	public function init($options = '')
 	{
@@ -27,8 +24,26 @@ class modBankConnect extends DolibarrModules
 			return -1;
 		}
 
-		$sql = [];
-		return $this->_init($sql, $options);
+		$table = MAIN_DB_PREFIX.'bankconnect_transaction';
+		$columns = [
+			'acct_svcr_ref' => "VARCHAR(255) NULL",
+			'is_reversal' => "INTEGER NOT NULL DEFAULT 0",
+			'requires_manual_review' => "INTEGER NOT NULL DEFAULT 0",
+		];
+		foreach ($columns as $column => $definition) {
+			$sql = "SHOW COLUMNS FROM ".$table." LIKE '".$this->db->escape($column)."'";
+			$res = $this->db->query($sql);
+			if (!$res) {
+				return -1;
+			}
+			if (!$this->db->fetch_object($res)) {
+				if (!$this->db->query("ALTER TABLE ".$table." ADD COLUMN ".$column." ".$definition)) {
+					return -1;
+				}
+			}
+		}
+
+		return $this->_init([], $options);
 	}
 
 	public function __construct($db)

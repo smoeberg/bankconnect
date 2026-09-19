@@ -24,9 +24,6 @@ if ($writeAction) {
 	}
 }
 
-/*
- * Actions (write permission required)
- */
 if ($action === 'import' && $user->rights->bankconnect->write) {
 	$upload = $_FILES['camtfile'] ?? null;
 	if ($upload !== null) {
@@ -78,19 +75,14 @@ if ($action === 'import' && $user->rights->bankconnect->write) {
 	setEventMessages($langs->trans('BankConnectPosted', $n), null);
 }
 
-/*
- * View
- */
 llxHeader('', 'BankConnect');
 
 print load_fiche_titre('BankConnect — '.$langs->trans('BankConnectReconcile'), '', 'bank');
 
-// Account selector + import form
 print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" enctype="multipart/form-data">';
 print '<input type="hidden" name="token" value="'.newToken().'">';
 print '<input type="hidden" name="action" value="import">';
 print '<select name="account">';
-// populate from Dolibarr bank accounts
 $sql = 'SELECT rowid, label FROM llx_bank_account ORDER BY label';
 $res = $db->query($sql);
 while ($res && $o = $db->fetch_object($res)) {
@@ -101,7 +93,6 @@ print '<input type="file" name="camtfile" accept=".xml"> ';
 print '<input type="submit" class="button" value="'.$langs->trans('BankConnectImport').'">';
 print '</form>';
 
-// Unmatched list
 $unmatched = $accountid ? $store->unmatchedTransactions($accountid) : [];
 print '<p>'.dol_escape_htmltag($langs->trans('BankConnectUnmatchedCount', count($unmatched))).'</p>';
 
@@ -115,19 +106,29 @@ if (count($unmatched)) {
 }
 
 print '<table class="noborder centpercent">';
-print '<tr class="liste_titre"><th>Date</th><th>Amount</th><th>Ref</th><th>Counterparty</th><th>Proposal</th><th></th></tr>';
+print '<tr class="liste_titre"><th>Date</th><th>Amount</th><th>Ref</th><th>Counterparty</th><th>Status</th><th>Proposal</th><th></th></tr>';
 foreach ($unmatched as $tx) {
 	print '<tr>';
 	print '<td>'.dol_print_date($tx['tx_date'], 'day').'</td>';
 	print '<td>'.price($tx['amount']).' '.$tx['currency'].'</td>';
 	print '<td>'.dol_escape_htmltag($tx['reference'] ?? '').'</td>';
 	print '<td>'.dol_escape_htmltag($tx['counterparty'] ?? '').'</td>';
+	print '<td>';
+	if (!empty($tx['requires_manual_review'])) {
+		print '<span class="badge badge-warning">Manuel gennemgang</span>';
+	}
+	if (!empty($tx['is_reversal'])) {
+		print ' <span class="badge badge-danger">Reversal</span>';
+	}
+	if (empty($tx['requires_manual_review']) && empty($tx['is_reversal'])) {
+		print '—';
+	}
+	print '</td>';
 	print '<td>—</td><td></td>';
 	print '</tr>';
 }
 print '</table>';
 
-// Post approved matches button
 if ($accountid) {
 	$approvedCount = 0;
 	$sqlc = "SELECT COUNT(*) AS c FROM llx_bankconnect_transaction WHERE fk_bank_account = ".(int)$accountid." AND state = 'approved'";
@@ -143,7 +144,6 @@ if ($accountid) {
 	}
 }
 
-// Proposed matches awaiting approval
 if ($accountid) {
 	$sql = "SELECT m.rowid AS mid, m.match_type, m.rule_name, m.score, m.reason, t.tx_date, t.amount, t.currency, t.reference, t.counterparty
 			FROM llx_bankconnect_match m
