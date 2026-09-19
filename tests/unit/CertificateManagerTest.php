@@ -36,6 +36,59 @@ class CertificateManagerTest extends TestCase
         $mgr->encryptPrivateKey('secret');
     }
 
+    public function testCertificateKeyBindingRejectsMismatchedKey(): void
+    {
+        $mgr = new BankConnectCertificateManager($this->conf);
+
+        $keyA = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        $keyB = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        if ($keyA === false || $keyB === false) {
+            $this->markTestSkipped('OpenSSL key generation unavailable');
+        }
+
+        openssl_pkey_export($keyA, $privateA);
+        $csr = openssl_csr_new(['commonName' => 'bankconnect-test'], $keyA, ['digest_alg' => 'sha256']);
+        if ($csr === false) {
+            $this->markTestSkipped('OpenSSL CSR generation unavailable');
+        }
+        $cert = openssl_csr_sign($csr, null, $keyA, 365, ['digest_alg' => 'sha256']);
+        if ($cert === false) {
+            $this->markTestSkipped('OpenSSL certificate generation unavailable');
+        }
+        openssl_x509_export($cert, $certificatePem);
+
+        $this->assertTrue($mgr->validateCertificateAndPrivateKey($certificatePem, $privateA));
+
+        openssl_pkey_export($keyB, $privateB);
+        $this->assertFalse($mgr->validateCertificateAndPrivateKey($certificatePem, $privateB));
+    }
+
+    public function testCertificateValidityWindowIsEnforced(): void
+    {
+        $mgr = new BankConnectCertificateManager($this->conf);
+        $now = time();
+
+        $this->assertTrue($mgr->isCertificateCurrentlyValid([
+            'from' => date('Y-m-d H:i:s', $now - 60),
+            'to' => date('Y-m-d H:i:s', $now + 60),
+        ], $now));
+
+        $this->assertFalse($mgr->isCertificateCurrentlyValid([
+            'from' => date('Y-m-d H:i:s', $now - 120),
+            'to' => date('Y-m-d H:i:s', $now - 60),
+        ], $now));
+
+        $this->assertFalse($mgr->isCertificateCurrentlyValid([
+            'from' => date('Y-m-d H:i:s', $now + 60),
+            'to' => date('Y-m-d H:i:s', $now + 120),
+        ], $now));
+
+        $this->assertFalse($mgr->isCertificateCurrentlyValid([
+            'from' => null,
+            'to' => date('Y-m-d H:i:s', $now + 60),
+        ], $now));
+    }
+
     public function testCsrToRequestBodyStripsHeaders(): void
     {
         $mgr = new BankConnectCertificateManager($this->conf);
