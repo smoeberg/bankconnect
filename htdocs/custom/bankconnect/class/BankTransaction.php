@@ -15,4 +15,7 @@ class BankTransaction
 
     /** True when Ntry/RvslInd indicates a reversal/correction */
     public bool $isReversal = false;
+
+    /** True when TxDtls cannot be safely split without inventing amounts. */
+    public bool $requiresManualReview = false;
 }
