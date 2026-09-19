@@ -90,7 +90,9 @@ class BankConnectXmlSecurity
         }
 
         if ($this->bankCertificatePem === null || $this->bankCertificatePem === '') {
-            return ['content' => base64_encode($content), 'compressed' => $compressed];
+            throw new BankConnectException(
+                'Bank certificate is required for encrypted BankConnect payloads'
+            );
         }
 
         $pubKey = openssl_pkey_get_public($this->bankCertificatePem);
@@ -213,7 +215,9 @@ class BankConnectXmlSecurity
     public function signRequest(string $xml): string
     {
         if ($this->customerPrivateKeyPem === null || $this->customerPrivateKeyPem === '') {
-            return $xml; // stub – no key configured
+            throw new BankConnectException(
+                'Customer private key is required to sign BankConnect requests'
+            );
         }
 
         if (!class_exists('\RobRichards\XMLSecLibs\XMLSecurityDSig')) {
