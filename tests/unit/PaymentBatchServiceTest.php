@@ -18,22 +18,11 @@ class PaymentBatchServiceTest extends TestCase
     {
         $this->db = new MockDoliDB();
         $this->conf = new Conf();
-        $this->svc = new PaymentBatchService($this->db, $this->conf, null); // no live client
+        $this->svc = new PaymentBatchService($this->db, $this->conf, null);
 
-        // Ensure tables exist in mock
-        $this->db->query("CREATE TABLE llx_bankconnect_batch (
-            rowid INTEGER PRIMARY KEY AUTOINCREMENT,
-            entity INTEGER, fk_agreement INTEGER,
-            end_to_end_message_id TEXT, msg_id TEXT, correlation_id TEXT,
-            status TEXT, pain001_xml TEXT, response_code TEXT, message TEXT,
-            control_sum REAL, nb_of_txs INTEGER, date_sent TEXT, date_status TEXT
-        )");
-        $this->db->query("CREATE TABLE llx_bankconnect_batch_line (
-            rowid INTEGER PRIMARY KEY AUTOINCREMENT,
-            fk_batch INTEGER, end_to_end_id TEXT, amount REAL, currency TEXT,
-            fk_facture_fourn INTEGER, fk_facture INTEGER, fk_paiement INTEGER,
-            status TEXT, pain002_status TEXT, status_reason TEXT
-        )");
+        // MockDoliDB has no CREATE TABLE — seed empty table arrays
+        $this->db->tables['llx_bankconnect_batch'] = [];
+        $this->db->tables['llx_bankconnect_batch_line'] = [];
     }
 
     private function sampleBuilder(): Pain001Builder
@@ -63,7 +52,6 @@ class PaymentBatchServiceTest extends TestCase
         $this->assertLessThanOrEqual(35, strlen($result['end_to_end_message_id']));
         $this->assertLessThanOrEqual(35, strlen($result['msg_id']));
 
-        // Verify line
         $res = $this->db->query('SELECT * FROM llx_bankconnect_batch_line WHERE fk_batch = '.$result['batch_id']);
         $line = $this->db->fetch_object($res);
         $this->assertNotNull($line);
@@ -89,7 +77,7 @@ class PaymentBatchServiceTest extends TestCase
     public function testSendNonDraftThrows(): void
     {
         $created = $this->svc->createBatch($this->sampleBuilder(), 1);
-        $this->svc->sendBatch($created['batch_id']); // now status=sent
+        $this->svc->sendBatch($created['batch_id']);
 
         $this->expectException(BankConnectException::class);
         $this->svc->sendBatch($created['batch_id']);
@@ -99,5 +87,24 @@ class PaymentBatchServiceTest extends TestCase
     {
         $this->expectException(BankConnectException::class);
         $this->svc->sendBatch(99999);
+    }
+
+    public function testCreateBatchWithMultipleLines(): void
+    {
+        $builder = (new Pain001Builder())
+            ->setDebtor('Test ApS', 'DK5089000000012345')
+            ->addTransaction([
+                'endToEndId' => 'A', 'amount' => 100.00, 'currency' => 'DKK',
+                'creditorName' => 'X', 'creditorIban' => 'DK11',
+            ])
+            ->addTransaction([
+                'endToEndId' => 'B', 'amount' => 200.50, 'currency' => 'DKK',
+                'creditorName' => 'Y', 'creditorIban' => 'DK22',
+            ]);
+
+        $result = $this->svc->createBatch($builder, 1);
+        $this->assertSame(2, $result['nb_of_txs']);
+        $this->assertEqualsWithDelta(300.50, $result['control_sum'], 0.001);
+        $this->assertSame(2, $this->db->countRows('llx_bankconnect_batch_line'));
     }
 }

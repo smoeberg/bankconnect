@@ -5,11 +5,8 @@
  * Flow:
  *  1. Build pain.001 via Pain001Builder
  *  2. Insert llx_bankconnect_batch + batch_line
- *  3. (Later) Encrypt + sign + call BankConnectClient::transferPayments
+ *  3. Encrypt + sign + call BankConnectClient::transferPayments (when wired)
  *  4. Store response / correlationId
- *
- * Currently the actual SOAP transfer is stubbed until XML-Signature/
- * Encryption is fully implemented.
  */
 
 require_once __DIR__.'/Pain001Builder.php';
@@ -27,7 +24,7 @@ if (!class_exists('Conf')) {
 
 class PaymentBatchService
 {
-    private $db; // DoliDB or MockDoliDB
+    private $db;
     private Conf $conf;
     private BankConnectLogger $logger;
     private ?BankConnectClient $client;
@@ -41,26 +38,18 @@ class PaymentBatchService
     }
 
     /**
-     * Create a batch from a fully configured Pain001Builder.
-     *
-     * @param Pain001Builder $builder
-     * @param int            $fkAgreement  llx_bankconnect_agreement.rowid
-     * @param int            $entity
      * @return array{batch_id:int, end_to_end_message_id:string, msg_id:string, nb_of_txs:int, control_sum:float}
-     * @throws BankConnectException
      */
     public function createBatch(Pain001Builder $builder, int $fkAgreement, int $entity = 1): array
     {
-        $xml      = $builder->build();
-        $msgId    = $builder->getMsgId();
-        $ctrlSum  = $builder->getControlSum();
-        $txs      = $builder->getTransactions();
-        $nbOfTxs  = count($txs);
-
-        // endToEndMessageId for ServiceHeader – unique per request, max 35
+        $xml     = $builder->build();
+        $msgId   = $builder->getMsgId();
+        $ctrlSum = $builder->getControlSum();
+        $txs     = $builder->getTransactions();
+        $nbOfTxs = count($txs);
         $e2eMessageId = $this->generateEndToEndMessageId();
 
-        $this->db->begin();
+        $this->begin();
 
         try {
             $batchId = $this->insertBatch([
@@ -78,7 +67,7 @@ class PaymentBatchService
                 $this->insertBatchLine($batchId, $tx);
             }
 
-            $this->db->commit();
+            $this->commit();
 
             $this->logger->info('batch_created', [
                 'batch_id' => $batchId,
@@ -95,14 +84,12 @@ class PaymentBatchService
                 'control_sum'           => $ctrlSum,
             ];
         } catch (Throwable $e) {
-            $this->db->rollback();
+            $this->rollback();
             throw new BankConnectException('Failed to create payment batch: '.$e->getMessage(), 0, $e);
         }
     }
 
     /**
-     * Mark batch as sent and (when client is available) call transferPayments.
-     *
      * @return array{status:string, response_code:?string, correlation_id:?string}
      */
     public function sendBatch(int $batchId): array
@@ -111,11 +98,10 @@ class PaymentBatchService
         if (!$batch) {
             throw new BankConnectException("Batch {$batchId} not found");
         }
-        if ($batch['status'] !== 'draft') {
+        if (($batch['status'] ?? '') !== 'draft') {
             throw new BankConnectException("Batch {$batchId} is not in draft status");
         }
 
-        // Stub: real implementation will encrypt payload, sign, and call client
         if ($this->client === null) {
             $this->updateBatchStatus($batchId, 'sent', [
                 'response_code' => 'STUB',
@@ -130,18 +116,62 @@ class PaymentBatchService
             ];
         }
 
-        // Future path:
-        // $encrypted = $this->encryptPayload($batch['pain001_xml']);
-        // $signed    = $this->signRequest($encrypted, $batch['end_to_end_message_id']);
-        // $response  = $this->client->transferPayments($signed, $batch['end_to_end_message_id']);
-        // parse response → update status + correlation_id
+        // Live path (requires BankConnectXmlSecurity + certificates)
+        require_once __DIR__.'/BankConnectXmlSecurity.php';
+        $security = new BankConnectXmlSecurity($this->conf);
 
-        throw new BankConnectException('Live transferPayments not yet implemented');
+        $encrypted = $security->encryptPayload($batch['pain001_xml']);
+        $paymentMessage = $security->buildPaymentMessage($encrypted, $batch['end_to_end_message_id']);
+        $signed = $security->signRequest($paymentMessage);
+
+        $response = $this->client->transferPayments($signed, $batch['end_to_end_message_id']);
+
+        // Minimal parse – full PaymentResponse parsing later
+        $correlationId = null;
+        $responseCode  = 'OK';
+        if (preg_match('/<correlationId>([^<]+)<\/correlationId>/', $response, $m)) {
+            $correlationId = $m[1];
+        }
+        if (preg_match('/<responseCode>([^<]+)<\/responseCode>/', $response, $m)) {
+            $responseCode = $m[1];
+        }
+
+        $this->updateBatchStatus($batchId, 'sent', [
+            'response_code'  => $responseCode,
+            'correlation_id' => $correlationId,
+            'date_sent'      => date('Y-m-d H:i:s'),
+            'message'        => 'transferPayments accepted',
+        ]);
+
+        return [
+            'status'         => 'sent',
+            'response_code'  => $responseCode,
+            'correlation_id' => $correlationId,
+        ];
     }
 
     // ------------------------------------------------------------------
-    // Persistence helpers (work with both real DoliDB and MockDoliDB)
-    // ------------------------------------------------------------------
+
+    private function begin(): void
+    {
+        if (method_exists($this->db, 'begin')) {
+            $this->db->begin();
+        }
+    }
+
+    private function commit(): void
+    {
+        if (method_exists($this->db, 'commit')) {
+            $this->db->commit();
+        }
+    }
+
+    private function rollback(): void
+    {
+        if (method_exists($this->db, 'rollback')) {
+            $this->db->rollback();
+        }
+    }
 
     private function insertBatch(array $data): int
     {
