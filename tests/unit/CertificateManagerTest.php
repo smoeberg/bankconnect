@@ -89,6 +89,27 @@ class CertificateManagerTest extends TestCase
         ], $now));
     }
 
+
+    public function testRenewalRejectsCertificateThatDoesNotMatchGeneratedKey(): void
+    {
+        $db = new MockDoliDB();
+        $db->tables['llx_bankconnect_agreement'] = [];
+        $db->tables['llx_bankconnect_certificate'] = [];
+        $store = new AgreementStore($db);
+        $aid = $store->createAgreement(['bank_connect_id' => '001', 'label' => 'L']);
+
+        $client = new RenewalMismatchClient($this->conf);
+        $mgr = new BankConnectCertificateManager($this->conf, $client, null, $store);
+
+        $this->expectException(BankConnectException::class);
+        $this->expectExceptionMessage('does not match generated private key');
+        try {
+            $mgr->renewCustomerCertificateForAgreement($aid, '<serviceHeader/>');
+        } finally {
+            $this->assertSame(0, $db->countRows('llx_bankconnect_certificate'));
+        }
+    }
+
     public function testCsrToRequestBodyStripsHeaders(): void
     {
         $mgr = new BankConnectCertificateManager($this->conf);
@@ -262,5 +283,35 @@ class CertificateManagerTest extends TestCase
         $active = $store->getActiveCertificate($aid);
         $this->assertSame($cid, (int) $active['rowid']);
         $this->assertSame(1, (int) $active['is_active']);
+    }
+}
+
+
+class RenewalMismatchClient extends BankConnectClient
+{
+    private string $response;
+
+    public function __construct(Conf $conf)
+    {
+        parent::__construct($conf);
+        $key = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        if ($key === false) {
+            throw new RuntimeException('OpenSSL key generation unavailable');
+        }
+        $csr = openssl_csr_new(['commonName' => 'mismatch'], $key, ['digest_alg' => 'sha256']);
+        if ($csr === false) {
+            throw new RuntimeException('OpenSSL CSR generation unavailable');
+        }
+        $cert = openssl_csr_sign($csr, null, $key, 365, ['digest_alg' => 'sha256']);
+        if ($cert === false) {
+            throw new RuntimeException('OpenSSL certificate generation unavailable');
+        }
+        openssl_x509_export($cert, $pem);
+        $this->response = $pem;
+    }
+
+    public function renewCustomerCertificate(string $payloadXml): string
+    {
+        return $this->response;
     }
 }
