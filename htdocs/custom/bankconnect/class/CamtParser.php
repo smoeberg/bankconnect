@@ -4,7 +4,10 @@
  * CamtParser – parses camt.053 / camt.054 (ISO 20022) into BankTransaction DTOs.
  *
  * Spec-aligned behaviour (BankConnect / CGI camt.053.001.02):
- *  - One BankTransaction per TxDtls when present (batch OCR/FIK, salary batches)
+ *  - One BankTransaction per TxDtls when present only when every transaction
+ *    amount is explicit and the split reconciles exactly to Ntry/Amt
+ *  - Otherwise preserve the Ntry as one aggregate transaction and flag it for
+ *    manual review rather than inventing transaction amounts
  *  - Structured reference priority:
  *      1. Refs/EndToEndId (2.148)
  *      2. RmtInf/Strd/CdtrRefInf/Ref (OCR/FIK, 2.262)
@@ -27,14 +30,9 @@ class CamtParser
         if (trim($xml) === '') {
             throw new RuntimeException('Empty XML');
         }
-
-        // Protect against XML bombs (billion laughs attack) and large files
-        if (strlen($xml) > 10 * 1024 * 1024) {  // 10MB max
+        if (strlen($xml) > 10 * 1024 * 1024) {
             throw new RuntimeException('XML too large: maximum size is 10MB');
         }
-
-        // Reject DTD/entity declarations explicitly. This keeps the parser fail-closed
-        // even when libxml defaults differ between PHP/libxml builds.
         if (preg_match('/<!DOCTYPE\s/i', $xml) || preg_match('/<!ENTITY\s/i', $xml)) {
             throw new RuntimeException('XML with DTD/entity declarations is not allowed');
         }
@@ -53,14 +51,11 @@ class CamtParser
         libxml_use_internal_errors($prev);
 
         $local = $root->getName();
-        // Accept BankToCustomerStatement / AccountReport / DebitCreditNotification wrappers
         $okRoots = ['Document', 'BkToCstmrStmt', 'BkToCstmrAcctRpt', 'BkToCstmrDbtCdtNtfctn'];
-        // Document is fine; check inner if present
         $inner = $root->xpath('/*[local-name()="Document"]/*') ?: [];
         if (!empty($inner)) {
             $innerName = $inner[0]->getName();
             $allowed = ['BkToCstmrStmt', 'BkToCstmrAcctRpt', 'BkToCstmrDbtCdtNtfctn'];
-            // Soft check only – do not throw; empty result is possible for wrong payload
             if (!in_array($innerName, $allowed, true)
                 && !in_array($local, $allowed, true)
                 && $local !== 'Document') {
@@ -94,16 +89,50 @@ class CamtParser
             $txDtlsList = $ntry->xpath('.//*[local-name()="TxDtls"]') ?: [];
 
             if (count($txDtlsList) > 0) {
+                $amounts = [];
+                $allAmountsExplicit = true;
+                $sameCurrency = true;
+
                 foreach ($txDtlsList as $txDtls) {
-                    $txs[] = $this->buildFromTxDtls(
-                        $txDtls,
+                    $amtEl = $this->firstTransactionAmount($txDtls);
+                    if ($amtEl === null) {
+                        $allAmountsExplicit = false;
+                        break;
+                    }
+
+                    $ccy = (string) (($amtEl['Ccy'] ?? null) ?: $ntryCcy);
+                    if ($ccy !== $ntryCcy) {
+                        $sameCurrency = false;
+                    }
+
+                    $amounts[] = abs((float) (string) $amtEl);
+                }
+
+                if ($allAmountsExplicit && $sameCurrency && $this->amountsReconcile($amounts, $ntryAmount)) {
+                    foreach ($txDtlsList as $txDtls) {
+                        $txs[] = $this->buildFromTxDtls(
+                            $txDtls,
+                            $date,
+                            $creditDebit,
+                            $ntryAmount,
+                            $ntryCcy,
+                            $ntryAcctSvcrRef,
+                            $isReversal,
+                            $ntry
+                        );
+                    }
+                } else {
+                    // Never duplicate the Ntry total across TxDtls. Preserve the
+                    // bank-reported aggregate and force manual review of the split.
+                    $txs[] = $this->buildFromNtryOnly(
+                        $ntry,
                         $date,
                         $creditDebit,
                         $ntryAmount,
                         $ntryCcy,
                         $ntryAcctSvcrRef,
                         $isReversal,
-                        $ntry
+                        true
                     );
                 }
             } else {
@@ -133,11 +162,7 @@ class CamtParser
         bool $isReversal,
         $ntry
     ): BankTransaction {
-        // Per-tx amount if present, else share ntry amount (single TxDtls) or use ntry
-        $amtEl = $this->first($txDtls, './/*[local-name()="Amt"]');
-        if ($amtEl === null) {
-            $amtEl = $this->first($txDtls, './/*[local-name()="InstdAmt"]');
-        }
+        $amtEl = $this->firstTransactionAmount($txDtls);
         $amount = $amtEl !== null ? abs((float) (string) $amtEl) : $ntryAmount;
         $ccy = $amtEl !== null ? (string) (($amtEl['Ccy'] ?? null) ?: $ntryCcy) : $ntryCcy;
         $signed = $creditDebit === 'DBIT' ? -abs($amount) : abs($amount);
@@ -177,7 +202,8 @@ class CamtParser
         float $ntryAmount,
         string $ntryCcy,
         string $ntryAcctSvcrRef,
-        bool $isReversal
+        bool $isReversal,
+        bool $requiresManualReview = false
     ): BankTransaction {
         $signed = $creditDebit === 'DBIT' ? -abs($ntryAmount) : abs($ntryAmount);
 
@@ -194,7 +220,17 @@ class CamtParser
 
         $cp = $this->extractCounterparty($ntry, $creditDebit);
 
-        return $this->makeTx($date, $signed, $ntryCcy, $text, $ref, $cp, $ntryAcctSvcrRef, $isReversal);
+        return $this->makeTx(
+            $date,
+            $signed,
+            $ntryCcy,
+            $text,
+            $ref,
+            $cp,
+            $ntryAcctSvcrRef,
+            $isReversal,
+            $requiresManualReview
+        );
     }
 
     private function makeTx(
@@ -205,7 +241,8 @@ class CamtParser
         string $ref,
         string $cp,
         string $acctSvcrRef,
-        bool $isReversal
+        bool $isReversal,
+        bool $requiresManualReview = false
     ): BankTransaction {
         $tx = new BankTransaction();
         $tx->date = $date;
@@ -216,11 +253,44 @@ class CamtParser
         $tx->counterparty = $cp;
         $tx->acctSvcrRef = $acctSvcrRef;
         $tx->isReversal = $isReversal;
+        $tx->requiresManualReview = $requiresManualReview;
         $tx->hash = hash(
             'sha256',
             implode('|', [$date, $amount, $ref, $cp, $text, $acctSvcrRef])
         );
         return $tx;
+    }
+
+    /**
+     * Return the transaction-level amount without falling back to Ntry/Amt.
+     */
+    private function firstTransactionAmount($txDtls)
+    {
+        $amtEl = $this->first($txDtls, './*[local-name()="Amt"]');
+        if ($amtEl === null) {
+            $amtEl = $this->first($txDtls, './*[local-name()="InstdAmt"]');
+        }
+        return $amtEl;
+    }
+
+    /**
+     * Compare money in cents to avoid float equality decisions.
+     *
+     * The parser already exposes amounts as floats, so normalize to cents at
+     * this boundary and require an exact reconciliation of the reported total.
+     *
+     * @param float[] $amounts
+     */
+    private function amountsReconcile(array $amounts, float $ntryAmount): bool
+    {
+        $sumCents = 0;
+        foreach ($amounts as $amount) {
+            $sumCents += (int) round(abs($amount) * 100);
+        }
+
+        $ntryCents = (int) round(abs($ntryAmount) * 100);
+
+        return $sumCents === $ntryCents;
     }
 
     /**
@@ -269,7 +339,6 @@ class CamtParser
             if ($nm !== null && trim((string) $nm) !== '') {
                 return trim((string) $nm);
             }
-            // RltdPties/Cdtr
             $nm = $this->first($ctx, './/*[local-name()="RltdPties"]/*[local-name()="Cdtr"]/*[local-name()="Nm"]');
             if ($nm !== null && trim((string) $nm) !== '') {
                 return trim((string) $nm);
@@ -285,7 +354,6 @@ class CamtParser
             }
         }
 
-        // Last resort: any Nm under RltdPties (legacy samples)
         $nm = $this->first($ctx, './/*[local-name()="RltdPties"]//*[local-name()="Nm"]');
         if ($nm !== null && trim((string) $nm) !== '') {
             return trim((string) $nm);
