@@ -80,6 +80,16 @@ class AgreementStore
         }
 
         try {
+            // Serialize certificate activation per agreement. InnoDB locks the
+            // agreement row here, so concurrent renewals cannot both observe and
+            // replace the same active certificate at the same time.
+            $lockSql = "SELECT rowid FROM llx_bankconnect_agreement"
+                . " WHERE rowid = $fk FOR UPDATE";
+            $lockRes = $this->db->query($lockSql);
+            if (!$lockRes || !$this->db->fetch_object($lockRes)) {
+                throw new BankConnectException('saveCertificate agreement lock failed: agreement not found');
+            }
+
             $sql = "INSERT INTO llx_bankconnect_certificate"
                  . " (fk_agreement, certificate_pem, private_key_enc, valid_from, valid_to, is_active, date_creation)"
                  . " VALUES ($fk, '$pem', '$keyEnc', $from, $to, 0, NOW())";

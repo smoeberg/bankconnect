@@ -151,6 +151,25 @@ class CertificateManagerTest extends TestCase
         $this->assertSame('0010888100007', $agr['bank_connect_id']);
     }
 
+    public function testCertificateSaveLocksAgreementBeforeActivation(): void
+    {
+        $db = new MockDoliDB();
+        $db->tables['llx_bankconnect_agreement'] = [];
+        $db->tables['llx_bankconnect_certificate'] = [];
+        $store = new AgreementStore($db);
+
+        $aid = $store->createAgreement(['bank_connect_id' => '001', 'label' => 'L']);
+        $cid = $store->saveCertificate([
+            'fk_agreement' => $aid,
+            'certificate_pem' => 'CERT',
+            'private_key_enc' => 'KEY',
+            'valid_from' => '2026-01-01 00:00:00',
+            'valid_to' => '2029-01-01 00:00:00',
+        ]);
+
+        $this->assertSame($cid, (int) $store->getActiveCertificate($aid)['rowid']);
+    }
+
     public function testCertificateInsertFailurePreservesExistingActiveCertificate(): void
     {
         $db = new MockDoliDB();
