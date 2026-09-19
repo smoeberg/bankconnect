@@ -1,6 +1,6 @@
 BankConnectReconcile=Reconciliation
 BankConnectImport=Import
-BankConnectImportOk=Imported %s transactions
+BankConnectImportOk=Imported %s transactions (%s duplicates)
 BankConnectImportFailed=Import failed
 BankConnectUnmatchedCount=%s unmatched transactions
 BankConnectRunMatching=Run matching

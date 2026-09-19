@@ -6,6 +6,7 @@ require '../../../main.inc.php';
 require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/CamtParser.php';
 require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/ReconciliationEngine.php';
 require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/BankConnectStore.php';
+require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/ImportService.php';
 
 if (!$user->rights->bankconnect->read) {
 	accessforbidden();
@@ -21,15 +22,12 @@ $action = GETPOST('action', 'alpha');
  */
 if ($action === 'import' && $user->rights->bankconnect->write) {
 	if (!empty($_FILES['camtfile']['tmp_name'])) {
-		$parser = new CamtParser();
 		try {
-			$txs = $parser->parseFile($_FILES['camtfile']['tmp_name']);
-			foreach ($txs as $t) {
-				$rowid = $store->upsertTransaction($t, $accountid, $_FILES['camtfile']['name']);
-			}
-			$store->audit($user->id, 'import', count($txs).' tx from '.$_FILES['camtfile']['name']);
-			setEventMessages($langs->trans('BankConnectImportOk', count($txs)), null);
-		} catch (Exception $e) {
+			$service = new ImportService($store);
+			$result = $service->importFile($_FILES['camtfile']['tmp_name'], $accountid, $_FILES['camtfile']['name']);
+			$store->audit($user->id, 'import', $result['total'].' tx from '.$_FILES['camtfile']['name'].' ('.$result['imported'].' new, '.$result['duplicates'].' duplicates)');
+			setEventMessages($langs->trans('BankConnectImportOk', $result['imported'], $result['duplicates']), null);
+		} catch (RuntimeException $e) {
 			setEventMessages($langs->trans('BankConnectImportFailed').': '.$e->getMessage(), null, 'errors');
 		}
 	}
