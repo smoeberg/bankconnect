@@ -1,0 +1,19 @@
+{
+  "name": "smoeberg/bankconnect",
+  "description": "Dolibarr BankConnect module – Danish bank reconciliation and payments",
+  "type": "library",
+  "require": {
+    "php": ">=8.1",
+    "ext-openssl": "*",
+    "ext-simplexml": "*"
+  },
+  "suggest": {
+    "robrichards/xmlseclibs": "Required for full WS-Security XMLDSig (sign serviceHeader + Body)"
+  },
+  "autoload": {
+    "classmap": ["htdocs/custom/bankconnect/class/"]
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^10.0"
+  }
+}
