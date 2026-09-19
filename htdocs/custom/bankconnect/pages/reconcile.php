@@ -28,14 +28,26 @@ if ($writeAction) {
  * Actions (write permission required)
  */
 if ($action === 'import' && $user->rights->bankconnect->write) {
-	if (!empty($_FILES['camtfile']['tmp_name'])) {
+	$upload = $_FILES['camtfile'] ?? null;
+	if ($upload !== null) {
+		$uploadError = (int) ($upload['error'] ?? UPLOAD_ERR_NO_FILE);
+		if ($uploadError !== UPLOAD_ERR_OK) {
+			setEventMessages(
+				'BankConnect import upload failed (error '.$uploadError.')',
+				null,
+				'errors'
+			);
+		} elseif (empty($upload['tmp_name']) || !is_uploaded_file($upload['tmp_name'])) {
+			setEventMessages('BankConnect import upload is invalid', null, 'errors');
+		} else {
 		try {
 			$service = new ImportService($store);
-			$result = $service->importFile($_FILES['camtfile']['tmp_name'], $accountid, $_FILES['camtfile']['name']);
-			$store->audit($user->id, 'import', $result['total'].' tx from '.$_FILES['camtfile']['name'].' ('.$result['imported'].' new, '.$result['duplicates'].' duplicates)');
+			$result = $service->importFile($upload['tmp_name'], $accountid, (string) ($upload['name'] ?? 'import'));
+			$store->audit($user->id, 'import', $result['total'].' tx from '.(string) ($upload['name'] ?? 'import').' ('.$result['imported'].' new, '.$result['duplicates'].' duplicates)');
 			setEventMessages($langs->trans('BankConnectImportOk', $result['imported'], $result['duplicates']), null);
 		} catch (RuntimeException $e) {
 			setEventMessages($langs->trans('BankConnectImportFailed').': '.$e->getMessage(), null, 'errors');
+		}
 		}
 	}
 } elseif ($action === 'match' && $user->rights->bankconnect->write) {
