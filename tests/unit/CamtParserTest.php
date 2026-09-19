@@ -63,6 +63,13 @@ XML;
 </Document>
 XML;
 
+    public function testOversizedXmlIsRejectedBeforeParsing(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('10 MB limit');
+        (new CamtParser())->parse(str_repeat('x', CamtParser::MAX_XML_BYTES + 1));
+    }
+
     public function testParsesAmountSignAndDate(): void
     {
         $txs = (new CamtParser())->parse(self::CAMT);
