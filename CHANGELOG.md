@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.0 (2026-09-19)
+
+### Added
+- **ImportService** — fælles import-flow for camt-filer: `import($xml)` og
+  `importFile($path)` returnerer nu præcise tællinger: `imported`, `duplicates`
+  og `total`. Dedup på hash (dato, beløb, reference, modpart).
+- **BankConnectStore::upsertTransactionDetailed()** — returnerer `rowid` +
+  `duplicate`-flag. Gammel `upsertTransaction` delegerer for kompatibilitet.
+- **reconcile.php** — manuel filupload bruger nu `ImportService`; feedback viser
+  dubletter i UI'et.
+- **Tests** — `ImportServiceTest` med 3 cases (nyt indhold, dedup-hit, blandet).
+  30/30 grønne, 89 assertions.
+
+### Changed
+- **CamtParser** — ensartet exception-kontrakt: tom/malformert XML kaster nu
+  altid `RuntimeException` (tidligere blanding med `InvalidArgumentException`).
+- **Sprogfiler** — import-besked har nu plads til dublet-tælling (da_DK + en_US).
 ## 0.1.1 (2026-09-19)
 
 ### Fixed
