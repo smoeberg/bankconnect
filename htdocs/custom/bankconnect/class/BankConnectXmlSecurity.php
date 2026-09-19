@@ -237,22 +237,23 @@ class BankConnectXmlSecurity
         $objDSig = new \RobRichards\XMLSecLibs\XMLSecurityDSig();
         $objDSig->setCanonicalMethod(\RobRichards\XMLSecLibs\XMLSecurityDSig::EXC_C14N);
 
-        // Sign serviceHeader and Body if present
+        // Sign the BankConnect serviceHeader and SOAP Body independently.
+        // Do not use a fallback here: if the serviceHeader exists, the Body
+        // must still be included in the signature references.
         $nodes = [];
-        foreach (['serviceHeader', 'Body', 'soapenv:Body'] as $name) {
-            $list = $doc->getElementsByTagName($name);
-            if ($list->length > 0) {
-                $nodes[] = $list->item(0);
-            }
+        $xpath = new DOMXPath($doc);
+        $serviceHeaders = $xpath->query(
+            '//*[local-name()="serviceHeader"]'
+        );
+        if ($serviceHeaders && $serviceHeaders->length > 0) {
+            $nodes[] = $serviceHeaders->item(0);
         }
-        // local-name Body
-        if (empty($nodes)) {
-            $xpath = new DOMXPath($doc);
-            $xpath->registerNamespace('s', 'http://schemas.xmlsoap.org/soap/envelope/');
-            $body = $xpath->query('//s:Body');
-            if ($body && $body->length) {
-                $nodes[] = $body->item(0);
-            }
+
+        $bodies = $xpath->query(
+            '//*[local-name()="Body" and namespace-uri()="http://schemas.xmlsoap.org/soap/envelope/"]'
+        );
+        if ($bodies && $bodies->length > 0) {
+            $nodes[] = $bodies->item(0);
         }
 
         if (empty($nodes)) {
