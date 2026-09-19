@@ -2,18 +2,21 @@
 /**
  * BankConnectCertificateManager – lifecycle of customer & bank certificates.
  *
- * Responsibilities:
- *  - getBankCertificate (cache per mainRegistrationNumber)
- *  - activateServiceAgreement (first-time onboarding)
- *  - renewCustomerCertificate (every ~3 years)
- *  - Secure storage of private key (AES-256-GCM, key from conf/env)
- *
- * Private keys must NEVER be stored in clear text.
+ * Onboarding (ActivateServiceAgreement) per official step-by-step guide:
+ *  1. getBankCertificate → bank cert for encryption
+ *  2. Generate RSA keypair with CN = functionIdentification@activationCode
+ *  3. CSR (DER/base64 without PEM headers / line breaks)
+ *  4. activationCode: strip dashes, base64-encode
+ *  5. Encrypt body with bank cert (handled by XmlSecurity at send time)
+ *  6. Parse response content → customer certificate PEM
+ *  7. Store cert + AES-GCM encrypted private key via AgreementStore
  */
 
 require_once __DIR__.'/BankConnectClient.php';
 require_once __DIR__.'/BankConnectException.php';
 require_once __DIR__.'/BankConnectLogger.php';
+require_once __DIR__.'/AgreementStore.php';
+require_once __DIR__.'/ServiceHeaderBuilder.php';
 
 if (!class_exists('Conf')) {
     class Conf
@@ -28,63 +31,155 @@ class BankConnectCertificateManager
     private Conf $conf;
     private BankConnectClient $client;
     private BankConnectLogger $logger;
+    private ?AgreementStore $store;
 
-    public function __construct(Conf $conf, ?BankConnectClient $client = null, ?BankConnectLogger $logger = null)
-    {
+    public function __construct(
+        Conf $conf,
+        ?BankConnectClient $client = null,
+        ?BankConnectLogger $logger = null,
+        ?AgreementStore $store = null
+    ) {
         $this->conf   = $conf;
         $this->client = $client ?? new BankConnectClient($conf);
         $this->logger = $logger ?? new BankConnectLogger();
+        $this->store  = $store;
+    }
+
+    public function setStore(AgreementStore $store): void
+    {
+        $this->store = $store;
     }
 
     /**
-     * Fetch bank certificate (used for XML-Encryption of payment payload).
-     * Caller should cache the result (e.g. once per day per agreement).
+     * Full first-time onboarding.
      *
-     * @return string PEM certificate(s)
+     * @param array{
+     *   activation_code:string,
+     *   function_identification:string,
+     *   main_registration_number?:string,
+     *   label?:string,
+     *   entity?:int,
+     *   fk_user?:int,
+     *   dry_run?:bool  If true, do not call SOAP – only generate + persist draft
+     * } $opts
+     * @return array{
+     *   agreement_id:int,
+     *   certificate_id:?int,
+     *   status:string,
+     *   csr_b64:string,
+     *   activation_code_b64:string
+     * }
      */
+    public function onboard(array $opts): array
+    {
+        $activationCode = preg_replace('/[^0-9A-Za-z]/', '', $opts['activation_code'] ?? '');
+        $functionId     = (string) ($opts['function_identification'] ?? '');
+        $mainReg        = (string) ($opts['main_registration_number'] ?? '8079'); // test default Sydbank
+        $dryRun         = !empty($opts['dry_run']);
+
+        if ($activationCode === '' || $functionId === '') {
+            throw new BankConnectException('activation_code and function_identification are required');
+        }
+
+        $keypair = $this->generateKeyPairAndCsr([
+            'commonName' => $functionId.'@'.$activationCode,
+        ]);
+
+        $csrB64 = $this->csrToRequestBody($keypair['csr']);
+        $actB64 = base64_encode($activationCode);
+
+        $header = (new ServiceHeaderBuilder())
+            ->setOrganisation($mainReg, 'DK')
+            ->setFunctionIdentification($functionId)
+            ->build();
+
+        $customerCertPem = null;
+        $status = 'draft';
+
+        if (!$dryRun) {
+            $raw = $this->activateServiceAgreement($activationCode, $keypair['csr'], $header);
+            $customerCertPem = $this->extractCustomerCertificatePem($raw);
+            if ($customerCertPem === null || $customerCertPem === '') {
+                throw new BankConnectException('No customer certificate found in activateServiceAgreement response');
+            }
+            $status = 'active';
+        }
+
+        if ($this->store === null) {
+            return [
+                'agreement_id'         => 0,
+                'certificate_id'       => null,
+                'status'               => $status,
+                'csr_b64'              => $csrB64,
+                'activation_code_b64'  => $actB64,
+                'customer_cert_pem'    => $customerCertPem,
+                'private_key_pem'      => $keypair['private_key'], // only when no store – caller must secure
+            ];
+        }
+
+        $agreementId = $this->store->createAgreement([
+            'entity'                    => (int) ($opts['entity'] ?? 1),
+            'label'                     => $opts['label'] ?? ('BC '.$functionId),
+            'bank_connect_id'           => $functionId,
+            'main_registration_number'  => $mainReg,
+            'status'                    => $status,
+            'fk_user_creat'             => (int) ($opts['fk_user'] ?? 0),
+        ]);
+
+        $certId = null;
+        if ($customerCertPem !== null) {
+            $validity = $this->parseCertValidity($customerCertPem);
+            $certId = $this->store->saveCertificate([
+                'fk_agreement'     => $agreementId,
+                'certificate_pem'  => $customerCertPem,
+                'private_key_enc'  => $this->encryptPrivateKey($keypair['private_key']),
+                'valid_from'       => $validity['from'],
+                'valid_to'         => $validity['to'],
+                'is_active'        => 1,
+            ]);
+            $this->store->updateAgreementStatus($agreementId, 'active', date('Y-m-d H:i:s'));
+        }
+
+        $this->logger->info('onboard_complete', [
+            'agreement_id' => $agreementId,
+            'certificate_id' => $certId,
+            'dry_run' => $dryRun,
+        ]);
+
+        // Wipe plaintext key from return
+        return [
+            'agreement_id'        => $agreementId,
+            'certificate_id'      => $certId,
+            'status'              => $status,
+            'csr_b64'             => $csrB64,
+            'activation_code_b64' => $actB64,
+        ];
+    }
+
     public function getBankCertificate(string $serviceHeaderXml): string
     {
         $raw = $this->client->getBankCertificate($serviceHeaderXml);
-        // TODO: extract PEM from SOAP response / CorporateMessage
-        return $raw;
+        $pem = $this->extractCertificatesFromContent($raw);
+        return $pem[0] ?? $raw;
     }
 
-    /**
-     * First-time activation.
-     * Requires: activation code from bank + PKCS#10 request.
-     *
-     * @param string $activationCode
-     * @param string $pkcs10Pem      Certificate signing request
-     * @param string $serviceHeaderXml
-     * @return string                Customer certificate (PEM)
-     */
     public function activateServiceAgreement(
         string $activationCode,
         string $pkcs10Pem,
         string $serviceHeaderXml
     ): string {
-        // TODO: build full ActivateServiceAgreement payload with
-        //       ActivationHeader + CertificateRequest + Signature
         $payload = $this->buildActivatePayload($activationCode, $pkcs10Pem, $serviceHeaderXml);
-        $raw = $this->client->activateServiceAgreement($payload);
-        // TODO: parse CorporateMessage, store cert + encrypted private key
-        return $raw;
+        return $this->client->activateServiceAgreement($payload);
     }
 
-    /**
-     * Renew customer certificate (must be done before valid_to).
-     * Request is signed with the *current* certificate.
-     */
     public function renewCustomerCertificate(string $pkcs10Pem, string $serviceHeaderXml): string
     {
         $payload = $this->buildRenewPayload($pkcs10Pem, $serviceHeaderXml);
-        $raw = $this->client->renewCustomerCertificate($payload);
-        return $raw;
+        return $this->client->renewCustomerCertificate($payload);
     }
 
     /**
-     * Generate RSA keypair + PKCS#10 CSR.
-     * Returns ['private_key' => PEM, 'csr' => PEM]
+     * @return array{private_key:string, csr:string}
      */
     public function generateKeyPairAndCsr(array $dn = []): array
     {
@@ -92,6 +187,12 @@ class BankConnectCertificateManager
             'private_key_bits' => 2048,
             'private_key_type' => OPENSSL_KEYTYPE_RSA,
         ];
+        foreach (['/etc/ssl/openssl.cnf', '/etc/pki/tls/openssl.cnf'] as $cnf) {
+            if (is_readable($cnf)) {
+                $config['config'] = $cnf;
+                break;
+            }
+        }
 
         $privKey = openssl_pkey_new($config);
         if ($privKey === false) {
@@ -99,13 +200,18 @@ class BankConnectCertificateManager
         }
 
         $defaultDn = [
-            'countryName'            => 'DK',
-            'organizationName'       => 'BankConnect Customer',
-            'commonName'             => 'BankConnect',
+            'countryName'      => 'DK',
+            'organizationName' => 'BankConnect Customer',
+            'commonName'       => 'BankConnect',
         ];
         $dn = array_merge($defaultDn, $dn);
 
-        $csr = openssl_csr_new($dn, $privKey, ['digest_alg' => 'sha256']);
+        $csrConfig = ['digest_alg' => 'sha256'];
+        if (isset($config['config'])) {
+            $csrConfig['config'] = $config['config'];
+        }
+
+        $csr = openssl_csr_new($dn, $privKey, $csrConfig);
         if ($csr === false) {
             throw new BankConnectException('Failed to create CSR: '.openssl_error_string());
         }
@@ -119,10 +225,14 @@ class BankConnectCertificateManager
         ];
     }
 
-    /**
-     * Encrypt private key for storage (AES-256-GCM).
-     * Encryption key is taken from BANKCONNECT_KEY_ENCRYPTION_SECRET.
-     */
+    /** Strip PEM headers/newlines → single base64 body for <certificateRequest> */
+    public function csrToRequestBody(string $csrPem): string
+    {
+        $body = preg_replace('/-----BEGIN[^-]*-----/', '', $csrPem);
+        $body = preg_replace('/-----END[^-]*-----/', '', $body);
+        return preg_replace('/\s+/', '', $body);
+    }
+
     public function encryptPrivateKey(string $privateKeyPem): string
     {
         $secret = $this->getEncryptionSecret();
@@ -141,7 +251,6 @@ class BankConnectCertificateManager
         if ($cipher === false) {
             throw new BankConnectException('Failed to encrypt private key');
         }
-        // Store as base64(iv + tag + ciphertext)
         return base64_encode($iv.$tag.$cipher);
     }
 
@@ -170,6 +279,90 @@ class BankConnectCertificateManager
         return $plain;
     }
 
+    /**
+     * Load active customer private key (decrypted) for an agreement.
+     */
+    public function loadCustomerPrivateKey(int $agreementId): string
+    {
+        if ($this->store === null) {
+            throw new BankConnectException('AgreementStore not configured');
+        }
+        $cert = $this->store->getActiveCertificate($agreementId);
+        if (!$cert) {
+            throw new BankConnectException("No active certificate for agreement {$agreementId}");
+        }
+        return $this->decryptPrivateKey($cert['private_key_enc']);
+    }
+
+    public function loadCustomerCertificatePem(int $agreementId): string
+    {
+        if ($this->store === null) {
+            throw new BankConnectException('AgreementStore not configured');
+        }
+        $cert = $this->store->getActiveCertificate($agreementId);
+        if (!$cert) {
+            throw new BankConnectException("No active certificate for agreement {$agreementId}");
+        }
+        return $cert['certificate_pem'];
+    }
+
+    /**
+     * Extract PEM certificates from SOAP / content base64 blob.
+     * @return string[]
+     */
+    public function extractCertificatesFromContent(string $raw): array
+    {
+        $pems = [];
+
+        // Already PEM?
+        if (str_contains($raw, '-----BEGIN CERTIFICATE-----')) {
+            if (preg_match_all('/-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/s', $raw, $m)) {
+                return $m[0];
+            }
+        }
+
+        // content tag base64
+        if (preg_match('/<content[^>]*>([^<]+)<\/content>/i', $raw, $m)) {
+            $decoded = base64_decode(trim($m[1]), true);
+            if ($decoded !== false && str_contains($decoded, '-----BEGIN')) {
+                if (preg_match_all('/-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/s', $decoded, $pm)) {
+                    return $pm[0];
+                }
+            }
+            // Maybe the content is the cert base64 without PEM headers
+            if ($decoded !== false && strlen($decoded) > 100) {
+                $pems[] = "-----BEGIN CERTIFICATE-----\n"
+                    .chunk_split(base64_encode($decoded), 64, "\n")
+                    ."-----END CERTIFICATE-----\n";
+            }
+        }
+
+        return $pems;
+    }
+
+    public function extractCustomerCertificatePem(string $raw): ?string
+    {
+        $list = $this->extractCertificatesFromContent($raw);
+        // Guide: response contains several certs; customer cert is among them.
+        // Prefer the last leaf-looking cert; for now return last non-empty.
+        if (empty($list)) {
+            return null;
+        }
+        return $list[count($list) - 1];
+    }
+
+    /** @return array{from:?string, to:?string} */
+    public function parseCertValidity(string $pem): array
+    {
+        $parsed = openssl_x509_parse($pem);
+        if ($parsed === false) {
+            return ['from' => null, 'to' => null];
+        }
+        $from = isset($parsed['validFrom_time_t']) ? date('Y-m-d H:i:s', $parsed['validFrom_time_t']) : null;
+        $to   = isset($parsed['validTo_time_t']) ? date('Y-m-d H:i:s', $parsed['validTo_time_t']) : null;
+        return ['from' => $from, 'to' => $to];
+    }
+
     private function getEncryptionSecret(): string
     {
         $g = $this->conf->global ?? [];
@@ -180,24 +373,25 @@ class BankConnectCertificateManager
                 .'Set a strong random secret (32+ bytes) in conf or environment.'
             );
         }
-        // Derive 32-byte key
         return hash('sha256', $secret, true);
     }
 
     private function buildActivatePayload(string $activationCode, string $pkcs10Pem, string $serviceHeaderXml): string
     {
-        // Skeleton – full XML per BankConnect API docs to be completed
-        $csrB64 = base64_encode($pkcs10Pem);
+        $codeClean = preg_replace('/[^0-9A-Za-z]/', '', $activationCode);
+        $actB64 = base64_encode($codeClean);
+        $csrB64 = $this->csrToRequestBody($pkcs10Pem);
+
         return '<activateServiceAgreement xmlns="http://bankconnect.dk/schema/2014">'
              . $serviceHeaderXml
-             . '<activationCode>'.htmlspecialchars($activationCode, ENT_XML1).'</activationCode>'
+             . '<activationCode>'.$actB64.'</activationCode>'
              . '<certificateRequest>'.$csrB64.'</certificateRequest>'
              . '</activateServiceAgreement>';
     }
 
     private function buildRenewPayload(string $pkcs10Pem, string $serviceHeaderXml): string
     {
-        $csrB64 = base64_encode($pkcs10Pem);
+        $csrB64 = $this->csrToRequestBody($pkcs10Pem);
         return '<renewCustomerCertificate xmlns="http://bankconnect.dk/schema/2014">'
              . $serviceHeaderXml
              . '<certificateRequestMessage>'
