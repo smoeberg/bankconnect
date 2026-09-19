@@ -44,7 +44,7 @@ class MockDoliDB
 		return false;
 	}
 
-	public function fetch_object($res)
+	public function fetch_object(&$res)
 	{
 		if (!is_array($res)) return false;
 		$row = array_shift($res);
@@ -121,8 +121,15 @@ class MockDoliDB
 		foreach ($parts as $p) {
 			$p = trim($p);
 			if ($p === '') continue;
-			if (preg_match('/^(\w+)\s+IS NULL$/i', $p, $m)) {
+			if (preg_match('/^\s*\d+\s*$/', $where)) {
+			return ($row['rowid'] ?? null) === (int)$where;
+		}
+		if (preg_match('/^(\w+)\s+IS NULL$/i', $p, $m)) {
 				if (($row[$m[1]] ?? null) !== null) return false;
+				continue;
+			}
+			if (preg_match('/^(\w+)\s+IS NOT NULL$/i', $p, $m)) {
+				if (($row[$m[1]] ?? null) === null) return false;
 				continue;
 			}
 			if (!preg_match('/^(\w+\.)?(\w+)\s*(=|<|>|<=|>=|LIKE|IN)\s*(.+)$/is', $p, $m)) return false;
@@ -223,6 +230,7 @@ class MockDoliDB
 	{
 		$rule = $ruleName === null ? 'NULL' : "'".addslashes($ruleName)."'";
 		$this->insert('llx_bankconnect_match', 'fk_transaction, match_type, rule_name, score, reason', "$txRowid, '$type', $rule, $score, 'seeded'");
+		$this->update('llx_bankconnect_transaction', "state = 'proposed'", (int)$txRowid);
 		return $this->nextId['llx_bankconnect_match'];
 	}
 

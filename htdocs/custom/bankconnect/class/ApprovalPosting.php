@@ -40,11 +40,11 @@ class ApprovalPosting
 	{
 		$match = $this->loadMatch($matchRowid);
 
-		if ($match['approved_by'] === null) {
-			throw new RuntimeException('BankConnect: refusing to post unapproved match '.$matchRowid);
-		}
 		if ($match['state'] === 'rejected') {
 			throw new RuntimeException('BankConnect: refusing to post rejected match '.$matchRowid);
+		}
+		if ($match['approved_by'] === null) {
+			throw new RuntimeException('BankConnect: refusing to post unapproved match '.$matchRowid);
 		}
 		if ($match['state'] === 'posted') {
 			// idempotent re-entry
@@ -75,6 +75,7 @@ class ApprovalPosting
 		$sql = "SELECT rowid FROM llx_bankconnect_transaction WHERE fk_bank_account = ".(int)$bankAccountId." AND state = 'approved' ORDER BY tx_date ASC";
 		$res = $this->db->query($sql);
 		$txids = [];
+		$n = 0;
 		while ($res && $o = $this->db->fetch_object($res)) {
 			$txids[] = (int)$o->rowid;
 		}
