@@ -8,6 +8,7 @@ require_once __DIR__.'/Pain002Parser.php';
 require_once __DIR__.'/BankConnectClient.php';
 require_once __DIR__.'/BankConnectException.php';
 require_once __DIR__.'/BankConnectLogger.php';
+require_once __DIR__.'/ServiceHeaderBuilder.php';
 
 if (!class_exists('Conf')) {
     class Conf { public $global = []; }
@@ -98,14 +99,24 @@ class PaymentBatchService
             $security = new BankConnectXmlSecurity($this->conf);
             $encrypted = $security->encryptPayload($batch['pain001_xml']);
             $paymentMessage = $security->buildPaymentMessage($encrypted, $batch['end_to_end_message_id']);
-            $signed = $security->signRequest($paymentMessage);
+            $serviceHeader = $this->buildServiceHeaderForBatch($batch);
+            $paymentMessage = preg_replace(
+                '/^(<transferPayments\\b[^>]*>)/',
+                '$1'.$serviceHeader,
+                $paymentMessage,
+                1,
+                $count
+            );
+            if ($count !== 1) {
+                throw new BankConnectException('Failed to attach BankConnect serviceHeader to payment request');
+            }
         } catch (Throwable $e) {
             $this->updateBatchStatus($batchId, 'rejected', ['message' => 'Payment preparation failed: '.$e->getMessage()]);
             throw new BankConnectException('Payment preparation failed: '.$e->getMessage(), 0, $e);
         }
 
         try {
-            $response = $this->client->transferPayments($signed, $batch['end_to_end_message_id']);
+            $response = $this->client->transferPayments($paymentMessage, $batch['end_to_end_message_id']);
         } catch (Throwable $e) {
             // The transport outcome is unknown. Never claim rejection or success.
             $this->updateBatchStatus($batchId, 'unknown', [
@@ -156,6 +167,38 @@ class PaymentBatchService
         $this->updateBatchStatus($batchId, $batchStatus, ['date_status' => date('Y-m-d H:i:s'), 'message' => 'Status refreshed from pain.002']);
         $this->logger->info('status_refreshed', ['batch_id' => $batchId, 'group_status' => $parsed['group_status'], 'updated' => $updated]);
         return ['group_status' => $parsed['group_status'], 'updated_lines' => $updated, 'transactions' => $parsed['transactions']];
+    }
+
+    private function buildServiceHeaderForBatch(array $batch): string
+    {
+        $agreementId = (int) ($batch['fk_agreement'] ?? 0);
+        if ($agreementId <= 0) {
+            throw new BankConnectException('Payment batch has no valid agreement');
+        }
+
+        $res = $this->db->query(
+            'SELECT bank_connect_id, main_registration_number '
+            .'FROM llx_bankconnect_agreement WHERE rowid = '.$agreementId
+        );
+        if (!$res) {
+            throw new BankConnectException('Failed to load BankConnect agreement for serviceHeader');
+        }
+        $agreement = $this->db->fetch_object($res);
+        if (!$agreement) {
+            throw new BankConnectException("BankConnect agreement {$agreementId} not found");
+        }
+
+        $mainReg = trim((string) ($agreement->main_registration_number ?? ''));
+        $functionId = trim((string) ($agreement->bank_connect_id ?? ''));
+        if ($mainReg === '' || $functionId === '') {
+            throw new BankConnectException('BankConnect agreement is missing serviceHeader identity');
+        }
+
+        return (new ServiceHeaderBuilder())
+            ->setOrganisation($mainReg, 'DK')
+            ->setFunctionIdentification($functionId)
+            ->setEndToEndMessageId((string) $batch['end_to_end_message_id'])
+            ->build();
     }
 
     private function deriveBatchStatus(?string $groupStatus, array $transactions): string
