@@ -17,10 +17,27 @@ class BankConnectStore
 		return $this->upsertTransactionDetailed($t, $fkBankAccount, $sourceFile)['rowid'];
 	}
 
-	/** @return array{rowid:int, duplicate:bool} */
+	/**
+	 * Prefer hash computed by CamtParser (includes text + acctSvcrRef).
+	 * Fallback hash only when parser did not supply one.
+	 *
+	 * @return array{rowid:int, duplicate:bool}
+	 */
 	public function upsertTransactionDetailed(array $t, int $fkBankAccount, string $sourceFile): array
 	{
-		$hash = hash('sha256', implode('|', [$t['date'], $t['amount'], $t['reference'] ?? '', $t['counterparty'] ?? '']));
+		if (!empty($t['hash'])) {
+			$hash = (string) $t['hash'];
+		} else {
+			$hash = hash('sha256', implode('|', [
+				$t['date'] ?? '',
+				$t['amount'] ?? '',
+				$t['reference'] ?? '',
+				$t['counterparty'] ?? '',
+				$t['text'] ?? '',
+				$t['acctSvcrRef'] ?? '',
+			]));
+		}
+
 		$sql = "SELECT rowid FROM llx_bankconnect_transaction WHERE hash = '".$this->db->escape($hash)."'";
 		$res = $this->db->query($sql);
 		if ($res && $obj = $this->db->fetch_object($res)) {
