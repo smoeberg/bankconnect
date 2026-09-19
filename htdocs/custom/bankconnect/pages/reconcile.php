@@ -16,6 +16,13 @@ $langs->load('bankconnect@bankconnect');
 $store = new BankConnectStore($db);
 $accountid = GETPOST('account', 'int') ?: 0;
 $action = GETPOST('action', 'alpha');
+$requestMethod = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
+$writeAction = in_array($action, ['import', 'match', 'approve', 'reject', 'post'], true);
+if ($writeAction) {
+	if ($requestMethod !== 'POST' || !checkToken()) {
+		accessforbidden();
+	}
+}
 
 /*
  * Actions (write permission required)
@@ -141,8 +148,21 @@ if ($accountid) {
 		print '<td>'.round(100 * (float)$o->score).'%</td>';
 		print '<td>'.dol_escape_htmltag($o->reason ?? '').'</td>';
 		print '<td>';
-		print '<a class="button button-success" href="'.$_SERVER['PHP_SELF'].'?account='.$accountid.'&action=approve&matchid='.$o->mid.'&token='.newToken().'">'.$langs->trans('BankConnectApprove').'</a> ';
-		print '<a class="button" href="'.$_SERVER['PHP_SELF'].'?account='.$accountid.'&action=reject&matchid='.$o->mid.'&token='.newToken().'">'.$langs->trans('BankConnectReject').'</a>';
+		print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" style="display:inline">';
+		print '<input type="hidden" name="token" value="'.newToken().'">';
+		print '<input type="hidden" name="account" value="'.$accountid.'">';
+		print '<input type="hidden" name="action" value="approve">';
+		print '<input type="hidden" name="matchid" value="'.$o->mid.'">';
+		print '<input type="submit" class="button button-success" value="'.$langs->trans('BankConnectApprove').'">';
+		print '</form> ';
+		
+		print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" style="display:inline">';
+		print '<input type="hidden" name="token" value="'.newToken().'">';
+		print '<input type="hidden" name="account" value="'.$accountid.'">';
+		print '<input type="hidden" name="action" value="reject">';
+		print '<input type="hidden" name="matchid" value="'.$o->mid.'">';
+		print '<input type="submit" class="button" value="'.$langs->trans('BankConnectReject').'">';
+		print '</form>';
 		print '</td>';
 		print '</tr>';
 	}
