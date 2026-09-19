@@ -117,6 +117,21 @@ class BankConnectCertificateManager
             ];
         }
 
+        $certId = null;
+        $validity = null;
+        if ($customerCertPem !== null) {
+            $validity = $this->parseCertValidity($customerCertPem);
+            if ($validity['from'] === null || $validity['to'] === null) {
+                throw new BankConnectException('Customer certificate could not be parsed');
+            }
+            if (!$this->isCertificateCurrentlyValid($validity)) {
+                throw new BankConnectException('Customer certificate is outside its validity period');
+            }
+            if (!$this->validateCertificateAndPrivateKey($customerCertPem, $keypair['private_key'])) {
+                throw new BankConnectException('Customer certificate does not match generated private key');
+            }
+        }
+
         $agreementId = $this->store->createAgreement([
             'entity'                    => (int) ($opts['entity'] ?? 1),
             'label'                     => $opts['label'] ?? ('BC '.$functionId),
@@ -126,15 +141,7 @@ class BankConnectCertificateManager
             'fk_user_creat'             => (int) ($opts['fk_user'] ?? 0),
         ]);
 
-        $certId = null;
         if ($customerCertPem !== null) {
-            $validity = $this->parseCertValidity($customerCertPem);
-            if ($validity['from'] === null || $validity['to'] === null) {
-                throw new BankConnectException('Customer certificate could not be parsed');
-            }
-            if (!$this->validateCertificateAndPrivateKey($customerCertPem, $keypair['private_key'])) {
-                throw new BankConnectException('Customer certificate does not match generated private key');
-            }
             $certId = $this->store->saveCertificate([
                 'fk_agreement'     => $agreementId,
                 'certificate_pem'  => $customerCertPem,
@@ -300,7 +307,20 @@ class BankConnectCertificateManager
         if (!$cert) {
             throw new BankConnectException("No active certificate for agreement {$agreementId}");
         }
-        return $this->decryptPrivateKey($cert['private_key_enc']);
+        $validity = [
+            'from' => $cert['valid_from'] ?? null,
+            'to' => $cert['valid_to'] ?? null,
+        ];
+        if (!$this->isCertificateCurrentlyValid($validity)) {
+            throw new BankConnectException("Active certificate for agreement {$agreementId} is outside its validity period");
+        }
+
+        $privateKey = $this->decryptPrivateKey($cert['private_key_enc']);
+        if (!$this->validateCertificateAndPrivateKey($cert['certificate_pem'], $privateKey)) {
+            throw new BankConnectException("Active certificate for agreement {$agreementId} does not match its private key");
+        }
+
+        return $privateKey;
     }
 
     public function loadCustomerCertificatePem(int $agreementId): string
@@ -312,6 +332,19 @@ class BankConnectCertificateManager
         if (!$cert) {
             throw new BankConnectException("No active certificate for agreement {$agreementId}");
         }
+        $validity = [
+            'from' => $cert['valid_from'] ?? null,
+            'to' => $cert['valid_to'] ?? null,
+        ];
+        if (!$this->isCertificateCurrentlyValid($validity)) {
+            throw new BankConnectException("Active certificate for agreement {$agreementId} is outside its validity period");
+        }
+
+        $privateKey = $this->decryptPrivateKey($cert['private_key_enc']);
+        if (!$this->validateCertificateAndPrivateKey($cert['certificate_pem'], $privateKey)) {
+            throw new BankConnectException("Active certificate for agreement {$agreementId} does not match its private key");
+        }
+
         return $cert['certificate_pem'];
     }
 
@@ -369,6 +402,20 @@ class BankConnectCertificateManager
             return false;
         }
         return openssl_x509_check_private_key($certificate, $privateKey);
+    }
+
+    /** @param array{from:?string,to:?string} $validity */
+    public function isCertificateCurrentlyValid(array $validity, ?int $now = null): bool
+    {
+        if ($validity['from'] === null || $validity['to'] === null) {
+            return false;
+        }
+
+        $from = strtotime($validity['from']);
+        $to = strtotime($validity['to']);
+        $now = $now ?? time();
+
+        return $from !== false && $to !== false && $from <= $now && $now <= $to;
     }
 
     /** @return array{from:?string, to:?string} */
