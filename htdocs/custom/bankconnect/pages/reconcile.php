@@ -24,47 +24,32 @@ if ($writeAction) {
 	}
 }
 
-/*
- * Actions (write permission required)
- */
 if ($action === 'import' && $user->rights->bankconnect->write) {
-	if (!empty($_FILES['camtfile']['tmp_name'])) {
-		// Validate upload status, size, and actual file content. Never trust the browser MIME type.
-		$allowedTypes = ['text/xml', 'application/xml'];
-		$maxSize = 10 * 1024 * 1024;  // 10MB
-		$upload = $_FILES['camtfile'];
-
-		if (($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-			setEventMessages($langs->trans('BankConnectInvalidFileType'), null, 'errors');
-			return;
-		}
-		if ((int) ($upload['size'] ?? 0) > $maxSize) {
-			setEventMessages($langs->trans('BankConnectFileTooLarge'), null, 'errors');
-			return;
-		}
-		if (!function_exists('finfo_open')) {
-			setEventMessages($langs->trans('BankConnectInvalidFileType'), null, 'errors');
-			return;
-		}
-		$finfo = finfo_open(FILEINFO_MIME_TYPE);
-		if ($finfo === false) {
-			setEventMessages($langs->trans('BankConnectInvalidFileType'), null, 'errors');
-			return;
-		}
-		$mime = finfo_file($finfo, $upload['tmp_name']);
-		finfo_close($finfo);
-		if (!is_string($mime) || !in_array($mime, $allowedTypes, true)) {
-			setEventMessages($langs->trans('BankConnectInvalidFileType'), null, 'errors');
-			return;
-		}
-
-		try {
-			$service = new ImportService($store);
-			$result = $service->importFile($upload['tmp_name'], $accountid, $upload['name']);
-			$store->audit($user->id, 'import', $result['total'].' tx from '.$upload['name'].' ('.$result['imported'].' new, '.$result['duplicates'].' duplicates)');
-			setEventMessages($langs->trans('BankConnectImportOk', $result['imported'], $result['duplicates']), null);
-		} catch (RuntimeException $e) {
-			setEventMessages($langs->trans('BankConnectImportFailed').': '.$e->getMessage(), null, 'errors');
+	$upload = $_FILES['camtfile'] ?? null;
+	if ($upload !== null) {
+		$uploadError = (int) ($upload['error'] ?? UPLOAD_ERR_NO_FILE);
+		if ($uploadError !== UPLOAD_ERR_OK) {
+			setEventMessages('BankConnect import upload failed (error '.$uploadError.')', null, 'errors');
+		} elseif (empty($upload['tmp_name']) || !is_uploaded_file($upload['tmp_name'])) {
+			setEventMessages('BankConnect import upload is invalid', null, 'errors');
+		} else {
+			$originalName = (string) ($upload['name'] ?? 'import');
+			$extension = strtolower((string) pathinfo($originalName, PATHINFO_EXTENSION));
+			$finfo = new finfo(FILEINFO_MIME_TYPE);
+			$mime = $finfo->file($upload['tmp_name']);
+			$allowedMimes = ['application/xml', 'text/xml', 'application/octet-stream'];
+			if ($extension !== 'xml' || $mime === false || !in_array($mime, $allowedMimes, true)) {
+				setEventMessages('BankConnect import requires a valid XML CAMT upload', null, 'errors');
+			} else {
+				try {
+					$service = new ImportService($store);
+					$result = $service->importFile($upload['tmp_name'], $accountid, $originalName);
+					$store->audit($user->id, 'import', $result['total'].' tx from '.$originalName.' ('.$result['imported'].' new, '.$result['duplicates'].' duplicates)');
+					setEventMessages($langs->trans('BankConnectImportOk', $result['imported'], $result['duplicates']), null);
+				} catch (RuntimeException $e) {
+					setEventMessages($langs->trans('BankConnectImportFailed').': '.$e->getMessage(), null, 'errors');
+				}
+			}
 		}
 	}
 } elseif ($action === 'match' && $user->rights->bankconnect->write) {
@@ -90,14 +75,10 @@ if ($action === 'import' && $user->rights->bankconnect->write) {
 	setEventMessages($langs->trans('BankConnectPosted', $n), null);
 }
 
-/*
- * View
- */
 llxHeader('', 'BankConnect');
 
 print load_fiche_titre('BankConnect — '.$langs->trans('BankConnectReconcile'), '', 'bank');
 
-// Account selector + import form
 print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" enctype="multipart/form-data">';
 print '<input type="hidden" name="token" value="'.newToken().'">';
 print '<input type="hidden" name="action" value="import">';
@@ -112,7 +93,6 @@ print '<input type="file" name="camtfile" accept=".xml"> ';
 print '<input type="submit" class="button" value="'.$langs->trans('BankConnectImport').'">';
 print '</form>';
 
-// Unmatched list
 $unmatched = $accountid ? $store->unmatchedTransactions($accountid) : [];
 print '<p>'.dol_escape_htmltag($langs->trans('BankConnectUnmatchedCount', count($unmatched))).'</p>';
 
@@ -126,19 +106,29 @@ if (count($unmatched)) {
 }
 
 print '<table class="noborder centpercent">';
-print '<tr class="liste_titre"><th>Date</th><th>Amount</th><th>Ref</th><th>Counterparty</th><th>Proposal</th><th></th></tr>';
+print '<tr class="liste_titre"><th>Date</th><th>Amount</th><th>Ref</th><th>Counterparty</th><th>Status</th><th>Proposal</th><th></th></tr>';
 foreach ($unmatched as $tx) {
 	print '<tr>';
 	print '<td>'.dol_print_date($tx['tx_date'], 'day').'</td>';
 	print '<td>'.price($tx['amount']).' '.$tx['currency'].'</td>';
 	print '<td>'.dol_escape_htmltag($tx['reference'] ?? '').'</td>';
 	print '<td>'.dol_escape_htmltag($tx['counterparty'] ?? '').'</td>';
+	print '<td>';
+	if (!empty($tx['requires_manual_review'])) {
+		print '<span class="badge badge-warning">Manuel gennemgang</span>';
+	}
+	if (!empty($tx['is_reversal'])) {
+		print ' <span class="badge badge-danger">Reversal</span>';
+	}
+	if (empty($tx['requires_manual_review']) && empty($tx['is_reversal'])) {
+		print '—';
+	}
+	print '</td>';
 	print '<td>—</td><td></td>';
 	print '</tr>';
 }
 print '</table>';
 
-// Post approved matches button
 if ($accountid) {
 	$approvedCount = 0;
 	$sqlc = "SELECT COUNT(*) AS c FROM llx_bankconnect_transaction WHERE fk_bank_account = ".(int)$accountid." AND state = 'approved'";
@@ -154,7 +144,6 @@ if ($accountid) {
 	}
 }
 
-// Proposed matches awaiting approval
 if ($accountid) {
 	$sql = "SELECT m.rowid AS mid, m.match_type, m.rule_name, m.score, m.reason, t.tx_date, t.amount, t.currency, t.reference, t.counterparty
 			FROM llx_bankconnect_match m
@@ -183,7 +172,6 @@ if ($accountid) {
 		print '<input type="hidden" name="matchid" value="'.$o->mid.'">';
 		print '<input type="submit" class="button button-success" value="'.$langs->trans('BankConnectApprove').'">';
 		print '</form> ';
-		
 		print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" style="display:inline">';
 		print '<input type="hidden" name="token" value="'.newToken().'">';
 		print '<input type="hidden" name="account" value="'.$accountid.'">';
