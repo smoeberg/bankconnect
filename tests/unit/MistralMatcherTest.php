@@ -176,35 +176,6 @@ class MistralMatcherTest extends TestCase
         $this->assertSame('none', $unknown->match(bcMakeTx(), bcMakeCandidates())->matchType);
     }
 
-    /** 6. AI slået fra -> none, ingen transport-kald */
-    public function testDisabledReturnsNoneWithoutCallingApi(): void
-    {
-        $matcher = new MistralMatcher(bcMatcherConf(['BANKCONNECT_AI_ENABLED' => 0]));
-        $called = false;
-        $matcher->setTransport(function () use (&$called) {
-            $called = true;
-            return ['status' => 200, 'body' => bcApiBody(['match_type' => 'exact', 'confidence' => 1.0, 'suggested' => []])];
-        });
-        $r = $matcher->match(bcMakeTx(), bcMakeCandidates());
-        $this->assertSame('none', $r->matchType);
-        $this->assertSame('AI disabled', $r->reason);
-        $this->assertFalse($called);
-    }
-
-    /** 6b. Ingen kandidater -> none, ingen API-kald */
-    public function testNoCandidatesReturnsNone(): void
-    {
-        $matcher = new MistralMatcher(bcMatcherConf());
-        $called = false;
-        $matcher->setTransport(function () use (&$called) {
-            $called = true;
-            return ['status' => 200, 'body' => bcApiBody(['match_type' => 'none', 'confidence' => 0.0, 'suggested' => []])];
-        });
-        $r = $matcher->match(bcMakeTx(), []);
-        $this->assertSame('none', $r->matchType);
-        $this->assertFalse($called);
-    }
-
     public function testRateLimitPersistsAcrossMatcherInstances(): void
     {
         $path = sys_get_temp_dir().'/bankconnect-rate-limit-'.bin2hex(random_bytes(8)).'.json';
@@ -234,6 +205,35 @@ class MistralMatcherTest extends TestCase
         } finally {
             @unlink($path);
         }
+    }
+
+    /** 6. AI slået fra -> none, ingen transport-kald */
+    public function testDisabledReturnsNoneWithoutCallingApi(): void
+    {
+        $matcher = new MistralMatcher(bcMatcherConf(['BANKCONNECT_AI_ENABLED' => 0]));
+        $called = false;
+        $matcher->setTransport(function () use (&$called) {
+            $called = true;
+            return ['status' => 200, 'body' => bcApiBody(['match_type' => 'exact', 'confidence' => 1.0, 'suggested' => []])];
+        });
+        $r = $matcher->match(bcMakeTx(), bcMakeCandidates());
+        $this->assertSame('none', $r->matchType);
+        $this->assertSame('AI disabled', $r->reason);
+        $this->assertFalse($called);
+    }
+
+    /** 6b. Ingen kandidater -> none, ingen API-kald */
+    public function testNoCandidatesReturnsNone(): void
+    {
+        $matcher = new MistralMatcher(bcMatcherConf());
+        $called = false;
+        $matcher->setTransport(function () use (&$called) {
+            $called = true;
+            return ['status' => 200, 'body' => bcApiBody(['match_type' => 'none', 'confidence' => 0.0, 'suggested' => []])];
+        });
+        $r = $matcher->match(bcMakeTx(), []);
+        $this->assertSame('none', $r->matchType);
+        $this->assertFalse($called);
     }
 
     /** 7. testConnection */
