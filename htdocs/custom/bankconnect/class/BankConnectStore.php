@@ -57,13 +57,19 @@ class BankConnectStore
 			throw new RuntimeException('BankConnect: insert transaction failed: '.$this->db->lasterror());
 		}
 
+		// MySQL reports 1 row affected for an insert and 0 for our no-op
+		// duplicate-key update. Capture that before the reload.
+		$affectedRes = $this->db->query('SELECT ROW_COUNT() AS affected');
+		$affected = $affectedRes ? $this->db->fetch_object($affectedRes) : false;
+		$isDuplicate = $affected && (int)$affected->affected === 0;
+
 		// Re-read after the atomic write. This also handles the race where
 		// another importer won between our initial SELECT and INSERT.
 		$res = $this->db->query($sql = "SELECT rowid FROM llx_bankconnect_transaction WHERE hash = '".$this->db->escape($hash)."'");
 		if (!$res || !($obj = $this->db->fetch_object($res))) {
 			throw new RuntimeException('BankConnect: transaction upsert succeeded but row cannot be reloaded');
 		}
-		return ['rowid' => (int)$obj->rowid, 'duplicate' => false];
+		return ['rowid' => (int)$obj->rowid, 'duplicate' => $isDuplicate];
 	}
 
 	/** Persist a proposed match (rule or AI). */
