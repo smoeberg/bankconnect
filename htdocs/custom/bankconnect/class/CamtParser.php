@@ -31,8 +31,12 @@ class CamtParser
             throw new RuntimeException('Empty XML');
         }
 
+        if (strlen($xml) > ImportService::MAX_IMPORT_BYTES) {
+            throw new RuntimeException('CAMT XML exceeds the 10 MB limit');
+        }
+
         $prev = libxml_use_internal_errors(true);
-        $root = simplexml_load_string($xml);
+        $root = simplexml_load_string($xml, 'SimpleXMLElement', LIBXML_NONET);
         if ($root === false) {
             libxml_clear_errors();
             libxml_use_internal_errors($prev);
