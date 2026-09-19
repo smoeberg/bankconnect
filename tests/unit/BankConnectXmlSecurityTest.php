@@ -89,6 +89,43 @@ class BankConnectXmlSecurityTest extends TestCase
         $sec->signRequest($xml);
     }
 
+    public function testSignRequestReferencesServiceHeaderAndSoapBody(): void
+    {
+        if (!class_exists('\\RobRichards\\XMLSecLibs\\XMLSecurityDSig')) {
+            $this->markTestSkipped('xmlseclibs is not available');
+        }
+
+        $sec = new BankConnectXmlSecurity(new Conf());
+        $sec->setCustomerPrivateKey($this->privatePem);
+
+        $xml = '<?xml version="1.0" encoding="UTF-8"?>'
+             . '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+             . '<soapenv:Header><serviceHeader><functionIdentification>test</functionIdentification></serviceHeader></soapenv:Header>'
+             . '<soapenv:Body><transferPayments xmlns="http://bankconnect.dk/schema/2014"><paymentMessage/></transferPayments></soapenv:Body>'
+             . '</soapenv:Envelope>';
+
+        $signed = $sec->signRequest($xml);
+
+        $doc = new DOMDocument();
+        $this->assertTrue($doc->loadXML($signed));
+
+        $xpath = new DOMXPath($doc);
+        $xpath->registerNamespace('ds', 'http://www.w3.org/2000/09/xmldsig#');
+
+        $references = $xpath->query('//ds:Signature/ds:SignedInfo/ds:Reference');
+        $this->assertNotFalse($references);
+        $this->assertCount(2, $references);
+
+        $uris = [];
+        foreach ($references as $reference) {
+            $uris[] = (string) $reference->getAttribute('URI');
+        }
+
+        $this->assertCount(2, array_filter($uris, static fn(string $uri): bool => $uri !== ''));
+        $this->assertSame(1, $xpath->query('//*[local-name()="serviceHeader"]')->length);
+        $this->assertSame(1, $xpath->query('//*[local-name()="Body" and namespace-uri()="http://schemas.xmlsoap.org/soap/envelope/"]')->length);
+    }
+
     public function testServiceHeaderBuilder(): void
     {
         $h = (new ServiceHeaderBuilder())

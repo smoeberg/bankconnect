@@ -17,6 +17,10 @@ $action = GETPOST('action', 'aZ09');
 $store = new AgreementStore($db);
 
 if ($action === 'onboard' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!checkToken()) {
+        accessforbidden();
+    }
+
     $activation = GETPOST('activation_code', 'alphanohtml');
     $functionId = GETPOST('function_identification', 'alphanohtml');
     $mainReg = GETPOST('main_registration_number', 'alphanohtml') ?: '8079';
