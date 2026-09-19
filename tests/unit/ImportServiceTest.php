@@ -44,6 +44,21 @@ class ImportServiceTest extends TestCase
 		$this->assertSame(2, $r['total']);
 	}
 
+	public function testImportFileRejectsOversizedFile(): void
+	{
+		$path = tempnam(sys_get_temp_dir(), 'bankconnect-import-');
+		$this->assertNotFalse($path);
+
+		try {
+			$this->assertNotFalse(file_put_contents($path, str_repeat('x', ImportService::MAX_IMPORT_BYTES + 1)));
+			$this->expectException(RuntimeException::class);
+			$this->expectExceptionMessage('10 MB limit');
+			(new ImportService($this->makeStore()))->importFile($path);
+		} finally {
+			@unlink($path);
+		}
+	}
+
 	public function testEmptyXmlThrowsSingleExceptionType(): void
 	{
 		$this->expectException(RuntimeException::class);
