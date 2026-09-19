@@ -1,6 +1,6 @@
 <?php
 
-use PHPUnit\\Framework\\TestCase;
+use PHPUnit\Framework\TestCase;
 
 require_once __DIR__.'/bootstrap.php';
 require_once __DIR__.'/MockDoliDB.php';
