@@ -107,7 +107,7 @@ class MockDoliDB
 		if ($wpos !== false) {
 			$after = substr($rest, $wpos + 6);
 			$cut = strlen($after);
-			foreach (['ORDER BY ', 'LIMIT '] as $kw) {
+			foreach (['ORDER BY ', 'LIMIT ', 'FOR UPDATE'] as $kw) {
 				$p = stripos($after, $kw);
 				if ($p !== false && $p < $cut) $cut = $p;
 			}
