@@ -19,6 +19,15 @@ if (!class_exists('Conf')) {
 
 class PaymentBatchService
 {
+    private const STATUS_DRAFT = 'draft';
+    private const STATUS_PREPARED = 'prepared';
+    private const STATUS_SUBMITTED = 'submitted';
+    private const STATUS_UNKNOWN = 'unknown';
+    private const STATUS_ACCEPTED = 'accepted';
+    private const STATUS_PARTIAL = 'partial';
+    private const STATUS_REJECTED = 'rejected';
+    private const STATUS_PENDING = 'pending';
+
     private $db;
     private Conf $conf;
     private BankConnectLogger $logger;
@@ -52,7 +61,7 @@ class PaymentBatchService
                 'fk_agreement'          => $fkAgreement,
                 'end_to_end_message_id' => $e2eMessageId,
                 'msg_id'                => $msgId,
-                'status'                => 'draft',
+                'status'                => self::STATUS_DRAFT,
                 'pain001_xml'           => $xml,
                 'control_sum'           => $ctrlSum,
                 'nb_of_txs'             => $nbOfTxs,
@@ -85,6 +94,14 @@ class PaymentBatchService
     }
 
     /**
+     * Submit a draft payment batch to BankConnect.
+     *
+     * draft -> prepared -> submitted
+     * prepared/submitted transport uncertainty -> unknown
+     *
+     * An absent client is an integration error and MUST NOT be represented as
+     * a successful bank submission.
+     *
      * @return array{status:string, response_code:?string, correlation_id:?string}
      */
     public function sendBatch(int $batchId): array
@@ -93,54 +110,69 @@ class PaymentBatchService
         if (!$batch) {
             throw new BankConnectException("Batch {$batchId} not found");
         }
-        if (($batch['status'] ?? '') !== 'draft') {
+        if (($batch['status'] ?? '') !== self::STATUS_DRAFT) {
             throw new BankConnectException("Batch {$batchId} is not in draft status");
         }
-
         if ($this->client === null) {
-            $this->updateBatchStatus($batchId, 'sent', [
-                'response_code' => 'STUB',
-                'message'       => 'SOAP transfer not yet wired – marked sent for testing',
-                'date_sent'     => date('Y-m-d H:i:s'),
+            throw new BankConnectException('BankConnectClient is required to submit a payment batch');
+        }
+
+        $this->updateBatchStatus($batchId, self::STATUS_PREPARED, [
+            'message' => 'Payment payload prepared for BankConnect submission',
+        ]);
+
+        try {
+            require_once __DIR__.'/BankConnectXmlSecurity.php';
+            $security = new BankConnectXmlSecurity($this->conf);
+
+            $encrypted = $security->encryptPayload($batch['pain001_xml']);
+            $paymentMessage = $security->buildPaymentMessage($encrypted, $batch['end_to_end_message_id']);
+            $signed = $security->signRequest($paymentMessage);
+
+            // Once handed to the transport, a timeout/failure cannot prove
+            // whether the bank received it. Persist UNKNOWN rather than
+            // allowing a caller to treat the operation as a safe retry.
+            $this->updateBatchStatus($batchId, self::STATUS_SUBMITTED, [
+                'message' => 'Payment request submitted to BankConnect transport',
+            ]);
+
+            $response = $this->client->transferPayments($signed, $batch['end_to_end_message_id']);
+
+            $correlationId = null;
+            $responseCode  = 'OK';
+            if (preg_match('/<correlationId>([^<]+)<\/correlationId>/', $response, $m)) {
+                $correlationId = $m[1];
+            }
+            if (preg_match('/<responseCode>([^<]+)<\/responseCode>/', $response, $m)) {
+                $responseCode = $m[1];
+            }
+
+            $this->updateBatchStatus($batchId, self::STATUS_SUBMITTED, [
+                'response_code'  => $responseCode,
+                'correlation_id' => $correlationId,
+                'date_sent'      => date('Y-m-d H:i:s'),
+                'message'        => 'transferPayments accepted by transport',
             ]);
 
             return [
-                'status'         => 'sent',
-                'response_code'  => 'STUB',
-                'correlation_id' => null,
+                'status'         => self::STATUS_SUBMITTED,
+                'response_code'  => $responseCode,
+                'correlation_id' => $correlationId,
             ];
+        } catch (Throwable $e) {
+            $this->updateBatchStatus($batchId, self::STATUS_UNKNOWN, [
+                'message' => 'BankConnect submission outcome is unknown: '.$e->getMessage(),
+            ]);
+            $this->logger->error('payment_submission_unknown', [
+                'batch_id' => $batchId,
+                'error'    => $e->getMessage(),
+            ]);
+            throw new BankConnectException(
+                'BankConnect submission outcome is unknown; do not retry blindly: '.$e->getMessage(),
+                0,
+                $e
+            );
         }
-
-        require_once __DIR__.'/BankConnectXmlSecurity.php';
-        $security = new BankConnectXmlSecurity($this->conf);
-
-        $encrypted = $security->encryptPayload($batch['pain001_xml']);
-        $paymentMessage = $security->buildPaymentMessage($encrypted, $batch['end_to_end_message_id']);
-        $signed = $security->signRequest($paymentMessage);
-
-        $response = $this->client->transferPayments($signed, $batch['end_to_end_message_id']);
-
-        $correlationId = null;
-        $responseCode  = 'OK';
-        if (preg_match('/<correlationId>([^<]+)<\/correlationId>/', $response, $m)) {
-            $correlationId = $m[1];
-        }
-        if (preg_match('/<responseCode>([^<]+)<\/responseCode>/', $response, $m)) {
-            $responseCode = $m[1];
-        }
-
-        $this->updateBatchStatus($batchId, 'sent', [
-            'response_code'  => $responseCode,
-            'correlation_id' => $correlationId,
-            'date_sent'      => date('Y-m-d H:i:s'),
-            'message'        => 'transferPayments accepted',
-        ]);
-
-        return [
-            'status'         => 'sent',
-            'response_code'  => $responseCode,
-            'correlation_id' => $correlationId,
-        ];
     }
 
     /**
@@ -165,7 +197,6 @@ class PaymentBatchService
                 throw new BankConnectException('ServiceHeader XML is required for getStatus');
             }
             $raw = $this->client->getStatus($serviceHeaderXml);
-            // Extract payload from SOAP if needed – for now assume body contains pain.002
             $pain002Xml = $raw;
         }
 
@@ -187,7 +218,6 @@ class PaymentBatchService
             }
         }
 
-        // Roll up batch status
         $batchStatus = $this->deriveBatchStatus($parsed['group_status'], $parsed['transactions']);
         $this->updateBatchStatus($batchId, $batchStatus, [
             'date_status' => date('Y-m-d H:i:s'),
@@ -210,13 +240,13 @@ class PaymentBatchService
     private function deriveBatchStatus(?string $groupStatus, array $transactions): string
     {
         if ($groupStatus === 'ACCP' || $groupStatus === 'ACSC') {
-            return 'accepted';
+            return self::STATUS_ACCEPTED;
         }
         if ($groupStatus === 'RJCT') {
-            return 'rejected';
+            return self::STATUS_REJECTED;
         }
         if ($groupStatus === 'PART') {
-            return 'partial';
+            return self::STATUS_PARTIAL;
         }
 
         $statuses = array_unique(array_map(
@@ -227,13 +257,13 @@ class PaymentBatchService
         if (count($statuses) === 1) {
             return $statuses[0];
         }
-        if (in_array('rejected', $statuses, true) && in_array('accepted', $statuses, true)) {
-            return 'partial';
+        if (in_array(self::STATUS_REJECTED, $statuses, true) && in_array(self::STATUS_ACCEPTED, $statuses, true)) {
+            return self::STATUS_PARTIAL;
         }
-        if (in_array('pending', $statuses, true)) {
-            return 'pending';
+        if (in_array(self::STATUS_PENDING, $statuses, true)) {
+            return self::STATUS_PENDING;
         }
-        return 'sent';
+        return self::STATUS_SUBMITTED;
     }
 
     private function updateBatchLineByEndToEnd(
@@ -257,8 +287,6 @@ class PaymentBatchService
 
         return (bool) $this->db->query($sql);
     }
-
-    // ------------------------------------------------------------------
 
     private function begin(): void
     {
