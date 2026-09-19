@@ -22,7 +22,6 @@ class BankConnectXmlSecurityTest extends TestCase
 
         $priv = openssl_pkey_new($config);
         if ($priv === false) {
-            // Retry with explicit config path if present
             foreach (['/etc/ssl/openssl.cnf', '/etc/pki/tls/openssl.cnf'] as $cnf) {
                 if (is_readable($cnf)) {
                     $config['config'] = $cnf;
@@ -59,7 +58,6 @@ class BankConnectXmlSecurityTest extends TestCase
     public function testEncryptDecryptRoundtrip(): void
     {
         $sec = new BankConnectXmlSecurity(new Conf());
-        // Bank "certificate" can be a public key PEM for our OpenSSL path
         $sec->setBankCertificate($this->publicPem);
 
         $xml = '<?xml version="1.0"?><Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.03"><CstmrCdtTrfInitn/></Document>';
@@ -84,9 +82,48 @@ class BankConnectXmlSecurityTest extends TestCase
     public function testSignWithoutKeyFailsClosed(): void
     {
         $sec = new BankConnectXmlSecurity(new Conf());
-        $xml = '<soapenv:Envelope><soapenv:Body/></soapenv:Envelope>';
+        $xml = '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body/></soapenv:Envelope>';
         $this->expectException(BankConnectException::class);
         $sec->signRequest($xml);
+    }
+
+    public function testSignRequestReferencesServiceHeaderAndBody(): void
+    {
+        if (!class_exists('\\RobRichards\\XMLSecLibs\\XMLSecurityDSig')) {
+            $this->markTestSkipped('xmlseclibs not installed');
+        }
+
+        $sec = new BankConnectXmlSecurity(new Conf());
+        $sec->setCustomerPrivateKey($this->privatePem);
+
+        $xml = '<?xml version="1.0" encoding="UTF-8"?>'
+            . '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+            . '<soap:Header>'
+            . '<serviceHeader xmlns="http://bankconnect.dk/schema/2014">'
+            . '<functionIdentification>0010888100007</functionIdentification>'
+            . '</serviceHeader>'
+            . '</soap:Header>'
+            . '<soap:Body><transferPayments xmlns="http://bankconnect.dk/schema/2014"/></soap:Body>'
+            . '</soap:Envelope>';
+
+        $signed = $sec->signRequest($xml);
+        $doc = new DOMDocument();
+        $this->assertTrue($doc->loadXML($signed));
+
+        $xpath = new DOMXPath($doc);
+        $xpath->registerNamespace('ds', 'http://www.w3.org/2000/09/xmldsig#');
+        $references = $xpath->query('//ds:SignedInfo/ds:Reference');
+        $this->assertNotFalse($references);
+        $this->assertSame(2, $references->length);
+
+        $uris = [];
+        foreach ($references as $reference) {
+            $uris[] = $reference->getAttribute('URI');
+        }
+
+        $this->assertCount(2, array_unique($uris));
+        $this->assertContains('serviceHeader', $uris);
+        $this->assertContains('Body', $uris);
     }
 
     public function testServiceHeaderBuilder(): void
