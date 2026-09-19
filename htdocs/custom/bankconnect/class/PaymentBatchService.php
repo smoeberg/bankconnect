@@ -10,11 +10,7 @@ require_once __DIR__.'/BankConnectException.php';
 require_once __DIR__.'/BankConnectLogger.php';
 
 if (!class_exists('Conf')) {
-    class Conf
-    {
-        /** @var array<string,mixed> */
-        public $global = [];
-    }
+    class Conf { public $global = []; }
 }
 
 class PaymentBatchService
@@ -26,57 +22,44 @@ class PaymentBatchService
 
     public function __construct($db, Conf $conf, ?BankConnectClient $client = null, ?BankConnectLogger $logger = null)
     {
-        $this->db     = $db;
-        $this->conf   = $conf;
+        $this->db = $db;
+        $this->conf = $conf;
         $this->client = $client;
         $this->logger = $logger ?? new BankConnectLogger();
     }
 
-    /**
-     * @return array{batch_id:int, end_to_end_message_id:string, msg_id:string, nb_of_txs:int, control_sum:float}
-     */
+    /** @return array{batch_id:int,end_to_end_message_id:string,msg_id:string,nb_of_txs:int,control_sum:float} */
     public function createBatch(Pain001Builder $builder, int $fkAgreement, int $entity = 1): array
     {
-        $xml     = $builder->build();
-        $msgId   = $builder->getMsgId();
+        $xml = $builder->build();
+        $msgId = $builder->getMsgId();
         $ctrlSum = $builder->getControlSum();
-        $txs     = $builder->getTransactions();
-        $nbOfTxs = count($txs);
+        $txs = $builder->getTransactions();
         $e2eMessageId = $this->generateEndToEndMessageId();
 
         $this->begin();
-
         try {
             $batchId = $this->insertBatch([
-                'entity'                => $entity,
-                'fk_agreement'          => $fkAgreement,
+                'entity' => $entity,
+                'fk_agreement' => $fkAgreement,
                 'end_to_end_message_id' => $e2eMessageId,
-                'msg_id'                => $msgId,
-                'status'                => 'draft',
-                'pain001_xml'           => $xml,
-                'control_sum'           => $ctrlSum,
-                'nb_of_txs'             => $nbOfTxs,
+                'msg_id' => $msgId,
+                'status' => 'draft',
+                'pain001_xml' => $xml,
+                'control_sum' => $ctrlSum,
+                'nb_of_txs' => count($txs),
             ]);
-
             foreach ($txs as $tx) {
                 $this->insertBatchLine($batchId, $tx);
             }
-
             $this->commit();
-
-            $this->logger->info('batch_created', [
-                'batch_id' => $batchId,
-                'e2e'      => $e2eMessageId,
-                'nb'       => $nbOfTxs,
-                'sum'      => $ctrlSum,
-            ]);
-
+            $this->logger->info('batch_created', ['batch_id' => $batchId, 'e2e' => $e2eMessageId]);
             return [
-                'batch_id'              => $batchId,
+                'batch_id' => $batchId,
                 'end_to_end_message_id' => $e2eMessageId,
-                'msg_id'                => $msgId,
-                'nb_of_txs'             => $nbOfTxs,
-                'control_sum'           => $ctrlSum,
+                'msg_id' => $msgId,
+                'nb_of_txs' => count($txs),
+                'control_sum' => $ctrlSum,
             ];
         } catch (Throwable $e) {
             $this->rollback();
@@ -85,7 +68,12 @@ class PaymentBatchService
     }
 
     /**
-     * @return array{status:string, response_code:?string, correlation_id:?string}
+     * Submit a prepared payment batch.
+     *
+     * A transport timeout after preparation is deliberately persisted as `unknown`.
+     * It must never be retried blindly because the bank may already have accepted it.
+     *
+     * @return array{status:string,response_code:?string,correlation_id:?string}
      */
     public function sendBatch(int $batchId): array
     {
@@ -93,35 +81,42 @@ class PaymentBatchService
         if (!$batch) {
             throw new BankConnectException("Batch {$batchId} not found");
         }
-        if (($batch['status'] ?? '') !== 'draft') {
-            throw new BankConnectException("Batch {$batchId} is not in draft status");
+        $status = (string) ($batch['status'] ?? '');
+        if (!in_array($status, ['draft', 'prepared'], true)) {
+            throw new BankConnectException("Batch {$batchId} cannot be submitted from status {$status}");
         }
-
         if ($this->client === null) {
-            $this->updateBatchStatus($batchId, 'sent', [
-                'response_code' => 'STUB',
-                'message'       => 'SOAP transfer not yet wired – marked sent for testing',
-                'date_sent'     => date('Y-m-d H:i:s'),
-            ]);
-
-            return [
-                'status'         => 'sent',
-                'response_code'  => 'STUB',
-                'correlation_id' => null,
-            ];
+            throw new BankConnectException('BankConnectClient is required for payment submission');
         }
 
-        require_once __DIR__.'/BankConnectXmlSecurity.php';
-        $security = new BankConnectXmlSecurity($this->conf);
+        $this->updateBatchStatus($batchId, 'prepared', [
+            'message' => 'Payment payload prepared for BankConnect submission',
+        ]);
 
-        $encrypted = $security->encryptPayload($batch['pain001_xml']);
-        $paymentMessage = $security->buildPaymentMessage($encrypted, $batch['end_to_end_message_id']);
-        $signed = $security->signRequest($paymentMessage);
+        try {
+            require_once __DIR__.'/BankConnectXmlSecurity.php';
+            $security = new BankConnectXmlSecurity($this->conf);
+            $encrypted = $security->encryptPayload($batch['pain001_xml']);
+            $paymentMessage = $security->buildPaymentMessage($encrypted, $batch['end_to_end_message_id']);
+            $signed = $security->signRequest($paymentMessage);
+        } catch (Throwable $e) {
+            $this->updateBatchStatus($batchId, 'rejected', ['message' => 'Payment preparation failed: '.$e->getMessage()]);
+            throw new BankConnectException('Payment preparation failed: '.$e->getMessage(), 0, $e);
+        }
 
-        $response = $this->client->transferPayments($signed, $batch['end_to_end_message_id']);
+        try {
+            $response = $this->client->transferPayments($signed, $batch['end_to_end_message_id']);
+        } catch (Throwable $e) {
+            // The transport outcome is unknown. Never claim rejection or success.
+            $this->updateBatchStatus($batchId, 'unknown', [
+                'message' => 'BankConnect transport outcome is unknown: '.$e->getMessage(),
+                'date_status' => date('Y-m-d H:i:s'),
+            ]);
+            throw new BankConnectException('BankConnect submission outcome is unknown; status must be reconciled before retry', 0, $e);
+        }
 
         $correlationId = null;
-        $responseCode  = 'OK';
+        $responseCode = 'OK';
         if (preg_match('/<correlationId>([^<]+)<\/correlationId>/', $response, $m)) {
             $correlationId = $m[1];
         }
@@ -129,248 +124,89 @@ class PaymentBatchService
             $responseCode = $m[1];
         }
 
-        $this->updateBatchStatus($batchId, 'sent', [
-            'response_code'  => $responseCode,
+        $this->updateBatchStatus($batchId, 'submitted', [
+            'response_code' => $responseCode,
             'correlation_id' => $correlationId,
-            'date_sent'      => date('Y-m-d H:i:s'),
-            'message'        => 'transferPayments accepted',
+            'date_sent' => date('Y-m-d H:i:s'),
+            'date_status' => date('Y-m-d H:i:s'),
+            'message' => 'transferPayments accepted by transport layer; awaiting pain.002',
         ]);
 
-        return [
-            'status'         => 'sent',
-            'response_code'  => $responseCode,
-            'correlation_id' => $correlationId,
-        ];
+        return ['status' => 'submitted', 'response_code' => $responseCode, 'correlation_id' => $correlationId];
     }
 
-    /**
-     * Fetch status via getStatus (pain.002) and update batch lines.
-     *
-     * @param string|null $serviceHeaderXml  Pre-built ServiceHeader; required for live calls
-     * @param string|null $pain002Xml        Optional: inject XML for tests (skips SOAP)
-     * @return array{group_status:?string, updated_lines:int, transactions:array}
-     */
+    /** @return array{group_status:?string,updated_lines:int,transactions:array} */
     public function refreshStatus(int $batchId, ?string $serviceHeaderXml = null, ?string $pain002Xml = null): array
     {
         $batch = $this->fetchBatch($batchId);
-        if (!$batch) {
-            throw new BankConnectException("Batch {$batchId} not found");
-        }
-
+        if (!$batch) throw new BankConnectException("Batch {$batchId} not found");
         if ($pain002Xml === null) {
-            if ($this->client === null) {
-                throw new BankConnectException('No BankConnectClient and no pain.002 XML provided');
-            }
-            if ($serviceHeaderXml === null || $serviceHeaderXml === '') {
-                throw new BankConnectException('ServiceHeader XML is required for getStatus');
-            }
-            $raw = $this->client->getStatus($serviceHeaderXml);
-            // Extract payload from SOAP if needed – for now assume body contains pain.002
-            $pain002Xml = $raw;
+            if ($this->client === null) throw new BankConnectException('No BankConnectClient and no pain.002 XML provided');
+            if (!$serviceHeaderXml) throw new BankConnectException('ServiceHeader XML is required for getStatus');
+            $pain002Xml = $this->client->getStatus($serviceHeaderXml);
         }
-
-        $parser = new Pain002Parser();
-        $parsed = $parser->parse($pain002Xml);
-
+        $parsed = (new Pain002Parser())->parse($pain002Xml);
         $updated = 0;
         foreach ($parsed['transactions'] as $tx) {
             $internal = Pain002Parser::mapToInternalStatus($tx['status']);
             $reason = trim(($tx['reason_code'] ?? '').' '.($tx['reason_text'] ?? ''));
-            if ($this->updateBatchLineByEndToEnd(
-                $batchId,
-                $tx['end_to_end_id'],
-                $internal,
-                $tx['status'],
-                $reason !== '' ? $reason : null
-            )) {
-                $updated++;
-            }
+            if ($this->updateBatchLineByEndToEnd($batchId, $tx['end_to_end_id'], $internal, $tx['status'], $reason !== '' ? $reason : null)) $updated++;
         }
-
-        // Roll up batch status
         $batchStatus = $this->deriveBatchStatus($parsed['group_status'], $parsed['transactions']);
-        $this->updateBatchStatus($batchId, $batchStatus, [
-            'date_status' => date('Y-m-d H:i:s'),
-            'message'     => 'Status refreshed from pain.002',
-        ]);
-
-        $this->logger->info('status_refreshed', [
-            'batch_id'     => $batchId,
-            'group_status' => $parsed['group_status'],
-            'updated'      => $updated,
-        ]);
-
-        return [
-            'group_status'  => $parsed['group_status'],
-            'updated_lines' => $updated,
-            'transactions'  => $parsed['transactions'],
-        ];
+        $this->updateBatchStatus($batchId, $batchStatus, ['date_status' => date('Y-m-d H:i:s'), 'message' => 'Status refreshed from pain.002']);
+        $this->logger->info('status_refreshed', ['batch_id' => $batchId, 'group_status' => $parsed['group_status'], 'updated' => $updated]);
+        return ['group_status' => $parsed['group_status'], 'updated_lines' => $updated, 'transactions' => $parsed['transactions']];
     }
 
     private function deriveBatchStatus(?string $groupStatus, array $transactions): string
     {
-        if ($groupStatus === 'ACCP' || $groupStatus === 'ACSC') {
-            return 'accepted';
-        }
-        if ($groupStatus === 'RJCT') {
-            return 'rejected';
-        }
-        if ($groupStatus === 'PART') {
-            return 'partial';
-        }
-
-        $statuses = array_unique(array_map(
-            fn($t) => Pain002Parser::mapToInternalStatus($t['status']),
-            $transactions
-        ));
-
-        if (count($statuses) === 1) {
-            return $statuses[0];
-        }
-        if (in_array('rejected', $statuses, true) && in_array('accepted', $statuses, true)) {
-            return 'partial';
-        }
-        if (in_array('pending', $statuses, true)) {
-            return 'pending';
-        }
-        return 'sent';
+        if ($groupStatus === 'ACCP' || $groupStatus === 'ACSC') return 'accepted';
+        if ($groupStatus === 'RJCT') return 'rejected';
+        if ($groupStatus === 'PART') return 'partial';
+        $statuses = array_unique(array_map(fn($t) => Pain002Parser::mapToInternalStatus($t['status']), $transactions));
+        if (count($statuses) === 1) return $statuses[0];
+        if (in_array('rejected', $statuses, true) && in_array('accepted', $statuses, true)) return 'partial';
+        if (in_array('pending', $statuses, true)) return 'pending';
+        return 'submitted';
     }
 
-    private function updateBatchLineByEndToEnd(
-        int $batchId,
-        string $endToEndId,
-        string $status,
-        string $pain002Status,
-        ?string $reason
-    ): bool {
-        $sets = [
-            "status = '".$this->db->escape($status)."'",
-            "pain002_status = '".$this->db->escape($pain002Status)."'",
-        ];
-        if ($reason !== null) {
-            $sets[] = "status_reason = '".$this->db->escape(substr($reason, 0, 255))."'";
-        }
-
-        $sql = "UPDATE llx_bankconnect_batch_line SET ".implode(', ', $sets)
-             . " WHERE fk_batch = ".(int) $batchId
-             . " AND end_to_end_id = '".$this->db->escape($endToEndId)."'";
-
-        return (bool) $this->db->query($sql);
-    }
-
-    // ------------------------------------------------------------------
-
-    private function begin(): void
+    private function updateBatchLineByEndToEnd(int $batchId, string $endToEndId, string $status, string $pain002Status, ?string $reason): bool
     {
-        if (method_exists($this->db, 'begin')) {
-            $this->db->begin();
-        }
+        $sets = ["status = '".$this->db->escape($status)."'", "pain002_status = '".$this->db->escape($pain002Status)."'"];
+        if ($reason !== null) $sets[] = "status_reason = '".$this->db->escape(substr($reason, 0, 255))."'";
+        return (bool) $this->db->query("UPDATE llx_bankconnect_batch_line SET ".implode(', ', $sets)." WHERE fk_batch = ".(int)$batchId." AND end_to_end_id = '".$this->db->escape($endToEndId)."'");
     }
-
-    private function commit(): void
+    private function begin(): void { if (method_exists($this->db, 'begin')) $this->db->begin(); }
+    private function commit(): void { if (method_exists($this->db, 'commit')) $this->db->commit(); }
+    private function rollback(): void { if (method_exists($this->db, 'rollback')) $this->db->rollback(); }
+    private function insertBatch(array $d): int
     {
-        if (method_exists($this->db, 'commit')) {
-            $this->db->commit();
-        }
+        $sql = "INSERT INTO llx_bankconnect_batch (entity,fk_agreement,end_to_end_message_id,msg_id,status,pain001_xml,control_sum,nb_of_txs,date_sent) VALUES (".(int)$d['entity'].",".(int)$d['fk_agreement'].",'".$this->db->escape($d['end_to_end_message_id'])."','".$this->db->escape($d['msg_id'])."','".$this->db->escape($d['status'])."','".$this->db->escape($d['pain001_xml'])."',".(float)$d['control_sum'].",".(int)$d['nb_of_txs'].",NULL)";
+        if (!$this->db->query($sql)) throw new BankConnectException('INSERT batch failed: '.$this->db->lasterror());
+        return (int)$this->db->last_insert_id('llx_bankconnect_batch');
     }
-
-    private function rollback(): void
-    {
-        if (method_exists($this->db, 'rollback')) {
-            $this->db->rollback();
-        }
-    }
-
-    private function insertBatch(array $data): int
-    {
-        $sql = "INSERT INTO llx_bankconnect_batch"
-             . " (entity, fk_agreement, end_to_end_message_id, msg_id, status,"
-             . "  pain001_xml, control_sum, nb_of_txs, date_sent)"
-             . " VALUES ("
-             . (int) $data['entity'] . ", "
-             . (int) $data['fk_agreement'] . ", "
-             . "'".$this->db->escape($data['end_to_end_message_id'])."', "
-             . "'".$this->db->escape($data['msg_id'])."', "
-             . "'".$this->db->escape($data['status'])."', "
-             . "'".$this->db->escape($data['pain001_xml'])."', "
-             . (float) $data['control_sum'] . ", "
-             . (int) $data['nb_of_txs'] . ", "
-             . "NULL"
-             . ")";
-
-        $res = $this->db->query($sql);
-        if (!$res) {
-            throw new BankConnectException('INSERT batch failed: '.$this->db->lasterror());
-        }
-        return (int) $this->db->last_insert_id('llx_bankconnect_batch');
-    }
-
     private function insertBatchLine(int $batchId, array $tx): void
     {
-        $sql = "INSERT INTO llx_bankconnect_batch_line"
-             . " (fk_batch, end_to_end_id, amount, currency, fk_facture_fourn, fk_facture, status)"
-             . " VALUES ("
-             . $batchId . ", "
-             . "'".$this->db->escape($tx['endToEndId'])."', "
-             . (float) $tx['amount'] . ", "
-             . "'".$this->db->escape($tx['currency'] ?? 'DKK')."', "
-             . (isset($tx['fk_facture_fourn']) ? (int) $tx['fk_facture_fourn'] : 'NULL') . ", "
-             . (isset($tx['fk_facture']) ? (int) $tx['fk_facture'] : 'NULL') . ", "
-             . "'draft'"
-             . ")";
-
-        $res = $this->db->query($sql);
-        if (!$res) {
-            throw new BankConnectException('INSERT batch_line failed: '.$this->db->lasterror());
-        }
+        $sql = "INSERT INTO llx_bankconnect_batch_line (fk_batch,end_to_end_id,amount,currency,fk_facture_fourn,fk_facture,status) VALUES (".$batchId.",'".$this->db->escape($tx['endToEndId'])."',".(float)$tx['amount'].",'".$this->db->escape($tx['currency'] ?? 'DKK')."',".(isset($tx['fk_facture_fourn'])?(int)$tx['fk_facture_fourn']:'NULL').",".(isset($tx['fk_facture'])?(int)$tx['fk_facture']:'NULL').",'draft')";
+        if (!$this->db->query($sql)) throw new BankConnectException('INSERT batch_line failed: '.$this->db->lasterror());
     }
-
     private function fetchBatch(int $batchId): ?array
     {
-        $sql = "SELECT * FROM llx_bankconnect_batch WHERE rowid = ".(int) $batchId;
-        $res = $this->db->query($sql);
-        if (!$res) {
-            return null;
-        }
+        $res = $this->db->query('SELECT * FROM llx_bankconnect_batch WHERE rowid = '.(int)$batchId);
+        if (!$res) return null;
         $obj = $this->db->fetch_object($res);
-        if (!$obj) {
-            return null;
-        }
-        return (array) $obj;
+        return $obj ? (array)$obj : null;
     }
-
     private function updateBatchStatus(int $batchId, string $status, array $extra = []): void
     {
         $sets = ["status = '".$this->db->escape($status)."'"];
-        if (isset($extra['response_code'])) {
-            $sets[] = "response_code = '".$this->db->escape($extra['response_code'])."'";
+        foreach (['response_code','message','correlation_id','date_sent','date_status'] as $field) {
+            if (isset($extra[$field])) $sets[] = $field." = '".$this->db->escape($extra[$field])."'";
         }
-        if (isset($extra['message'])) {
-            $sets[] = "message = '".$this->db->escape($extra['message'])."'";
-        }
-        if (isset($extra['correlation_id'])) {
-            $sets[] = "correlation_id = '".$this->db->escape($extra['correlation_id'])."'";
-        }
-        if (isset($extra['date_sent'])) {
-            $sets[] = "date_sent = '".$this->db->escape($extra['date_sent'])."'";
-        }
-        if (isset($extra['date_status'])) {
-            $sets[] = "date_status = '".$this->db->escape($extra['date_status'])."'";
-        }
-
-        $sql = "UPDATE llx_bankconnect_batch SET ".implode(', ', $sets)
-             . " WHERE rowid = ".(int) $batchId;
-        $this->db->query($sql);
+        $this->db->query('UPDATE llx_bankconnect_batch SET '.implode(', ', $sets).' WHERE rowid = '.(int)$batchId);
     }
-
     private function generateEndToEndMessageId(): string
     {
-        return str_replace('-', '', sprintf(
-            '%04x%04x%04x%04x%04x%04x%04x%04x',
-            mt_rand(0, 0xffff), mt_rand(0, 0xffff),
-            mt_rand(0, 0xffff), mt_rand(0, 0x0fff) | 0x4000,
-            mt_rand(0, 0x3fff) | 0x8000, mt_rand(0, 0xffff),
-            mt_rand(0, 0xffff), mt_rand(0, 0xffff)
-        ));
+        return bin2hex(random_bytes(16));
     }
 }
