@@ -47,24 +47,58 @@ class ApprovalPosting
 			throw new RuntimeException('BankConnect: refusing to post unapproved match '.$matchRowid);
 		}
 		if ($match['state'] === 'posted') {
-			// idempotent re-entry
+			// Persisted bank-entry identity is the primary idempotency record.
+			$entryId = (int)($match['fk_bankentry'] ?? 0);
+			if ($entryId <= 0) {
+				$entryId = $this->existingBankEntryForMatch($matchRowid);
+			}
 			($this->logger)('postApprovedMatch: match '.$matchRowid.' already posted, skipping');
-			return $this->existingBankEntryForMatch($matchRowid) ?: 0;
+			return $entryId;
 		}
 
-		$tx = $this->loadTransaction((int)$match['fk_transaction']);
-		$label = $label ?: trim(($tx['counterparty'] ?: 'BankConnect').' '.($tx['reference'] ?: ''));
+		$transactionStarted = false;
+		try {
+			$this->db->begin();
+			$transactionStarted = true;
 
-		$entryId = $this->insertBankEntry($bankAccountId, (float)$tx['amount'], $tx['tx_date'], $label, (string)($tx['reference'] ?? ''));
-		if ($entryId <= 0) {
-			throw new RuntimeException('BankConnect: bank entry insert failed: '.$this->db->lasterror());
+			// Lock the economic transaction, not only the match row. This prevents
+			// two approved matches for the same transaction from both posting it.
+			$tx = $this->loadTransaction((int)$match['fk_transaction'], true);
+			if ($tx['state'] === 'posted') {
+				$this->db->rollback();
+				$transactionStarted = false;
+				return (int)($match['fk_bankentry'] ?? 0) ?: $this->existingBankEntryForMatch($matchRowid);
+			}
+			if ($tx['state'] !== 'approved') {
+				throw new RuntimeException('BankConnect: refusing to post transaction '.$match['fk_transaction'].' in state '.$tx['state']);
+			}
+
+			$label = $label ?: trim(($tx['counterparty'] ?: 'BankConnect').' '.($tx['reference'] ?: ''));
+			$entryId = $this->insertBankEntry($bankAccountId, (float)$tx['amount'], $tx['tx_date'], $label, (string)($tx['reference'] ?? ''));
+			if ($entryId <= 0) {
+				throw new RuntimeException('BankConnect: bank entry insert failed: '.$this->db->lasterror());
+			}
+
+			// Persist the bank entry identity in the same transaction as the ledger
+			// write and state transition. A retry can therefore never create a second
+			// economic movement after a successful commit.
+			$sql = "UPDATE llx_bankconnect_match SET fk_bankentry = ".(int)$entryId." WHERE rowid = ".(int)$matchRowid." AND fk_bankentry IS NULL";
+			if (!$this->db->query($sql)) {
+				throw new RuntimeException('BankConnect: posting identity update failed: '.$this->db->lasterror());
+			}
+			$this->store->setTransactionState((int)$match['fk_transaction'], 'posted');
+			$this->db->commit();
+			$transactionStarted = false;
+		} catch (Throwable $e) {
+			if ($transactionStarted) {
+				$this->db->rollback();
+			}
+			throw $e;
 		}
 
-		// Mark posted + audit the full chain: which match, which user, which
-		// ledger entry, which amount. This is the DK-ACC-004/005 evidence point.
-		$this->store->setTransactionState((int)$match['fk_transaction'], 'posted');
+		// Audit only after the economic transition has committed. An audit failure
+		// must not roll back an already committed bank movement.
 		$this->store->audit($userId, 'posted', 'match '.$matchRowid.' -> bank entry '.$entryId.' amount '.$tx['amount'].' '.$tx['currency'].' date '.$tx['tx_date']);
-
 		($this->logger)('posted match '.$matchRowid.' as bank entry '.$entryId);
 		return $entryId;
 	}
@@ -96,18 +130,18 @@ class ApprovalPosting
 
 	private function loadMatch(int $rowid): array
 	{
-		$sql = "SELECT rowid, fk_transaction, approved_by FROM llx_bankconnect_match WHERE rowid = ".(int)$rowid;
+		$sql = "SELECT rowid, fk_transaction, approved_by, fk_bankentry FROM llx_bankconnect_match WHERE rowid = ".(int)$rowid;
 		$res = $this->db->query($sql);
 		if (!$res || !($o = $this->db->fetch_object($res))) {
 			throw new RuntimeException('BankConnect: match not found: '.$rowid);
 		}
 		$state = $this->store->transactionState((int)$o->fk_transaction);
-		return ['rowid' => (int)$o->rowid, 'fk_transaction' => (int)$o->fk_transaction, 'approved_by' => $o->approved_by, 'state' => $state];
+		return ['rowid' => (int)$o->rowid, 'fk_transaction' => (int)$o->fk_transaction, 'approved_by' => $o->approved_by, 'fk_bankentry' => (int)($o->fk_bankentry ?? 0), 'state' => $state];
 	}
 
-	private function loadTransaction(int $rowid): array
+	private function loadTransaction(int $rowid, bool $forUpdate = false): array
 	{
-		$sql = "SELECT rowid, tx_date, amount, currency, reference, counterparty FROM llx_bankconnect_transaction WHERE rowid = ".(int)$rowid;
+		$sql = "SELECT rowid, tx_date, amount, currency, reference, counterparty, state FROM llx_bankconnect_transaction WHERE rowid = ".(int)$rowid.($forUpdate ? ' FOR UPDATE' : '');
 		$res = $this->db->query($sql);
 		if (!$res || !($o = $this->db->fetch_object($res))) {
 			throw new RuntimeException('BankConnect: transaction not found: '.$rowid);
