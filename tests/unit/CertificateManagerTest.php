@@ -28,6 +28,14 @@ class CertificateManagerTest extends TestCase
         $this->assertSame($pem, $mgr->decryptPrivateKey($enc));
     }
 
+    public function testRejectsShortEncryptionSecret(): void
+    {
+        $this->conf->global['BANKCONNECT_KEY_ENCRYPTION_SECRET'] = 'short';
+        $mgr = new BankConnectCertificateManager($this->conf);
+        $this->expectException(BankConnectException::class);
+        $mgr->encryptPrivateKey('secret');
+    }
+
     public function testCsrToRequestBodyStripsHeaders(): void
     {
         $mgr = new BankConnectCertificateManager($this->conf);
