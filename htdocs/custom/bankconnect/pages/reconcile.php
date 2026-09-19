@@ -46,6 +46,12 @@ if ($action === 'import' && $user->rights->bankconnect->write) {
 } elseif ($action === 'reject' && $user->rights->bankconnect->write) {
 	$store->rejectMatch((int)GETPOST('matchid', 'int'), $user->id);
 	setEventMessages($langs->trans('BankConnectRejected'), null);
+} elseif ($action === 'post' && $user->rights->bankconnect->write) {
+	require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/ApprovalPosting.php';
+	$poster = new ApprovalPosting($db, $store);
+	$poster->setLogger(function ($m) { dol_syslog('BankConnect: '.$m); });
+	$n = $poster->postAllApproved($user->id, $accountid);
+	setEventMessages($langs->trans('BankConnectPosted', $n), null);
 }
 
 /*
@@ -96,6 +102,22 @@ foreach ($unmatched as $tx) {
 	print '</tr>';
 }
 print '</table>';
+
+// Post approved matches button
+if ($accountid) {
+	$approvedCount = 0;
+	$sqlc = "SELECT COUNT(*) AS c FROM llx_bankconnect_transaction WHERE fk_bank_account = ".(int)$accountid." AND state = 'approved'";
+	$resc = $db->query($sqlc);
+	$approvedCount = $resc ? (int)$db->fetch_object($resc)->c : 0;
+	if ($approvedCount > 0) {
+		print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
+		print '<input type="hidden" name="token" value="'.newToken().'">';
+		print '<input type="hidden" name="account" value="'.$accountid.'">';
+		print '<input type="hidden" name="action" value="post">';
+		print '<input type="submit" class="button button-save" value="'.$langs->trans('BankConnectPostApproved', $approvedCount).'">';
+		print '</form>';
+	}
+}
 
 // Proposed matches awaiting approval
 if ($accountid) {

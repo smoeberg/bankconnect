@@ -94,6 +94,10 @@ class MockDoliDB
 			$rows = array_slice($rows, 0, (int)$lm[1]);
 		}
 		$colList = array_map('trim', explode(',', str_replace('SELECT', '', $cols)));
+		// COUNT(*) AS alias support (single-column aggregates)
+		if (count($colList) === 1 && preg_match('/^COUNT\(\*\)\s+AS\s+(\w+)$/i', $colList[0], $cm)) {
+			return [[ $cm[1] => count($rows) ]];
+		}
 		$keepAll = in_array('*', $colList, true);
 		$out = [];
 		foreach ($rows as $r) {
