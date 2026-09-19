@@ -28,14 +28,31 @@ if ($writeAction) {
  * Actions (write permission required)
  */
 if ($action === 'import' && $user->rights->bankconnect->write) {
-	if (!empty($_FILES['camtfile']['tmp_name'])) {
-		try {
-			$service = new ImportService($store);
-			$result = $service->importFile($_FILES['camtfile']['tmp_name'], $accountid, $_FILES['camtfile']['name']);
-			$store->audit($user->id, 'import', $result['total'].' tx from '.$_FILES['camtfile']['name'].' ('.$result['imported'].' new, '.$result['duplicates'].' duplicates)');
-			setEventMessages($langs->trans('BankConnectImportOk', $result['imported'], $result['duplicates']), null);
-		} catch (RuntimeException $e) {
-			setEventMessages($langs->trans('BankConnectImportFailed').': '.$e->getMessage(), null, 'errors');
+	$upload = $_FILES['camtfile'] ?? null;
+	if ($upload !== null) {
+		$uploadError = (int) ($upload['error'] ?? UPLOAD_ERR_NO_FILE);
+		if ($uploadError !== UPLOAD_ERR_OK) {
+			setEventMessages('BankConnect import upload failed (error '.$uploadError.')', null, 'errors');
+		} elseif (empty($upload['tmp_name']) || !is_uploaded_file($upload['tmp_name'])) {
+			setEventMessages('BankConnect import upload is invalid', null, 'errors');
+		} else {
+			$originalName = (string) ($upload['name'] ?? 'import');
+			$extension = strtolower((string) pathinfo($originalName, PATHINFO_EXTENSION));
+			$finfo = new finfo(FILEINFO_MIME_TYPE);
+			$mime = $finfo->file($upload['tmp_name']);
+			$allowedMimes = ['application/xml', 'text/xml', 'application/octet-stream'];
+			if ($extension !== 'xml' || $mime === false || !in_array($mime, $allowedMimes, true)) {
+				setEventMessages('BankConnect import requires a valid XML CAMT upload', null, 'errors');
+			} else {
+				try {
+					$service = new ImportService($store);
+					$result = $service->importFile($upload['tmp_name'], $accountid, $originalName);
+					$store->audit($user->id, 'import', $result['total'].' tx from '.$originalName.' ('.$result['imported'].' new, '.$result['duplicates'].' duplicates)');
+					setEventMessages($langs->trans('BankConnectImportOk', $result['imported'], $result['duplicates']), null);
+				} catch (RuntimeException $e) {
+					setEventMessages($langs->trans('BankConnectImportFailed').': '.$e->getMessage(), null, 'errors');
+				}
+			}
 		}
 	}
 } elseif ($action === 'match' && $user->rights->bankconnect->write) {
@@ -80,7 +97,7 @@ while ($res && $o = $db->fetch_object($res)) {
 	print '<option value="'.$o->rowid.'"'.($accountid == $o->rowid ? ' selected' : '').'>'.dol_escape_htmltag($o->label).'</option>';
 }
 print '</select> ';
-print '<input type="file" name="camtfile" accept=".xml,.csv"> ';
+print '<input type="file" name="camtfile" accept=".xml"> ';
 print '<input type="submit" class="button" value="'.$langs->trans('BankConnectImport').'">';
 print '</form>';
 
@@ -155,7 +172,6 @@ if ($accountid) {
 		print '<input type="hidden" name="matchid" value="'.$o->mid.'">';
 		print '<input type="submit" class="button button-success" value="'.$langs->trans('BankConnectApprove').'">';
 		print '</form> ';
-		
 		print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" style="display:inline">';
 		print '<input type="hidden" name="token" value="'.newToken().'">';
 		print '<input type="hidden" name="account" value="'.$accountid.'">';
