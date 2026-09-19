@@ -39,8 +39,6 @@ class MistralMatcher
         $this->timeout = max(1, (int) ($g['BANKCONNECT_AI_TIMEOUT'] ?? 8));
         $this->temperature = (float) ($g['BANKCONNECT_AI_TEMPERATURE'] ?? 0.1);
         $this->maxTokens = max(100, (int) ($g['BANKCONNECT_AI_MAX_TOKENS'] ?? 800));
-        
-        // Rate limiting configuration
         $this->rateLimitMaxCalls = max(1, (int) ($g['BANKCONNECT_AI_RATE_LIMIT_MAX'] ?? 10));
         $this->rateLimitWindowSeconds = max(1, (int) ($g['BANKCONNECT_AI_RATE_LIMIT_WINDOW'] ?? 60));
         $this->rateLimitFile = (string) ($g['BANKCONNECT_AI_RATE_LIMIT_FILE']
@@ -70,11 +68,7 @@ class MistralMatcher
 
     private function endpoint(): string
     {
-        $endpoint = (string) ($this->conf->global['BANKCONNECT_MISTRAL_ENDPOINT'] ?? '');
-        if ($endpoint === '') {
-            throw new BankConnectException('BANKCONNECT_MISTRAL_ENDPOINT is not configured. Please set it in Dolibarr configuration.');
-        }
-        return $endpoint;
+        return (string) ($this->conf->global['BANKCONNECT_MISTRAL_ENDPOINT'] ?? '');
     }
 
     private function isCloudEndpoint(): bool
@@ -174,16 +168,15 @@ class MistralMatcher
      */
     public function testConnection(): array
     {
-        try {
-            $this->endpoint(); // This will throw if not configured
-        } catch (BankConnectException $e) {
-            return ['success' => false, 'message' => $e->getMessage(), 'latency_ms' => 0];
+        if (!$this->enabled()) {
+            return ['success' => false, 'message' => 'AI disabled', 'latency_ms' => 0];
         }
-
+        if ($this->endpoint() === '' || $this->apiKey() === '') {
+            return ['success' => false, 'message' => 'AI endpoint/API key not configured', 'latency_ms' => 0];
+        }
         if (!$this->consumeRateLimit()) {
             return ['success' => false, 'message' => 'AI rate limit exceeded or unavailable', 'latency_ms' => 0];
         }
-
         $start = microtime(true);
         $body = json_encode([
             'model'      => $this->model(),
@@ -282,9 +275,8 @@ TXT;
     private function callApi(array $prompts): ?string
     {
         if (!$this->consumeRateLimit()) {
-            return null; // Graceful degradation - return none
+            return null;
         }
-
         $opts = [
             'headers' => $this->headers(),
             'body'    => $prompts[0],
