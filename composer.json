@@ -5,10 +5,8 @@
   "require": {
     "php": ">=8.1",
     "ext-openssl": "*",
-    "ext-simplexml": "*"
-  },
-  "suggest": {
-    "robrichards/xmlseclibs": "Required for full WS-Security XMLDSig (sign serviceHeader + Body)"
+    "ext-simplexml": "*",
+    "robrichards/xmlseclibs": "^3.1"
   },
   "autoload": {
     "classmap": ["htdocs/custom/bankconnect/class/"]
