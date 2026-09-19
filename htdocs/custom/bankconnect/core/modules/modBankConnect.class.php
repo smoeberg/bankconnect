@@ -9,10 +9,27 @@ class modBankConnect extends DolibarrModules
 	public $id = 500010;
 	public $name = 'BankConnect';
 	public $family = 'financial';
-	public $version = '0.2.0';
+	public $version = '0.2.1';
 	public $description = 'Bankafstemning: camt-import, regelbaseret matching med AI-fallback, godkendelse før bokføring (DK).';
 	public $editor_name = 'WM Group / Eira';
 	public $editor_url = 'https://github.com/smoeberg/bankconnect';
+
+	/**
+	 * Create BankConnect tables before the module is activated.
+	 *
+	 * Dolibarr does not execute files in the module sql/ directory merely
+	 * because they exist; the module descriptor must explicitly load them.
+	 */
+	public function init($options = '')
+	{
+		$result = $this->_load_tables('/bankconnect/sql/');
+		if ($result < 0) {
+			return -1;
+		}
+
+		$sql = [];
+		return $this->_init($sql, $options);
+	}
 
 	public function __construct($db)
 	{
