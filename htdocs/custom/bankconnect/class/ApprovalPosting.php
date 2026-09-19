@@ -67,7 +67,8 @@ class ApprovalPosting
 			if ($tx['state'] === 'posted') {
 				$this->db->rollback();
 				$transactionStarted = false;
-				return (int)($match['fk_bankentry'] ?? 0) ?: $this->existingBankEntryForMatch($matchRowid);
+				$freshMatch = $this->loadMatch($matchRowid);
+				return (int)($freshMatch['fk_bankentry'] ?? 0) ?: $this->existingBankEntryForMatch($matchRowid);
 			}
 			if ($tx['state'] !== 'approved') {
 				throw new RuntimeException('BankConnect: refusing to post transaction '.$match['fk_transaction'].' in state '.$tx['state']);
