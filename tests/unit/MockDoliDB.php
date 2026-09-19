@@ -11,6 +11,8 @@ class MockDoliDB
 	private $lastError = '';
 	private $transactionSnapshot = null;
 	private $failQueryContaining = null;
+	private $lastRowCount = 0;
+	private $raceInsertTransaction = null;
 
 	public function escape($s)
 	{
@@ -62,10 +64,29 @@ class MockDoliDB
 			$this->failQueryContaining = null;
 			return false;
 		}
+		if (preg_match('/^SELECT\s+ROW_COUNT\(\)\s+AS\s+(\w+)$/i', $s, $m)) {
+			return [[$m[1] => $this->lastRowCount]];
+		}
 		if (preg_match('/^SELECT\s+(.+?)\s+FROM\s+(\w+)(.*)$/is', $s, $m)) {
 			return $this->select($m[2], $m[1], $m[3]);
 		}
+		if (preg_match('/^INSERT INTO\s+(\w+)\s*\(([^)]*)\)\s*VALUES\s*\((.*?)\)\s*ON DUPLICATE KEY UPDATE\s+.+$/is', $s, $m)) {
+			if ($this->raceInsertTransaction !== null) {
+				$this->seedTransactionWithHash(...$this->raceInsertTransaction);
+				$this->raceInsertTransaction = null;
+			}
+			$hash = null;
+			$values = $this->splitValues($m[3]);
+			$cols = array_map('trim', explode(',', $m[2]));
+			foreach ($cols as $i => $col) if ($col === 'hash') $hash = trim($values[$i] ?? '', " '");
+			foreach ($this->tables[$m[1]] ?? [] as $row) {
+				if ($hash !== null && ($row['hash'] ?? null) === $hash) { $this->lastRowCount = 0; return true; }
+			}
+			$this->lastRowCount = 1;
+			return $this->insert($m[1], $m[2], $m[3]);
+		}
 		if (preg_match('/^INSERT INTO\s+(\w+)\s*\(([^)]*)\)\s*VALUES\s*\((.*)\)$/is', $s, $m)) {
+			$this->lastRowCount = 1;
 			return $this->insert($m[1], $m[2], $m[3]);
 		}
 		if (preg_match('/^UPDATE\s+(\w+)\s+SET\s+(.*?)\s+WHERE\s+(.*)$/is', $s, $m)) {
