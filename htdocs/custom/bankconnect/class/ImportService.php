@@ -37,6 +37,9 @@ class ImportService
 				'text' => $t->text,
 				'reference' => $t->reference,
 				'counterparty' => $t->counterparty,
+				'acctSvcrRef' => $t->acctSvcrRef,
+				'isReversal' => $t->isReversal,
+				'requiresManualReview' => $t->requiresManualReview,
 				'hash' => $t->hash,
 			] : (array)$t;
 			$r = $this->store->upsertTransactionDetailed($arr, $fkBankAccount, $sourceFile);
