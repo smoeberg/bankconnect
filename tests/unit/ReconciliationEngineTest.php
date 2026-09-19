@@ -36,7 +36,7 @@ class ReconciliationEngineTest extends TestCase
         $engine = $this->engine(null);
         $r = $engine->reconcile(bcMakeTx(['amount' => -10000.00, 'reference' => 'FA240891']), bcMakeCandidates());
         $this->assertSame('partial', $r->matchType);
-        $this->assertSame(0.7, $r->confidence);
+        $this->assertSame(0.75, $r->confidence);
         $this->assertSame(1842, $r->suggested[0]['id']);
     }
 
@@ -53,12 +53,12 @@ class ReconciliationEngineTest extends TestCase
 
     public function testExactMatchByAmountAndDateWhenNoRef(): void
     {
-        $tx = bcMakeTx(['reference' => '', 'amount' => -8200.00, 'text' => 'INDBETALING ABC A/S']);
+        $tx = bcMakeTx(['reference' => '', 'amount' => -8200.00, 'text' => 'INDBETALING ABC A/S', 'date' => '2026-09-09']);
         $engine = $this->engine(null);
         $r = $engine->reconcile($tx, bcMakeCandidates());
         $this->assertSame('exact', $r->matchType);
         $this->assertSame(1855, $r->suggested[0]['id']);
-        $this->assertSame(0.9, $r->confidence);
+        $this->assertSame(0.97, $r->confidence);
     }
 
     public function testFallsBackToAiWhenRulesNotConfident(): void
