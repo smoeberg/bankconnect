@@ -122,8 +122,19 @@ class BankConnectXmlSecurityTest extends TestCase
         }
 
         $this->assertCount(2, array_unique($uris));
-        $this->assertContains('serviceHeader', $uris);
-        $this->assertContains('Body', $uris);
+
+        $serviceHeader = $xpath->query('//*[local-name()="serviceHeader"]')->item(0);
+        $body = $xpath->query('/*[local-name()="Envelope"]/*[local-name()="Body"]')->item(0);
+        $this->assertNotNull($serviceHeader);
+        $this->assertNotNull($body);
+
+        $expectedUris = [
+            '#'.$serviceHeader->getAttribute('Id'),
+            '#'.$body->getAttribute('Id'),
+        ];
+        sort($expectedUris);
+        sort($uris);
+        $this->assertSame($expectedUris, $uris);
     }
 
     public function testServiceHeaderBuilder(): void
