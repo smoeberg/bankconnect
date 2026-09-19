@@ -23,14 +23,14 @@ class AgreementStore
      */
     public function createAgreement(array $data): int
     {
-        $entity = (int) ($data['entity'] ?? 1);
+        $entity = max(1, (int) ($data['entity'] ?? 1));
         $label = $this->db->escape($data['label'] ?? '');
         $bcId = $this->db->escape($data['bank_connect_id']);
         $reg = $this->db->escape($data['main_registration_number'] ?? '');
         $dc = $this->db->escape($data['datacenter'] ?? '');
         $ep = $this->db->escape($data['endpoint'] ?? '');
         $status = $this->db->escape($data['status'] ?? 'draft');
-        $uid = (int) ($data['fk_user_creat'] ?? 0);
+        $uid = max(0, (int) ($data['fk_user_creat'] ?? 0));
 
         $sql = "INSERT INTO llx_bankconnect_agreement"
              . " (entity, label, bank_connect_id, main_registration_number, datacenter, endpoint, status, date_creation, fk_user_creat)"
