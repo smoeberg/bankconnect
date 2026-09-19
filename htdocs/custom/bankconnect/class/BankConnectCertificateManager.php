@@ -129,6 +129,12 @@ class BankConnectCertificateManager
         $certId = null;
         if ($customerCertPem !== null) {
             $validity = $this->parseCertValidity($customerCertPem);
+            if ($validity['from'] === null || $validity['to'] === null) {
+                throw new BankConnectException('Customer certificate could not be parsed');
+            }
+            if (!$this->validateCertificateAndPrivateKey($customerCertPem, $keypair['private_key'])) {
+                throw new BankConnectException('Customer certificate does not match generated private key');
+            }
             $certId = $this->store->saveCertificate([
                 'fk_agreement'     => $agreementId,
                 'certificate_pem'  => $customerCertPem,
@@ -160,7 +166,10 @@ class BankConnectCertificateManager
     {
         $raw = $this->client->getBankCertificate($serviceHeaderXml);
         $pem = $this->extractCertificatesFromContent($raw);
-        return $pem[0] ?? $raw;
+        if (empty($pem)) {
+            throw new BankConnectException('Bank certificate response did not contain a certificate');
+        }
+        return $pem[0];
     }
 
     public function activateServiceAgreement(
@@ -352,6 +361,17 @@ class BankConnectCertificateManager
     }
 
     /** @return array{from:?string, to:?string} */
+    public function validateCertificateAndPrivateKey(string $certificatePem, string $privateKeyPem): bool
+    {
+        $certificate = openssl_x509_read($certificatePem);
+        $privateKey = openssl_pkey_get_private($privateKeyPem);
+        if ($certificate === false || $privateKey === false) {
+            return false;
+        }
+        return openssl_x509_check_private_key($certificate, $privateKey);
+    }
+
+    /** @return array{from:?string, to:?string} */
     public function parseCertValidity(string $pem): array
     {
         $parsed = openssl_x509_parse($pem);
@@ -371,6 +391,11 @@ class BankConnectCertificateManager
             throw new BankConnectException(
                 'BANKCONNECT_KEY_ENCRYPTION_SECRET is not configured. '
                 .'Set a strong random secret (32+ bytes) in conf or environment.'
+            );
+        }
+        if (strlen($secret) < 32) {
+            throw new BankConnectException(
+                'BANKCONNECT_KEY_ENCRYPTION_SECRET must contain at least 32 bytes'
             );
         }
         return hash('sha256', $secret, true);
