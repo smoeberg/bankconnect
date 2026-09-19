@@ -19,11 +19,11 @@ class Pain001Builder
     public const TYPE_DK_TRANSFER = 'dk_transfer';
     public const TYPE_SEPA        = 'sepa';
 
-    private string $msgId;
-    private string $initiatingPartyName;
-    private string $debtorIban;
-    private string $debtorBic;
-    private string $debtorName;
+    private string $msgId = '';
+    private string $initiatingPartyName = '';
+    private string $debtorIban = '';
+    private string $debtorBic = '';
+    private string $debtorName = '';
     private DateTimeInterface $executionDate;
     private string $paymentType = self::TYPE_DK_TRANSFER;
 
@@ -110,7 +110,7 @@ class Pain001Builder
         if (empty($this->transactions)) {
             throw new BankConnectException('No transactions added');
         }
-        if (empty($this->debtorIban) || empty($this->debtorName)) {
+        if ($this->debtorIban === '' || $this->debtorName === '') {
             throw new BankConnectException('Debtor not set');
         }
 
@@ -157,12 +157,14 @@ class Pain001Builder
     private function buildGroupHeader(int $nbOfTxs, string $ctrlSum): string
     {
         $now = (new DateTimeImmutable('now', new DateTimeZone('Europe/Copenhagen')))->format('Y-m-d\TH:i:s');
+        $initName = $this->initiatingPartyName !== '' ? $this->initiatingPartyName : $this->debtorName;
+
         return '<GrpHdr>'
              . '<MsgId>'. $this->e($this->msgId) .'</MsgId>'
              . '<CreDtTm>'. $now .'</CreDtTm>'
              . '<NbOfTxs>'. $nbOfTxs .'</NbOfTxs>'
              . '<CtrlSum>'. $ctrlSum .'</CtrlSum>'
-             . '<InitgPty><Nm>'. $this->e($this->initiatingPartyName ?: $this->debtorName) .'</Nm></InitgPty>'
+             . '<InitgPty><Nm>'. $this->e($initName) .'</Nm></InitgPty>'
              . '</GrpHdr>';
     }
 
