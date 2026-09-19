@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS llx_bankconnect_agreement (
     date_creation               DATETIME,
     tms                         TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     fk_user_creat               INTEGER,
-    fk_user_modif               INTEGER
+    fk_user_modif               INTEGER,
+    UNIQUE KEY uk_bc_agreement_identity (entity, bank_connect_id)
 ) ENGINE=innodb;
 
 CREATE TABLE IF NOT EXISTS llx_bankconnect_certificate (
@@ -27,7 +28,8 @@ CREATE TABLE IF NOT EXISTS llx_bankconnect_certificate (
     is_active           TINYINT DEFAULT 1,
     date_creation       DATETIME,
     tms                 TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_bc_cert_agreement (fk_agreement)
+    INDEX idx_bc_cert_agreement (fk_agreement),
+    INDEX idx_bc_cert_active (fk_agreement, is_active)
 ) ENGINE=innodb;
 
 CREATE TABLE IF NOT EXISTS llx_bankconnect_batch (
@@ -37,7 +39,7 @@ CREATE TABLE IF NOT EXISTS llx_bankconnect_batch (
     end_to_end_message_id   VARCHAR(35) NOT NULL,
     correlation_id          VARCHAR(64),
     msg_id                  VARCHAR(35),
-    status                  VARCHAR(20) DEFAULT 'sent',
+    status                  VARCHAR(20) DEFAULT 'draft',
     pain001_xml             MEDIUMTEXT,
     response_code           VARCHAR(20),
     message                 TEXT,
@@ -47,7 +49,8 @@ CREATE TABLE IF NOT EXISTS llx_bankconnect_batch (
     date_status             DATETIME,
     tms                     TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_bc_batch_e2e (entity, end_to_end_message_id),
-    INDEX idx_bc_batch_agreement (fk_agreement)
+    INDEX idx_bc_batch_agreement (fk_agreement),
+    INDEX idx_bc_batch_status (entity, status)
 ) ENGINE=innodb;
 
 CREATE TABLE IF NOT EXISTS llx_bankconnect_batch_line (
@@ -59,9 +62,11 @@ CREATE TABLE IF NOT EXISTS llx_bankconnect_batch_line (
     fk_facture_fourn    INTEGER,
     fk_facture          INTEGER,
     fk_paiement         INTEGER,
-    status              VARCHAR(20) DEFAULT 'sent',
+    status              VARCHAR(20) DEFAULT 'draft',
     pain002_status      VARCHAR(10),
     status_reason       VARCHAR(255),
     tms                 TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_bc_batchline_batch (fk_batch)
+    UNIQUE KEY uk_bc_batchline_e2e (fk_batch, end_to_end_id),
+    INDEX idx_bc_batchline_batch (fk_batch),
+    INDEX idx_bc_batchline_status (fk_batch, status)
 ) ENGINE=innodb;
