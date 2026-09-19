@@ -9,6 +9,8 @@ class MockDoliDB
 	public $tables = [];
 	private $nextId = [];
 	private $lastError = '';
+	private $transactionSnapshot = null;
+	private $failQueryContaining = null;
 
 	public function escape($s)
 	{
@@ -25,9 +27,41 @@ class MockDoliDB
 		$this->lastError = $msg;
 	}
 
+	public function failNextQueryContaining(string $needle, string $msg): void
+	{
+		$this->failQueryContaining = [$needle, $msg];
+	}
+
+	public function begin(): void
+	{
+		$this->transactionSnapshot = [
+			'tables' => $this->tables,
+			'nextId' => $this->nextId,
+		];
+	}
+
+	public function commit(): void
+	{
+		$this->transactionSnapshot = null;
+	}
+
+	public function rollback(): void
+	{
+		if ($this->transactionSnapshot !== null) {
+			$this->tables = $this->transactionSnapshot['tables'];
+			$this->nextId = $this->transactionSnapshot['nextId'];
+			$this->transactionSnapshot = null;
+		}
+	}
+
 	public function query($sql)
 	{
 		$s = trim($sql);
+		if ($this->failQueryContaining !== null && strpos($s, $this->failQueryContaining[0]) !== false) {
+			$this->lastError = $this->failQueryContaining[1];
+			$this->failQueryContaining = null;
+			return false;
+		}
 		if (preg_match('/^SELECT\s+(.+?)\s+FROM\s+(\w+)(.*)$/is', $s, $m)) {
 			return $this->select($m[2], $m[1], $m[3]);
 		}
