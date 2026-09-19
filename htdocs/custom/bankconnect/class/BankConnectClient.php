@@ -16,6 +16,7 @@
 
 require_once __DIR__.'/BankConnectException.php';
 require_once __DIR__.'/BankConnectLogger.php';
+require_once __DIR__.'/BankConnectXmlSecurity.php';
 
 if (!class_exists('Conf')) {
     class Conf
@@ -41,11 +42,13 @@ class BankConnectClient
     private BankConnectLogger $logger;
     private string $endpoint;
     private int $timeoutMs = 180000; // BankConnect server-side timeout is 3 min
+    private ?BankConnectXmlSecurity $xmlSecurity = null;
 
     public function __construct(Conf $conf, ?BankConnectLogger $logger = null)
     {
         $this->conf = $conf;
         $this->logger = $logger ?? new BankConnectLogger();
+        $this->xmlSecurity = new BankConnectXmlSecurity($conf);
 
         $g = $conf->global ?? [];
         $this->endpoint = (string) ($g['BANKCONNECT_ENDPOINT']
@@ -68,7 +71,15 @@ class BankConnectClient
     public function call(string $operation, string $bodyXml, array $context = []): string
     {
         $start = microtime(true);
-        $envelope = $this->buildEnvelope($bodyXml);
+        [$bodyXml, $soapHeaderXml] = $this->extractServiceHeader($operation, $bodyXml);
+        $envelope = $this->buildEnvelope($bodyXml, $soapHeaderXml);
+
+        if ($this->mustSign($operation)) {
+            if ($this->xmlSecurity === null) {
+                throw new BankConnectException('XML security is required for signed BankConnect operations');
+            }
+            $envelope = $this->xmlSecurity->signRequest($envelope);
+        }
 
         try {
             $response = $this->httpPost($envelope);
@@ -170,17 +181,45 @@ class BankConnectClient
     // Internals
     // ------------------------------------------------------------------
 
-    private function buildEnvelope(string $bodyXml): string
+    private function buildEnvelope(string $bodyXml, string $soapHeaderXml = ''): string
     {
-        // Minimal SOAP 1.1 envelope. Signature + encryption are added by
-        // CertificateManager / higher layers before calling transferPayments.
         return '<?xml version="1.0" encoding="UTF-8"?>'
              . '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
-             . '<soapenv:Header/>'
+             . '<soapenv:Header>'.$soapHeaderXml.'</soapenv:Header>'
              . '<soapenv:Body>'
              . $bodyXml
              . '</soapenv:Body>'
              . '</soapenv:Envelope>';
+    }
+
+    /**
+     * BankConnect serviceHeader belongs in the SOAP Header, not inside the
+     * operation payload. Existing callers may still pass it inside the body;
+     * normalize that representation at the transport boundary.
+     *
+     * @return array{0:string,1:string}
+     */
+    private function extractServiceHeader(string $operation, string $bodyXml): array
+    {
+        if ($operation === self::OP_ACTIVATE_SERVICE_AGREEMENT) {
+            return [$bodyXml, ''];
+        }
+
+        if (preg_match('/<serviceHeader\\b[^>]*>.*?<\\/serviceHeader>/s', $bodyXml, $m)) {
+            $header = $m[0];
+            $body = str_replace($header, '', $bodyXml);
+            return [$body, $header];
+        }
+
+        return [$bodyXml, ''];
+    }
+
+    private function mustSign(string $operation): bool
+    {
+        return !in_array($operation, [
+            self::OP_GET_BANK_CERTIFICATE,
+            self::OP_ACTIVATE_SERVICE_AGREEMENT,
+        ], true);
     }
 
     private function httpPost(string $envelope): string
@@ -220,6 +259,11 @@ class BankConnectClient
         }
 
         return $response;
+    }
+
+    public function setXmlSecurity(BankConnectXmlSecurity $xmlSecurity): void
+    {
+        $this->xmlSecurity = $xmlSecurity;
     }
 
     public function getEndpoint(): string
