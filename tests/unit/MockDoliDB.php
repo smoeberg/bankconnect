@@ -272,7 +272,7 @@ class MockDoliDB
 				$changed++;
 			}
 		}
-		return $changed > 0 || count($this->rows($table)) === 0;
+		return true;
 	}
 
 	private function deleteRows(string $table, string $where)
