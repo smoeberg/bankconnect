@@ -35,10 +35,19 @@ if ($action === 'import' && $user->rights->bankconnect->write) {
 		} else {
 			$originalName = (string) ($upload['name'] ?? 'import');
 			$extension = strtolower((string) pathinfo($originalName, PATHINFO_EXTENSION));
-			$finfo = new finfo(FILEINFO_MIME_TYPE);
-			$mime = $finfo->file($upload['tmp_name']);
-			$allowedMimes = ['application/xml', 'text/xml', 'application/octet-stream'];
-			if ($extension !== 'xml' || $mime === false || !in_array($mime, $allowedMimes, true)) {
+			$maxSize = 10 * 1024 * 1024;
+			if ((int) ($upload['size'] ?? 0) > $maxSize) {
+				setEventMessages($langs->trans('BankConnectFileTooLarge'), null, 'errors');
+			} elseif (!function_exists('finfo_open')) {
+				setEventMessages($langs->trans('BankConnectInvalidFileType'), null, 'errors');
+			} else {
+				$finfo = finfo_open(FILEINFO_MIME_TYPE);
+				$mime = $finfo !== false ? finfo_file($finfo, $upload['tmp_name']) : false;
+				if ($finfo !== false) {
+					finfo_close($finfo);
+				}
+				$allowedMimes = ['application/xml', 'text/xml'];
+				if ($extension !== 'xml' || !is_string($mime) || !in_array($mime, $allowedMimes, true)) {
 				setEventMessages('BankConnect import requires a valid XML CAMT upload', null, 'errors');
 			} else {
 				try {
@@ -48,6 +57,7 @@ if ($action === 'import' && $user->rights->bankconnect->write) {
 					setEventMessages($langs->trans('BankConnectImportOk', $result['imported'], $result['duplicates']), null);
 				} catch (RuntimeException $e) {
 					setEventMessages($langs->trans('BankConnectImportFailed').': '.$e->getMessage(), null, 'errors');
+				}
 				}
 			}
 		}

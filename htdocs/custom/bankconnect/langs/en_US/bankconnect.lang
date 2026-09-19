@@ -26,3 +26,5 @@ BankConnectSendNow=Send immediately
 BankConnectCreateBatch=Create payment batch
 BankConnectRecentBatches=Recent batches
 BankConnectNoBatches=No batches yet
+BankConnectFileTooLarge=File too large. Maximum size is 10 MB.
+BankConnectInvalidFileType=Invalid file type. Only XML files are allowed.

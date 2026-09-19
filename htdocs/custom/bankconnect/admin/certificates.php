@@ -20,10 +20,9 @@ if ($action === 'onboard' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!checkToken()) {
         accessforbidden();
     }
-
-    $activation = GETPOST('activation_code', 'alphanohtml');
-    $functionId = GETPOST('function_identification', 'alphanohtml');
-    $mainReg = GETPOST('main_registration_number', 'alphanohtml') ?: '8079';
+    $activation = GETPOST('activation_code', 'alpha');
+    $functionId = GETPOST('function_identification', 'alpha');
+    $mainReg = GETPOST('main_registration_number', 'alpha') ?: '8079';
     $label = GETPOST('label', 'alphanohtml');
     $dryRun = GETPOSTINT('dry_run');
 

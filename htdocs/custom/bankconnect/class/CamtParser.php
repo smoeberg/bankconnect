@@ -30,9 +30,19 @@ class CamtParser
         if (trim($xml) === '') {
             throw new RuntimeException('Empty XML');
         }
+        if (strlen($xml) > 10 * 1024 * 1024) {
+            throw new RuntimeException('XML too large: maximum size is 10MB');
+        }
+        if (preg_match('/<!DOCTYPE\s/i', $xml) || preg_match('/<!ENTITY\s/i', $xml)) {
+            throw new RuntimeException('XML with DTD/entity declarations is not allowed');
+        }
 
         $prev = libxml_use_internal_errors(true);
-        $root = simplexml_load_string($xml);
+        $root = simplexml_load_string(
+            $xml,
+            SimpleXMLElement::class,
+            LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING
+        );
         if ($root === false) {
             libxml_clear_errors();
             libxml_use_internal_errors($prev);
