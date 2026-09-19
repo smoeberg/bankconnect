@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.0-dev (feature/pain001-soap-client)
+
+### Added
+- **BankConnectClient** — SOAP client skeleton for all CorporateService operations
+  (getBankCertificate, activateServiceAgreement, renewCustomerCertificate,
+  transferPayments, getStatus, getCustomerStatement, getCustomerAccountReport,
+  getDebitCreditNotification, getAlternate).
+- **BankConnectCertificateManager** — keypair/CSR generation, AES-256-GCM
+  private-key encryption, activate + renew stubs.
+- **Pain001Builder** — builds pain.001.001.03 for Danish account transfer and
+  SEPA Credit Transfer (MsgId, PmtInf, CdtTrfTxInf).
+- **SQL** — `llx_bankconnect_agreement`, `llx_bankconnect_certificate`,
+  `llx_bankconnect_batch`, `llx_bankconnect_batch_line`.
+
+### Notes
+- This is the foundation for phase A (outgoing payments).
+- XML-Signature / XML-Encryption and full ActivateServiceAgreement payload
+  still to be completed against the official BankConnect developer package.
+- Branch: `feature/pain001-soap-client`.
+
 ## 0.2.0 (2026-09-19)
 
 ### Added
@@ -17,6 +37,7 @@
 - **CamtParser** — ensartet exception-kontrakt: tom/malformert XML kaster nu
   altid `RuntimeException` (tidligere blanding med `InvalidArgumentException`).
 - **Sprogfiler** — import-besked har nu plads til dublet-tælling (da_DK + en_US).
+
 ## 0.1.1 (2026-09-19)
 
 ### Fixed
