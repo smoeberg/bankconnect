@@ -49,11 +49,11 @@ class BankConnectXmlSecurityTest extends TestCase
         $this->publicPem = $details['key'];
     }
 
-    public function testStubEncryptWithoutBankCert(): void
+    public function testEncryptWithoutBankCertFailsClosed(): void
     {
         $sec = new BankConnectXmlSecurity(new Conf());
-        $out = $sec->encryptPayload('<Document>test</Document>');
-        $this->assertSame(base64_encode('<Document>test</Document>'), $out);
+        $this->expectException(BankConnectException::class);
+        $sec->encryptPayload('<Document>test</Document>');
     }
 
     public function testEncryptDecryptRoundtrip(): void
@@ -81,11 +81,12 @@ class BankConnectXmlSecurityTest extends TestCase
         $this->assertStringContainsString('e2eid123', $msg);
     }
 
-    public function testSignWithoutKeyReturnsUnchanged(): void
+    public function testSignWithoutKeyFailsClosed(): void
     {
         $sec = new BankConnectXmlSecurity(new Conf());
         $xml = '<soapenv:Envelope><soapenv:Body/></soapenv:Envelope>';
-        $this->assertSame($xml, $sec->signRequest($xml));
+        $this->expectException(BankConnectException::class);
+        $sec->signRequest($xml);
     }
 
     public function testServiceHeaderBuilder(): void
