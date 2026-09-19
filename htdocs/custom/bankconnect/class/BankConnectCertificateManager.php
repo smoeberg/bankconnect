@@ -195,6 +195,64 @@ class BankConnectCertificateManager
     }
 
     /**
+     * Renew a customer certificate and persist it only after cryptographic validation.
+     * Future-dated certificates are staged inactive so the current certificate remains usable.
+     *
+     * @return array{agreement_id:int, certificate_id:int, status:string, csr_b64:string}
+     */
+    public function renewCustomerCertificateForAgreement(int $agreementId, string $serviceHeaderXml): array
+    {
+        if ($this->store === null) {
+            throw new BankConnectException('AgreementStore not configured');
+        }
+
+        $agreement = $this->store->getAgreement($agreementId);
+        if ($agreement === null) {
+            throw new BankConnectException("Agreement {$agreementId} not found");
+        }
+
+        $keypair = $this->generateKeyPairAndCsr([
+            'commonName' => (string) ($agreement['bank_connect_id'] ?? 'BankConnect'),
+        ]);
+        $csrB64 = $this->csrToRequestBody($keypair['csr']);
+
+        $raw = $this->renewCustomerCertificate($keypair['csr'], $serviceHeaderXml);
+        $customerCertPem = $this->extractCustomerCertificatePem($raw);
+        if ($customerCertPem === null || $customerCertPem === '') {
+            throw new BankConnectException('No customer certificate found in renewCustomerCertificate response');
+        }
+
+        $validity = $this->parseCertValidity($customerCertPem);
+        if ($validity['from'] === null || $validity['to'] === null) {
+            throw new BankConnectException('Renewed customer certificate could not be parsed');
+        }
+        if (!$this->validateCertificateAndPrivateKey($customerCertPem, $keypair['private_key'])) {
+            throw new BankConnectException('Renewed customer certificate does not match generated private key');
+        }
+
+        $currentlyValid = $this->isCertificateCurrentlyValid($validity);
+        $certificateId = $this->store->saveCertificate([
+            'fk_agreement' => $agreementId,
+            'certificate_pem' => $customerCertPem,
+            'private_key_enc' => $this->encryptPrivateKey($keypair['private_key']),
+            'valid_from' => $validity['from'],
+            'valid_to' => $validity['to'],
+            'is_active' => $currentlyValid ? 1 : 0,
+        ]);
+
+        if ($currentlyValid) {
+            $this->store->updateAgreementStatus($agreementId, 'active', date('Y-m-d H:i:s'));
+        }
+
+        return [
+            'agreement_id' => $agreementId,
+            'certificate_id' => $certificateId,
+            'status' => $currentlyValid ? 'active' : 'staged',
+            'csr_b64' => $csrB64,
+        ];
+    }
+
+    /**
      * @return array{private_key:string, csr:string}
      */
     public function generateKeyPairAndCsr(array $dn = []): array
