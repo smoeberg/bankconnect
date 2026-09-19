@@ -14,7 +14,7 @@ class CamtParser
     public function parse(string $xml): array
     {
         if (trim($xml) === '') {
-            throw new InvalidArgumentException('Empty XML');
+            throw new RuntimeException('Empty XML');
         }
 
         $prev = libxml_use_internal_errors(true);

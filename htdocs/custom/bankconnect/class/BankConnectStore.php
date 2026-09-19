@@ -14,18 +14,24 @@ class BankConnectStore
 	/** Insert or update a transaction keyed by its content hash. Returns rowid. */
 	public function upsertTransaction(array $t, int $fkBankAccount, string $sourceFile): int
 	{
+		return $this->upsertTransactionDetailed($t, $fkBankAccount, $sourceFile)['rowid'];
+	}
+
+	/** @return array{rowid:int, duplicate:bool} */
+	public function upsertTransactionDetailed(array $t, int $fkBankAccount, string $sourceFile): array
+	{
 		$hash = hash('sha256', implode('|', [$t['date'], $t['amount'], $t['reference'] ?? '', $t['counterparty'] ?? '']));
 		$sql = "SELECT rowid FROM llx_bankconnect_transaction WHERE hash = '".$this->db->escape($hash)."'";
 		$res = $this->db->query($sql);
 		if ($res && $obj = $this->db->fetch_object($res)) {
-			return (int)$obj->rowid;
+			return ['rowid' => (int)$obj->rowid, 'duplicate' => true];
 		}
 		$sql = "INSERT INTO llx_bankconnect_transaction (fk_bank_account, hash, tx_date, amount, currency, reference, counterparty, cam_file, state, created_at)
 				VALUES (".(int)$fkBankAccount.", '".$this->db->escape($hash)."', '".$this->db->escape($t['date'])."', ".(float)$t['amount'].", '".$this->db->escape($t['currency'] ?? 'DKK')."', '".$this->db->escape($t['reference'] ?? '')."', '".$this->db->escape($t['counterparty'] ?? '')."', '".$this->db->escape($sourceFile)."', 'unmatched', NOW())";
 		if (!$this->db->query($sql)) {
 			throw new RuntimeException('BankConnect: insert transaction failed: '.$this->db->lasterror());
 		}
-		return (int)$this->db->last_insert_id('llx_bankconnect_transaction');
+		return ['rowid' => (int)$this->db->last_insert_id('llx_bankconnect_transaction'), 'duplicate' => false];
 	}
 
 	/** Persist a proposed match (rule or AI). */
