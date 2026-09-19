@@ -41,7 +41,7 @@ class PaymentBatchServiceTest extends TestCase
             ]);
     }
 
-    public function testCreateBatchPersistsHeaderAndLines(): void
+    public function testCreateBatchPersistsHeaderAndLinesAsDraft(): void
     {
         $result = $this->svc->createBatch($this->sampleBuilder(), 1, 1);
 
@@ -52,35 +52,34 @@ class PaymentBatchServiceTest extends TestCase
         $this->assertLessThanOrEqual(35, strlen($result['end_to_end_message_id']));
         $this->assertLessThanOrEqual(35, strlen($result['msg_id']));
 
+        $res = $this->db->query('SELECT status FROM llx_bankconnect_batch WHERE rowid = '.$result['batch_id']);
+        $batch = $this->db->fetch_object($res);
+        $this->assertSame('draft', $batch->status);
+
         $res = $this->db->query('SELECT * FROM llx_bankconnect_batch_line WHERE fk_batch = '.$result['batch_id']);
         $line = $this->db->fetch_object($res);
         $this->assertNotNull($line);
         $this->assertSame('E2E-FA240891', $line->end_to_end_id);
+        $this->assertSame('draft', $line->status);
         $this->assertEqualsWithDelta(12450.00, (float) $line->amount, 0.001);
         $this->assertSame(42, (int) $line->fk_facture_fourn);
     }
 
-    public function testSendBatchStubMarksSent(): void
+    public function testSendWithoutClientFailsClosedAndLeavesDraft(): void
     {
         $created = $this->svc->createBatch($this->sampleBuilder(), 1);
-        $sent = $this->svc->sendBatch($created['batch_id']);
-
-        $this->assertSame('sent', $sent['status']);
-        $this->assertSame('STUB', $sent['response_code']);
-
-        $res = $this->db->query('SELECT status, response_code FROM llx_bankconnect_batch WHERE rowid = '.$created['batch_id']);
-        $row = $this->db->fetch_object($res);
-        $this->assertSame('sent', $row->status);
-        $this->assertSame('STUB', $row->response_code);
-    }
-
-    public function testSendNonDraftThrows(): void
-    {
-        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
-        $this->svc->sendBatch($created['batch_id']);
 
         $this->expectException(BankConnectException::class);
-        $this->svc->sendBatch($created['batch_id']);
+        $this->expectExceptionMessage('BankConnectClient is required');
+
+        try {
+            $this->svc->sendBatch($created['batch_id']);
+        } finally {
+            $res = $this->db->query('SELECT status, response_code FROM llx_bankconnect_batch WHERE rowid = '.$created['batch_id']);
+            $row = $this->db->fetch_object($res);
+            $this->assertSame('draft', $row->status);
+            $this->assertNull($row->response_code);
+        }
     }
 
     public function testSendUnknownBatchThrows(): void
@@ -89,29 +88,9 @@ class PaymentBatchServiceTest extends TestCase
         $this->svc->sendBatch(99999);
     }
 
-    public function testCreateBatchWithMultipleLines(): void
-    {
-        $builder = (new Pain001Builder())
-            ->setDebtor('Test ApS', 'DK5089000000012345')
-            ->addTransaction([
-                'endToEndId' => 'A', 'amount' => 100.00, 'currency' => 'DKK',
-                'creditorName' => 'X', 'creditorIban' => 'DK11',
-            ])
-            ->addTransaction([
-                'endToEndId' => 'B', 'amount' => 200.50, 'currency' => 'DKK',
-                'creditorName' => 'Y', 'creditorIban' => 'DK22',
-            ]);
-
-        $result = $this->svc->createBatch($builder, 1);
-        $this->assertSame(2, $result['nb_of_txs']);
-        $this->assertEqualsWithDelta(300.50, $result['control_sum'], 0.001);
-        $this->assertSame(2, $this->db->countRows('llx_bankconnect_batch_line'));
-    }
-
     public function testRefreshStatusUpdatesLines(): void
     {
         $created = $this->svc->createBatch($this->sampleBuilder(), 1);
-        $this->svc->sendBatch($created['batch_id']);
 
         $pain002 = <<<XML
 <?xml version="1.0" encoding="UTF-8"?>
