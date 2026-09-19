@@ -5,6 +5,7 @@ use PHPUnit\Framework\TestCase;
 require_once __DIR__.'/MockDoliDB.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectException.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/Pain001Builder.php';
+require_once __DIR__.'/../../htdocs/custom/bankconnect/class/Pain002Parser.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/PaymentBatchService.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectLogger.php';
 
@@ -20,7 +21,6 @@ class PaymentBatchServiceTest extends TestCase
         $this->conf = new Conf();
         $this->svc = new PaymentBatchService($this->db, $this->conf, null);
 
-        // MockDoliDB has no CREATE TABLE — seed empty table arrays
         $this->db->tables['llx_bankconnect_batch'] = [];
         $this->db->tables['llx_bankconnect_batch_line'] = [];
     }
@@ -106,5 +106,46 @@ class PaymentBatchServiceTest extends TestCase
         $this->assertSame(2, $result['nb_of_txs']);
         $this->assertEqualsWithDelta(300.50, $result['control_sum'], 0.001);
         $this->assertSame(2, $this->db->countRows('llx_bankconnect_batch_line'));
+    }
+
+    public function testRefreshStatusUpdatesLines(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->svc->sendBatch($created['batch_id']);
+
+        $pain002 = <<<XML
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03">
+  <CstmrPmtStsRpt>
+    <GrpHdr><MsgId>ST1</MsgId><CreDtTm>2026-09-19T12:00:00</CreDtTm></GrpHdr>
+    <OrgnlGrpInfAndSts>
+      <OrgnlMsgId>{$created['msg_id']}</OrgnlMsgId>
+      <GrpSts>ACCP</GrpSts>
+    </OrgnlGrpInfAndSts>
+    <OrgnlPmtInfAndSts>
+      <TxInfAndSts>
+        <OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId>
+        <TxSts>ACCP</TxSts>
+      </TxInfAndSts>
+    </OrgnlPmtInfAndSts>
+  </CstmrPmtStsRpt>
+</Document>
+XML;
+
+        $result = $this->svc->refreshStatus($created['batch_id'], null, $pain002);
+
+        $this->assertSame('ACCP', $result['group_status']);
+        $this->assertSame(1, $result['updated_lines']);
+
+        $res = $this->db->query(
+            'SELECT status, pain002_status FROM llx_bankconnect_batch_line WHERE fk_batch = '.$created['batch_id']
+        );
+        $line = $this->db->fetch_object($res);
+        $this->assertSame('accepted', $line->status);
+        $this->assertSame('ACCP', $line->pain002_status);
+
+        $resB = $this->db->query('SELECT status FROM llx_bankconnect_batch WHERE rowid = '.$created['batch_id']);
+        $batch = $this->db->fetch_object($resB);
+        $this->assertSame('accepted', $batch->status);
     }
 }
