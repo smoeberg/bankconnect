@@ -1,15 +1,10 @@
 <?php
 /**
- * PaymentBatchService – orchestrates pain.001 creation, persistence and transfer.
- *
- * Flow:
- *  1. Build pain.001 via Pain001Builder
- *  2. Insert llx_bankconnect_batch + batch_line
- *  3. Encrypt + sign + call BankConnectClient::transferPayments (when wired)
- *  4. Store response / correlationId
+ * PaymentBatchService – orchestrates pain.001 creation, persistence, transfer and status.
  */
 
 require_once __DIR__.'/Pain001Builder.php';
+require_once __DIR__.'/Pain002Parser.php';
 require_once __DIR__.'/BankConnectClient.php';
 require_once __DIR__.'/BankConnectException.php';
 require_once __DIR__.'/BankConnectLogger.php';
@@ -116,7 +111,6 @@ class PaymentBatchService
             ];
         }
 
-        // Live path (requires BankConnectXmlSecurity + certificates)
         require_once __DIR__.'/BankConnectXmlSecurity.php';
         $security = new BankConnectXmlSecurity($this->conf);
 
@@ -126,7 +120,6 @@ class PaymentBatchService
 
         $response = $this->client->transferPayments($signed, $batch['end_to_end_message_id']);
 
-        // Minimal parse – full PaymentResponse parsing later
         $correlationId = null;
         $responseCode  = 'OK';
         if (preg_match('/<correlationId>([^<]+)<\/correlationId>/', $response, $m)) {
@@ -148,6 +141,121 @@ class PaymentBatchService
             'response_code'  => $responseCode,
             'correlation_id' => $correlationId,
         ];
+    }
+
+    /**
+     * Fetch status via getStatus (pain.002) and update batch lines.
+     *
+     * @param string|null $serviceHeaderXml  Pre-built ServiceHeader; required for live calls
+     * @param string|null $pain002Xml        Optional: inject XML for tests (skips SOAP)
+     * @return array{group_status:?string, updated_lines:int, transactions:array}
+     */
+    public function refreshStatus(int $batchId, ?string $serviceHeaderXml = null, ?string $pain002Xml = null): array
+    {
+        $batch = $this->fetchBatch($batchId);
+        if (!$batch) {
+            throw new BankConnectException("Batch {$batchId} not found");
+        }
+
+        if ($pain002Xml === null) {
+            if ($this->client === null) {
+                throw new BankConnectException('No BankConnectClient and no pain.002 XML provided');
+            }
+            if ($serviceHeaderXml === null || $serviceHeaderXml === '') {
+                throw new BankConnectException('ServiceHeader XML is required for getStatus');
+            }
+            $raw = $this->client->getStatus($serviceHeaderXml);
+            // Extract payload from SOAP if needed – for now assume body contains pain.002
+            $pain002Xml = $raw;
+        }
+
+        $parser = new Pain002Parser();
+        $parsed = $parser->parse($pain002Xml);
+
+        $updated = 0;
+        foreach ($parsed['transactions'] as $tx) {
+            $internal = Pain002Parser::mapToInternalStatus($tx['status']);
+            $reason = trim(($tx['reason_code'] ?? '').' '.($tx['reason_text'] ?? ''));
+            if ($this->updateBatchLineByEndToEnd(
+                $batchId,
+                $tx['end_to_end_id'],
+                $internal,
+                $tx['status'],
+                $reason !== '' ? $reason : null
+            )) {
+                $updated++;
+            }
+        }
+
+        // Roll up batch status
+        $batchStatus = $this->deriveBatchStatus($parsed['group_status'], $parsed['transactions']);
+        $this->updateBatchStatus($batchId, $batchStatus, [
+            'date_status' => date('Y-m-d H:i:s'),
+            'message'     => 'Status refreshed from pain.002',
+        ]);
+
+        $this->logger->info('status_refreshed', [
+            'batch_id'     => $batchId,
+            'group_status' => $parsed['group_status'],
+            'updated'      => $updated,
+        ]);
+
+        return [
+            'group_status'  => $parsed['group_status'],
+            'updated_lines' => $updated,
+            'transactions'  => $parsed['transactions'],
+        ];
+    }
+
+    private function deriveBatchStatus(?string $groupStatus, array $transactions): string
+    {
+        if ($groupStatus === 'ACCP' || $groupStatus === 'ACSC') {
+            return 'accepted';
+        }
+        if ($groupStatus === 'RJCT') {
+            return 'rejected';
+        }
+        if ($groupStatus === 'PART') {
+            return 'partial';
+        }
+
+        $statuses = array_unique(array_map(
+            fn($t) => Pain002Parser::mapToInternalStatus($t['status']),
+            $transactions
+        ));
+
+        if (count($statuses) === 1) {
+            return $statuses[0];
+        }
+        if (in_array('rejected', $statuses, true) && in_array('accepted', $statuses, true)) {
+            return 'partial';
+        }
+        if (in_array('pending', $statuses, true)) {
+            return 'pending';
+        }
+        return 'sent';
+    }
+
+    private function updateBatchLineByEndToEnd(
+        int $batchId,
+        string $endToEndId,
+        string $status,
+        string $pain002Status,
+        ?string $reason
+    ): bool {
+        $sets = [
+            "status = '".$this->db->escape($status)."'",
+            "pain002_status = '".$this->db->escape($pain002Status)."'",
+        ];
+        if ($reason !== null) {
+            $sets[] = "status_reason = '".$this->db->escape(substr($reason, 0, 255))."'";
+        }
+
+        $sql = "UPDATE llx_bankconnect_batch_line SET ".implode(', ', $sets)
+             . " WHERE fk_batch = ".(int) $batchId
+             . " AND end_to_end_id = '".$this->db->escape($endToEndId)."'";
+
+        return (bool) $this->db->query($sql);
     }
 
     // ------------------------------------------------------------------
@@ -245,6 +353,9 @@ class PaymentBatchService
         }
         if (isset($extra['date_sent'])) {
             $sets[] = "date_sent = '".$this->db->escape($extra['date_sent'])."'";
+        }
+        if (isset($extra['date_status'])) {
+            $sets[] = "date_status = '".$this->db->escape($extra['date_status'])."'";
         }
 
         $sql = "UPDATE llx_bankconnect_batch SET ".implode(', ', $sets)
