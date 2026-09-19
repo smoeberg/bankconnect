@@ -26,3 +26,5 @@ BankConnectSendNow=Send med det samme
 BankConnectCreateBatch=Opret betalingsbatch
 BankConnectRecentBatches=Seneste batches
 BankConnectNoBatches=Ingen batches endnu
+BankConnectFileTooLarge=Filen er for stor. Maksimal størrelse er 10 MB.
+BankConnectInvalidFileType=Ugyldig filtype. Kun XML-filer er tilladt.
