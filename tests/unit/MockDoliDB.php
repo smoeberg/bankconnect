@@ -13,8 +13,6 @@ class MockDoliDB
 	private $failQueryContaining = null;
 	private $lastRowCount = 0;
 	private $raceInsertTransaction = null;
-	private $lastRowCount = 0;
-	private $raceInsertTransaction = null;
 
 	public function escape($s)
 	{
@@ -282,6 +280,18 @@ class MockDoliDB
 	}
 
 	// ------------------------------------------------------------ test helpers
+
+	public function simulateConcurrentTransactionInsert(string $hash, string $date, float $amount, string $ref, string $counterparty, int $account = 1): void
+	{
+		$this->raceInsertTransaction = [$hash, $date, $amount, $ref, $counterparty, $account];
+	}
+
+	public function seedTransactionWithHash(string $hash, string $date, float $amount, string $ref, string $counterparty, int $account = 1): int
+	{
+		$this->insert('llx_bankconnect_transaction', 'fk_bank_account, hash, tx_date, amount, currency, reference, counterparty, cam_file, state, created_at',
+			"$account, '".addslashes($hash)."', '$date', $amount, 'DKK', '".addslashes($ref)."', '".addslashes($counterparty)."', 'race.xml', 'unmatched', NOW()");
+		return $this->nextId['llx_bankconnect_transaction'];
+	}
 
 	public function seedTransaction(string $date, float $amount, string $ref, string $counterparty, int $account = 1): int
 	{
