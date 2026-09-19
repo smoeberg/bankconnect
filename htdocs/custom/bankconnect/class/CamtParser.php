@@ -22,6 +22,8 @@ require_once __DIR__.'/BankTransaction.php';
 
 class CamtParser
 {
+    public const MAX_XML_BYTES = 10 * 1024 * 1024;
+
     /**
      * @return BankTransaction[]
      */
@@ -31,7 +33,7 @@ class CamtParser
             throw new RuntimeException('Empty XML');
         }
 
-        if (strlen($xml) > ImportService::MAX_IMPORT_BYTES) {
+        if (strlen($xml) > self::MAX_XML_BYTES) {
             throw new RuntimeException('CAMT XML exceeds the 10 MB limit');
         }
 
