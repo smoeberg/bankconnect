@@ -21,6 +21,10 @@ class BankConnectStore
 	 * Prefer hash computed by CamtParser (includes text + acctSvcrRef).
 	 * Fallback hash only when parser did not supply one.
 	 *
+	 * The UNIQUE(hash) database constraint is the concurrency boundary.
+	 * The initial SELECT is only a fast duplicate path; correctness must not
+	 * depend on it because another importer may insert the same hash after it.
+	 *
 	 * @return array{rowid:int, duplicate:bool}
 	 */
 	public function upsertTransactionDetailed(array $t, int $fkBankAccount, string $sourceFile): array
@@ -43,12 +47,29 @@ class BankConnectStore
 		if ($res && $obj = $this->db->fetch_object($res)) {
 			return ['rowid' => (int)$obj->rowid, 'duplicate' => true];
 		}
+
+		// Do not use SELECT-then-INSERT as the correctness mechanism. The
+		// UNIQUE(hash) constraint arbitrates concurrent importers atomically.
 		$sql = "INSERT INTO llx_bankconnect_transaction (fk_bank_account, hash, tx_date, amount, currency, reference, counterparty, cam_file, state, created_at)
-				VALUES (".(int)$fkBankAccount.", '".$this->db->escape($hash)."', '".$this->db->escape($t['date'])."', ".(float)$t['amount'].", '".$this->db->escape($t['currency'] ?? 'DKK')."', '".$this->db->escape($t['reference'] ?? '')."', '".$this->db->escape($t['counterparty'] ?? '')."', '".$this->db->escape($sourceFile)."', 'unmatched', NOW())";
+				VALUES (".(int)$fkBankAccount.", '".$this->db->escape($hash)."', '".$this->db->escape($t['date'])."', ".(float)$t['amount'].", '".$this->db->escape($t['currency'] ?? 'DKK')."', '".$this->db->escape($t['reference'] ?? '')."', '".$this->db->escape($t['counterparty'] ?? '')."', '".$this->db->escape($sourceFile)."', 'unmatched', NOW())
+				ON DUPLICATE KEY UPDATE rowid = rowid";
 		if (!$this->db->query($sql)) {
 			throw new RuntimeException('BankConnect: insert transaction failed: '.$this->db->lasterror());
 		}
-		return ['rowid' => (int)$this->db->last_insert_id('llx_bankconnect_transaction'), 'duplicate' => false];
+
+		// MySQL reports 1 row affected for an insert and 0 for our no-op
+		// duplicate-key update. Capture that before the reload.
+		$affectedRes = $this->db->query('SELECT ROW_COUNT() AS affected');
+		$affected = $affectedRes ? $this->db->fetch_object($affectedRes) : false;
+		$isDuplicate = $affected && (int)$affected->affected === 0;
+
+		// Re-read after the atomic write. This also handles the race where
+		// another importer won between our initial SELECT and INSERT.
+		$res = $this->db->query($sql = "SELECT rowid FROM llx_bankconnect_transaction WHERE hash = '".$this->db->escape($hash)."'");
+		if (!$res || !($obj = $this->db->fetch_object($res))) {
+			throw new RuntimeException('BankConnect: transaction upsert succeeded but row cannot be reloaded');
+		}
+		return ['rowid' => (int)$obj->rowid, 'duplicate' => $isDuplicate];
 	}
 
 	/** Persist a proposed match (rule or AI). */
