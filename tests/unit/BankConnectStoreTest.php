@@ -55,10 +55,10 @@ class BankConnectStoreTest extends TestCase
             $tx['counterparty'], $tx['text'], $tx['acctSvcrRef'],
         ]));
 
-        // Simulate another importer winning between the initial SELECT and
-        // this call's INSERT. The unique transaction hash must make the
-        // operation converge on the existing row rather than create a second one.
-        $this->db->seedTransactionWithHash($hash, $tx['date'], $tx['amount'], $tx['reference'], $tx['counterparty']);
+        // The initial SELECT misses. The DB double injects a competing
+        // insert immediately before our INSERT, exercising the unique-key
+        // arbitration path without changing production code semantics.
+        $this->db->simulateConcurrentTransactionInsert($hash, $tx['date'], $tx['amount'], $tx['reference'], $tx['counterparty']);
 
         $result = $this->store->upsertTransactionDetailed($tx, 1, 'race.xml');
 
