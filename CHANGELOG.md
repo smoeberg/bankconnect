@@ -11,8 +11,13 @@
   private-key encryption, activate + renew stubs.
 - **Pain001Builder** — builds pain.001.001.03 for Danish account transfer and
   SEPA Credit Transfer (MsgId, PmtInf, CdtTrfTxInf).
+- **PaymentBatchService** — createBatch (persist header + lines) + sendBatch
+  (stub until signature/encryption is wired).
 - **SQL** — `llx_bankconnect_agreement`, `llx_bankconnect_certificate`,
   `llx_bankconnect_batch`, `llx_bankconnect_batch_line`.
+- **Tests** — `Pain001BuilderTest` (12 cases: MsgId, CtrlSum, XML structure,
+  SEPA/DK service level, validation) and `PaymentBatchServiceTest` (create,
+  send stub, status guards).
 
 ### Notes
 - This is the foundation for phase A (outgoing payments).
