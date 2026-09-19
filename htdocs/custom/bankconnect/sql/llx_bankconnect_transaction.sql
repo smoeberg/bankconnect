@@ -8,11 +8,15 @@ CREATE TABLE IF NOT EXISTS llx_bankconnect_transaction (
 	currency varchar(3) NOT NULL DEFAULT 'DKK',
 	reference varchar(255),
 	counterparty varchar(255),
+	acct_svcr_ref varchar(255),
+	is_reversal integer NOT NULL DEFAULT 0,
+	requires_manual_review integer NOT NULL DEFAULT 0,
 	cam_file varchar(255),
 	state varchar(16) NOT NULL DEFAULT 'unmatched',
 	created_at datetime DEFAULT NULL,
 	KEY idx_bc_state (state),
-	KEY idx_bc_account (fk_bank_account)
+	KEY idx_bc_account (fk_bank_account),
+	KEY idx_bc_manual_review (requires_manual_review)
 ) ENGINE=innodb;
 
 CREATE TABLE IF NOT EXISTS llx_bankconnect_match (

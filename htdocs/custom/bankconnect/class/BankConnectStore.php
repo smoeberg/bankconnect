@@ -48,10 +48,14 @@ class BankConnectStore
 			return ['rowid' => (int)$obj->rowid, 'duplicate' => true];
 		}
 
+		$manualReview = !empty($t['requiresManualReview']) ? 1 : 0;
+		$isReversal = !empty($t['isReversal']) ? 1 : 0;
+		$acctSvcrRef = (string) ($t['acctSvcrRef'] ?? '');
+
 		// Do not use SELECT-then-INSERT as the correctness mechanism. The
 		// UNIQUE(hash) constraint arbitrates concurrent importers atomically.
-		$sql = "INSERT INTO llx_bankconnect_transaction (fk_bank_account, hash, tx_date, amount, currency, reference, counterparty, cam_file, state, created_at)
-				VALUES (".(int)$fkBankAccount.", '".$this->db->escape($hash)."', '".$this->db->escape($t['date'])."', ".(float)$t['amount'].", '".$this->db->escape($t['currency'] ?? 'DKK')."', '".$this->db->escape($t['reference'] ?? '')."', '".$this->db->escape($t['counterparty'] ?? '')."', '".$this->db->escape($sourceFile)."', 'unmatched', NOW())
+		$sql = "INSERT INTO llx_bankconnect_transaction (fk_bank_account, hash, tx_date, amount, currency, reference, counterparty, acct_svcr_ref, is_reversal, requires_manual_review, cam_file, state, created_at)
+				VALUES (".(int)$fkBankAccount.", '".$this->db->escape($hash)."', '".$this->db->escape($t['date'])."', ".(float)$t['amount'].", '".$this->db->escape($t['currency'] ?? 'DKK')."', '".$this->db->escape($t['reference'] ?? '')."', '".$this->db->escape($t['counterparty'] ?? '')."', '".$this->db->escape($acctSvcrRef)."', ".$isReversal.", ".$manualReview.", '".$this->db->escape($sourceFile)."', 'unmatched', NOW())
 				ON DUPLICATE KEY UPDATE rowid = rowid";
 		if (!$this->db->query($sql)) {
 			throw new RuntimeException('BankConnect: insert transaction failed: '.$this->db->lasterror());
@@ -132,7 +136,7 @@ class BankConnectStore
 	/** All unmatched transactions for an account, newest first. */
 	public function unmatchedTransactions(int $fkBankAccount): array
 	{
-		$sql = "SELECT rowid, tx_date, amount, currency, reference, counterparty, cam_file FROM llx_bankconnect_transaction
+		$sql = "SELECT rowid, tx_date, amount, currency, reference, counterparty, acct_svcr_ref, is_reversal, requires_manual_review, cam_file FROM llx_bankconnect_transaction
 				WHERE fk_bank_account = ".(int)$fkBankAccount." AND state = 'unmatched' ORDER BY tx_date DESC";
 		$res = $this->db->query($sql);
 		$out = [];
