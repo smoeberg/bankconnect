@@ -230,6 +230,21 @@ class BankConnectClient
         ], true);
     }
 
+    /**
+     * Build the HTTP headers required by the Bank Connect CorporateService.
+     *
+     * transferPayments uses the WSDL SOAP action "transferPayment".
+     *
+     * @return list<string>
+     */
+    protected function buildHttpHeaders(): array
+    {
+        return [
+            'Content-Type: text/xml; charset=utf-8',
+            'SOAPAction: "urn:CorporateService:transferPayment"',
+        ];
+    }
+
     private function httpPost(string $envelope): string
     {
         if (!function_exists('curl_init')) {
@@ -241,10 +256,7 @@ class BankConnectClient
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => $envelope,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPHEADER     => [
-                'Content-Type: text/xml; charset=utf-8',
-                'SOAPAction: ""',
-            ],
+            CURLOPT_HTTPHEADER     => $this->buildHttpHeaders(),
             CURLOPT_TIMEOUT_MS     => $this->timeoutMs,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
