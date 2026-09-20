@@ -29,6 +29,16 @@ if (!class_exists('Conf')) {
 
 class BankConnectXmlSecurity
 {
+    public const BC_NS = 'http://bankconnect.dk/schema/2014';
+    public const DS_NS = 'http://www.w3.org/2000/09/xmldsig#';
+    public const EXC_C14N = 'http://www.w3.org/2001/10/xml-exc-c14n#';
+    public const SHA256 = 'http://www.w3.org/2001/04/xmlenc#sha256';
+    public const RSA_SHA256 = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
+    public const XENC_NS = 'http://www.w3.org/2001/04/xmlenc#';
+    public const AES256_CBC = 'http://www.w3.org/2001/04/xmlenc#aes256-cbc';
+    public const RSA_OAEP_MGF1P = 'http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p';
+    public const WSSE_NS = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd';
+
     public const PACK_VERSION = 1;
 
     private Conf $conf;
