@@ -146,6 +146,7 @@ class BankConnectXmlSecurity
 
         $signature=$this->createBusinessSignature($doc,$payment,$paymentId);
         $transfer->appendChild($signature);
+        $this->completeBusinessSignature($signature);
 
         return ['xml'=>$doc->saveXML($doc->documentElement),'compressed'=>$prepared['compressed']];
     }
@@ -259,16 +260,26 @@ class BankConnectXmlSecurity
         $ref->appendChild($this->xmlElement($doc,'http://www.w3.org/2000/09/xmldsig#','ds:DigestMethod',null,['Algorithm'=>'http://www.w3.org/2001/04/xmlenc#sha256']));
         $ref->appendChild($doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:DigestValue',base64_encode(hash('sha256',$canonical,true))));
         $si->appendChild($ref); $sig->appendChild($si);
-        $siCanonical=$si->C14N(true,false);
-        if ($siCanonical===false) throw new BankConnectException('Failed to canonicalize SignedInfo');
-        $value='';
-        if (!openssl_sign($siCanonical,$value,$this->customerPrivateKeyPem,OPENSSL_ALGO_SHA256)) throw new BankConnectException('Business XML signature failed');
-        $sig->appendChild($doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:SignatureValue',base64_encode($value)));
         $ki=$doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:KeyInfo');
         $xd=$doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:X509Data');
         $xd->appendChild($doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:X509Certificate',$this->certificateDerBase64($this->customerCertificatePem)));
         $ki->appendChild($xd); $sig->appendChild($ki);
         return $sig;
+    }
+
+    private function completeBusinessSignature(DOMElement $signature): void
+    {
+        $signedInfo=$signature->getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#','SignedInfo')->item(0);
+        if (!$signedInfo instanceof DOMElement) throw new BankConnectException('SignedInfo missing');
+        $canonical=$signedInfo->C14N(true,false);
+        if ($canonical===false) throw new BankConnectException('Failed to canonicalize SignedInfo');
+        $value='';
+        if (!openssl_sign($canonical,$value,$this->customerPrivateKeyPem,OPENSSL_ALGO_SHA256)) {
+            throw new BankConnectException('Business XML signature failed');
+        }
+        $doc=$signature->ownerDocument;
+        $signatureValue=$doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:SignatureValue',base64_encode($value));
+        $signature->insertBefore($signatureValue,$signature->getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#','KeyInfo')->item(0));
     }
 
     private function prepareDocument(string $xml): DOMDocument { return $this->loadDocument($xml); }
