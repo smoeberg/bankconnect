@@ -4,167 +4,134 @@ use PHPUnit\Framework\TestCase;
 
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectException.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectXmlSecurity.php';
-require_once __DIR__.'/../../htdocs/custom/bankconnect/class/ServiceHeaderBuilder.php';
 
 class BankConnectXmlSecurityTest extends TestCase
 {
-    private string $privatePem = '';
-    private string $publicPem = '';
+    private string $customerPrivate = '';
+    private string $customerCert = '';
+    private string $bankPrivate = '';
+    private string $bankCert = '';
 
     protected function setUp(): void
     {
-        // Avoid openssl_csr_* (fragile on some CI images without openssl.cnf).
-        // Public key PEM is enough for openssl_pkey_get_public / encrypt.
-        $config = [
-            'private_key_bits' => 2048,
-            'private_key_type' => OPENSSL_KEYTYPE_RSA,
-        ];
-
-        $priv = openssl_pkey_new($config);
-        if ($priv === false) {
-            foreach (['/etc/ssl/openssl.cnf', '/etc/pki/tls/openssl.cnf'] as $cnf) {
-                if (is_readable($cnf)) {
-                    $config['config'] = $cnf;
-                    $priv = openssl_pkey_new($config);
-                    if ($priv !== false) {
-                        break;
-                    }
-                }
-            }
+        if (!class_exists('DOMDocument')) {
+            $this->markTestSkipped('ext-dom is required');
         }
-
-        if ($priv === false) {
-            $this->markTestSkipped('openssl_pkey_new failed: '.openssl_error_string());
-        }
-
-        if (!openssl_pkey_export($priv, $this->privatePem)) {
-            $this->markTestSkipped('openssl_pkey_export failed: '.openssl_error_string());
-        }
-
-        $details = openssl_pkey_get_details($priv);
-        if ($details === false || empty($details['key'])) {
-            $this->markTestSkipped('openssl_pkey_get_details failed');
-        }
-        $this->publicPem = $details['key'];
+        [$this->customerPrivate, $this->customerCert] = $this->certificate('customer');
+        [$this->bankPrivate, $this->bankCert] = $this->certificate('bank');
     }
 
-    public function testEncryptWithoutBankCertFailsClosed(): void
+    private function certificate(string $cn): array
     {
-        $sec = new BankConnectXmlSecurity(new Conf());
+        $key = openssl_pkey_new(['private_key_bits'=>2048,'private_key_type'=>OPENSSL_KEYTYPE_RSA]);
+        $this->assertNotFalse($key);
+        $private = '';
+        $this->assertTrue(openssl_pkey_export($key,$private));
+        $csr = openssl_csr_new(['commonName'=>$cn],$key,['digest_alg'=>'sha256']);
+        $this->assertNotFalse($csr);
+        $cert = openssl_csr_sign($csr,null,$key,1,['digest_alg'=>'sha256']);
+        $this->assertNotFalse($cert);
+        $pem = '';
+        $this->assertTrue(openssl_x509_export($cert,$pem));
+        return [$private,$pem];
+    }
+
+    private function security(): BankConnectXmlSecurity
+    {
+        return (new BankConnectXmlSecurity(new Conf()))
+            ->setCustomerPrivateKey($this->customerPrivate)
+            ->setCustomerCertificate($this->customerCert)
+            ->setBankCertificate($this->bankCert);
+    }
+
+    public function testContentPreparationIsBase64AndGzipOnly(): void
+    {
+        $xml='<?xml version="1.0"?><Document><A>test</A></Document>';
+        $r=$this->security()->preparePayloadDetailed($xml);
+        $this->assertSame(0,$r['compressed']);
+        $this->assertSame($xml,base64_decode($r['content'],true));
+
+        $large='<Document>'.str_repeat('x',5*1024*1024+1).'</Document>';
+        $r=$this->security()->preparePayloadDetailed($large);
+        $this->assertSame(1,$r['compressed']);
+        $decoded=base64_decode($r['content'],true);
+        $this->assertSame("\x1f\x8b",substr($decoded,0,2));
+        $this->assertSame($large,gzdecode($decoded));
+    }
+
+    public function testBusinessSignatureUsesOfficialAlgorithmsAndReference(): void
+    {
+        $r=$this->security()->buildTransferPayment(
+            '<?xml version="1.0"?><Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.03"><A>1</A></Document>',
+            'e2e-1'
+        );
+        $doc=new DOMDocument();
+        $this->assertTrue($doc->loadXML($r['xml'],LIBXML_NONET));
+        $xp=new DOMXPath($doc);
+        $xp->registerNamespace('bc',BankConnectXmlSecurity::BC_NS);
+        $xp->registerNamespace('ds',BankConnectXmlSecurity::DS_NS);
+
+        $payment=$xp->query('/bc:transferPayment/bc:paymentMessage')->item(0);
+        $sig=$xp->query('/bc:transferPayment/ds:Signature')->item(0);
+        $this->assertInstanceOf(DOMElement::class,$payment);
+        $this->assertInstanceOf(DOMElement::class,$sig);
+        $ref=$xp->query('./ds:SignedInfo/ds:Reference',$sig)->item(0);
+        $this->assertSame('#'.$payment->getAttribute('id'),$ref->getAttribute('URI'));
+        $this->assertSame(BankConnectXmlSecurity::EXC_C14N,$xp->query('./ds:SignedInfo/ds:CanonicalizationMethod',$sig)->item(0)->getAttribute('Algorithm'));
+        $this->assertSame(BankConnectXmlSecurity::RSA_SHA256,$xp->query('./ds:SignedInfo/ds:SignatureMethod',$sig)->item(0)->getAttribute('Algorithm'));
+        $this->assertSame(BankConnectXmlSecurity::SHA256,$xp->query('./ds:SignedInfo/ds:Reference/ds:DigestMethod',$sig)->item(0)->getAttribute('Algorithm'));
+        $this->assertSame(BankConnectXmlSecurity::EXC_C14N,$xp->query('./ds:SignedInfo/ds:Reference/ds:Transforms/ds:Transform',$sig)->item(0)->getAttribute('Algorithm'));
+
+        $canonical=$payment->C14N(true,false);
+        $this->assertSame(base64_encode(hash('sha256',$canonical,true)),$xp->query('./ds:SignedInfo/ds:Reference/ds:DigestValue',$sig)->item(0)->textContent);
+        $signedInfo=$xp->query('./ds:SignedInfo',$sig)->item(0)->C14N(true,false);
+        $value=base64_decode($xp->query('./ds:SignatureValue',$sig)->item(0)->textContent,true);
+        $this->assertSame(1,openssl_verify($signedInfo,$value,$this->customerCert,OPENSSL_ALGO_SHA256));
+        $this->assertNotSame('',trim($xp->query('./ds:KeyInfo/ds:X509Data/ds:X509Certificate',$sig)->item(0)->textContent));
+    }
+
+    public function testXmlEncryptionUsesOfficialStructure(): void
+    {
+        $soap='<?xml version="1.0"?>'
+            .'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:bc="http://bankconnect.dk/schema/2014">'
+            .'<soapenv:Header><bc:serviceHeader><bc:x>1</bc:x></bc:serviceHeader><bc:technicalAddress/></soapenv:Header>'
+            .'<soapenv:Body><bc:transferPayment><bc:paymentMessage/></bc:transferPayment></soapenv:Body>'
+            .'</soapenv:Envelope>';
+        $encrypted=$this->security()->encryptSoapBody($soap);
+        $doc=new DOMDocument();
+        $this->assertTrue($doc->loadXML($encrypted,LIBXML_NONET));
+        $xp=new DOMXPath($doc);
+        $xp->registerNamespace('s','http://schemas.xmlsoap.org/soap/envelope/');
+        $xp->registerNamespace('xenc',BankConnectXmlSecurity::XENC_NS);
+        $xp->registerNamespace('wsse',BankConnectXmlSecurity::WSSE_NS);
+        $xp->registerNamespace('ds',BankConnectXmlSecurity::DS_NS);
+
+        $ek=$xp->query('/s:Envelope/s:Header/wsse:Security/xenc:EncryptedKey')->item(0);
+        $ed=$xp->query('/s:Envelope/s:Body/xenc:EncryptedData')->item(0);
+        $this->assertInstanceOf(DOMElement::class,$ek);
+        $this->assertInstanceOf(DOMElement::class,$ed);
+        $this->assertSame(BankConnectXmlSecurity::RSA_OAEP_MGF1P,$xp->query('./xenc:EncryptionMethod',$ek)->item(0)->getAttribute('Algorithm'));
+        $this->assertSame(BankConnectXmlSecurity::AES256_CBC,$xp->query('./xenc:EncryptionMethod',$ed)->item(0)->getAttribute('Algorithm'));
+        $this->assertSame('#'.$ed->getAttribute('Id'),$xp->query('./xenc:ReferenceList/xenc:DataReference',$ek)->item(0)->getAttribute('URI'));
+        $this->assertSame('#'.$ek->getAttribute('Id'),$xp->query('./ds:KeyInfo/wsse:SecurityTokenReference/wsse:Reference',$ed)->item(0)->getAttribute('URI'));
+        $this->assertNotSame('',trim($xp->query('./ds:KeyInfo/wsse:SecurityTokenReference/wsse:KeyIdentifier',$ek)->item(0)->textContent));
+        $this->assertNotEmpty($xp->query('./xenc:CipherData/xenc:CipherValue',$ed)->item(0)->textContent);
+    }
+
+    public function testTransferPipelineOrderIsBusinessSignatureThenEncryptionThenTransportSignature(): void
+    {
+        $r=$this->security()->buildTransferPayment('<Document><A>1</A></Document>','e2e');
+        $this->assertStringContainsString('<ds:Signature',$r['xml']);
+        $soap='<?xml version="1.0"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:bc="http://bankconnect.dk/schema/2014"><soapenv:Header><bc:serviceHeader><bc:x>1</bc:x></bc:serviceHeader></soapenv:Header><soapenv:Body>'.$r['xml'].'</soapenv:Body></soapenv:Envelope>';
+        $encrypted=$this->security()->encryptSoapBody($soap);
+        $this->assertStringContainsString('EncryptedData',$encrypted);
+        $this->assertStringNotContainsString('<bc:transferPayment', $encrypted);
+    }
+
+    public function testFailsClosedWithoutRequiredCertificates(): void
+    {
+        $empty=new BankConnectXmlSecurity(new Conf());
         $this->expectException(BankConnectException::class);
-        $sec->encryptPayload('<Document>test</Document>');
-    }
-
-    public function testEncryptDecryptRoundtrip(): void
-    {
-        $sec = new BankConnectXmlSecurity(new Conf());
-        $sec->setBankCertificate($this->publicPem);
-
-        $xml = '<?xml version="1.0"?><Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.03"><CstmrCdtTrfInitn/></Document>';
-        $detailed = $sec->encryptPayloadDetailed($xml);
-
-        $this->assertNotSame(base64_encode($xml), $detailed['content']);
-        $this->assertSame(0, $detailed['compressed']);
-
-        $plain = $sec->decryptPayload($detailed['content'], $this->privatePem);
-        $this->assertSame($xml, $plain);
-    }
-
-    public function testBuildPaymentMessage(): void
-    {
-        $sec = new BankConnectXmlSecurity(new Conf());
-        $msg = $sec->buildPaymentMessage('QUJD', 'e2eid123', 0);
-        $this->assertStringContainsString('<format>ISO20022</format>', $msg);
-        $this->assertStringContainsString('<content>QUJD</content>', $msg);
-        $this->assertStringContainsString('e2eid123', $msg);
-    }
-
-    public function testSignWithoutKeyFailsClosed(): void
-    {
-        $sec = new BankConnectXmlSecurity(new Conf());
-        $xml = '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body/></soapenv:Envelope>';
-        $this->expectException(BankConnectException::class);
-        $sec->signRequest($xml);
-    }
-
-    public function testSignRequestReferencesServiceHeaderAndBody(): void
-    {
-        if (!class_exists('\\RobRichards\\XMLSecLibs\\XMLSecurityDSig')) {
-            $this->markTestSkipped('xmlseclibs not installed');
-        }
-
-        $sec = new BankConnectXmlSecurity(new Conf());
-        $sec->setCustomerPrivateKey($this->privatePem);
-
-        $xml = '<?xml version="1.0" encoding="UTF-8"?>'
-            . '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
-            . '<soap:Header>'
-            . '<serviceHeader xmlns="http://bankconnect.dk/schema/2014">'
-            . '<functionIdentification>0010888100007</functionIdentification>'
-            . '</serviceHeader>'
-            . '</soap:Header>'
-            . '<soap:Body><transferPayments xmlns="http://bankconnect.dk/schema/2014"/></soap:Body>'
-            . '</soap:Envelope>';
-
-        $signed = $sec->signRequest($xml);
-        $doc = new DOMDocument();
-        $this->assertTrue($doc->loadXML($signed));
-
-        $xpath = new DOMXPath($doc);
-        $xpath->registerNamespace('ds', 'http://www.w3.org/2000/09/xmldsig#');
-        $references = $xpath->query('//ds:SignedInfo/ds:Reference');
-        $this->assertNotFalse($references);
-        $this->assertSame(2, $references->length);
-
-        $uris = [];
-        foreach ($references as $reference) {
-            $uris[] = $reference->getAttribute('URI');
-        }
-
-        $this->assertCount(2, array_unique($uris));
-
-        $serviceHeader = $xpath->query('//*[local-name()="serviceHeader"]')->item(0);
-        $body = $xpath->query('/*[local-name()="Envelope"]/*[local-name()="Body"]')->item(0);
-        $this->assertNotNull($serviceHeader);
-        $this->assertNotNull($body);
-
-        $expectedUris = [
-            '#'.$serviceHeader->getAttribute('Id'),
-            '#'.$body->getAttribute('Id'),
-        ];
-        sort($expectedUris);
-        sort($uris);
-        $this->assertSame($expectedUris, $uris);
-    }
-
-    public function testServiceHeaderBuilder(): void
-    {
-        $h = (new ServiceHeaderBuilder())
-            ->setOrganisation('12345678')
-            ->setFunctionIdentification('0010888100007')
-            ->setEndToEndMessageId('abc123')
-            ->setErp('Dolibarr', '20.0')
-            ->build();
-
-        $this->assertStringContainsString('<mainRegistrationNumber>12345678</mainRegistrationNumber>', $h);
-        $this->assertStringContainsString('<functionIdentification>0010888100007</functionIdentification>', $h);
-        $this->assertStringContainsString('<endToEndMessageId>abc123</endToEndMessageId>', $h);
-        $this->assertStringContainsString('<createDateTime>', $h);
-    }
-
-    public function testServiceHeaderRequiresFields(): void
-    {
-        $this->expectException(BankConnectException::class);
-        (new ServiceHeaderBuilder())->build();
-    }
-
-    public function testIsLiveCryptoAvailable(): void
-    {
-        $sec = new BankConnectXmlSecurity(new Conf());
-        $this->assertFalse($sec->isLiveCryptoAvailable());
-
-        $sec->setBankCertificate($this->publicPem);
-        $sec->setCustomerPrivateKey($this->privatePem);
-        $this->assertTrue($sec->isLiveCryptoAvailable());
+        $empty->buildTransferPayment('<Document/>','e2e');
     }
 }

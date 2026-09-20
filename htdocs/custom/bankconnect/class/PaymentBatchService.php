@@ -97,8 +97,11 @@ class PaymentBatchService
         try {
             require_once __DIR__.'/BankConnectXmlSecurity.php';
             $security = new BankConnectXmlSecurity($this->conf);
-            $encrypted = $security->encryptPayload($batch['pain001_xml']);
-            $paymentMessage = $security->buildPaymentMessage($encrypted, $batch['end_to_end_message_id']);
+            $built = $security->buildTransferPayment(
+                $batch['pain001_xml'],
+                $batch['end_to_end_message_id']
+            );
+            $paymentMessage = $built['xml'];
             $serviceHeader = $this->buildServiceHeaderForBatch($batch);
             $paymentMessage = preg_replace(
                 '/^(<transferPayments\\b[^>]*>)/',
