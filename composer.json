@@ -6,6 +6,7 @@
     "php": ">=8.1",
     "ext-openssl": "*",
     "ext-simplexml": "*",
+    "ext-dom": "*",
     "robrichards/xmlseclibs": "^3.1"
   },
   "autoload": {
