@@ -125,7 +125,7 @@ class BankConnectXmlSecurityTest extends TestCase
         $soap='<?xml version="1.0"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:bc="http://bankconnect.dk/schema/2014"><soapenv:Header><bc:serviceHeader><bc:x>1</bc:x></bc:serviceHeader></soapenv:Header><soapenv:Body>'.$r['xml'].'</soapenv:Body></soapenv:Envelope>';
         $encrypted=$this->security()->encryptSoapBody($soap);
         $this->assertStringContainsString('EncryptedData',$encrypted);
-        $this->assertStringContainsString('DS-', $encrypted);
+        $this->assertStringNotContainsString('<bc:transferPayment', $encrypted);
     }
 
     public function testFailsClosedWithoutRequiredCertificates(): void
