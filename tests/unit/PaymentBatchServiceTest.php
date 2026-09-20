@@ -104,10 +104,20 @@ class PaymentBatchServiceTest extends TestCase
         $this->assertSame('submitted', $result['status']);
         $this->assertStringContainsString('<transferPayment', $client->lastPayload);
         $this->assertStringContainsString('<serviceHeader', $client->lastPayload);
-        $this->assertLessThan(
-            strpos($client->lastPayload, '</serviceHeader>'),
-            strpos($client->lastPayload, '<ds:Signature')
-        );
+
+        $dom = new DOMDocument();
+        $this->assertTrue($dom->loadXML($client->lastPayload));
+
+        $root = $dom->documentElement;
+        $this->assertSame('transferPayment', $root->localName);
+
+        $serviceHeaders = $root->getElementsByTagNameNS('http://bankconnect.dk/schema/2014', 'serviceHeader');
+        $this->assertSame(1, $serviceHeaders->length);
+        $this->assertSame($root, $serviceHeaders->item(0)->parentNode);
+
+        $paymentMessages = $root->getElementsByTagNameNS('http://bankconnect.dk/schema/2014', 'paymentMessage');
+        $this->assertSame(1, $paymentMessages->length);
+        $this->assertSame($root, $paymentMessages->item(0)->parentNode);
     }
 
     public function testSendUnknownBatchThrows(): void
