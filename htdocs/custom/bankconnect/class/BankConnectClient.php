@@ -74,6 +74,14 @@ class BankConnectClient
         [$bodyXml, $soapHeaderXml] = $this->extractServiceHeader($operation, $bodyXml);
         $envelope = $this->buildEnvelope($bodyXml, $soapHeaderXml);
 
+        if ($operation === self::OP_TRANSFER_PAYMENTS) {
+            if ($this->xmlSecurity === null) {
+                throw new BankConnectException('XML security is required for TransferPayment');
+            }
+            // Bank Connect test/Bankdata profile: business-sign payload,
+            // encrypt SOAP Body, then apply the outer transport signature.
+            $envelope = $this->xmlSecurity->encryptSoapBody($envelope);
+        }
         if ($this->mustSign($operation)) {
             if ($this->xmlSecurity === null) {
                 throw new BankConnectException('XML security is required for signed BankConnect operations');
