@@ -66,6 +66,21 @@ class PaymentBatchServiceTest extends TestCase
         $this->assertNull($row->response_code);
     }
 
+    public function testTransferPaymentUsesBankConnectSoapAction(): void
+    {
+        $client = new class($this->conf) extends BankConnectClient {
+            public function headers(): array
+            {
+                return $this->buildHttpHeaders();
+            }
+        };
+
+        $headers = $client->headers();
+
+        $this->assertContains('Content-Type: text/xml; charset=utf-8', $headers);
+        $this->assertContains('SOAPAction: "urn:CorporateService:transferPayment"', $headers);
+    }
+
     public function testSendAttachesServiceHeaderToTransferPaymentRoot(): void
     {
         $key = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
