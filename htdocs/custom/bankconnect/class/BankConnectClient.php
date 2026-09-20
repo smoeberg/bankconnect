@@ -41,7 +41,7 @@ class BankConnectClient
     private Conf $conf;
     private BankConnectLogger $logger;
     private string $endpoint;
-    private int $timeoutMs = 180000; // BankConnect server-side timeout is 3 min
+    private int $timeoutMs = 180000;
     private ?BankConnectXmlSecurity $xmlSecurity = null;
 
     public function __construct(Conf $conf, ?BankConnectLogger $logger = null)
@@ -59,15 +59,6 @@ class BankConnectClient
         }
     }
 
-    /**
-     * Low-level call. All public operation methods delegate here.
-     *
-     * @param string $operation  One of the OP_* constants
-     * @param string $bodyXml    Inner XML (already containing the operation element)
-     * @param array  $context    Optional context for logging (endToEndMessageId etc.)
-     * @return string            Raw SOAP response body
-     * @throws BankConnectException
-     */
     public function call(string $operation, string $bodyXml, array $context = []): string
     {
         $start = microtime(true);
@@ -78,8 +69,6 @@ class BankConnectClient
             if ($this->xmlSecurity === null) {
                 throw new BankConnectException('XML security is required for TransferPayment');
             }
-            // Bank Connect test/Bankdata profile: business-sign payload,
-            // encrypt SOAP Body, then apply the outer transport signature.
             $envelope = $this->xmlSecurity->encryptSoapBody($envelope);
         }
         if ($this->mustSign($operation)) {
@@ -90,15 +79,13 @@ class BankConnectClient
         }
 
         try {
-            $response = $this->httpPost($envelope);
+            $response = $this->httpPost($envelope, $operation);
             $duration = (int) ((microtime(true) - $start) * 1000);
-
             $this->logger->info('soap_call', [
                 'operation' => $operation,
                 'duration_ms' => $duration,
                 'end_to_end' => $context['endToEndMessageId'] ?? null,
             ]);
-
             return $response;
         } catch (Throwable $e) {
             $duration = (int) ((microtime(true) - $start) * 1000);
@@ -110,10 +97,6 @@ class BankConnectClient
             throw new BankConnectException('BankConnect call failed: '.$e->getMessage(), 0, $e);
         }
     }
-
-    // ------------------------------------------------------------------
-    // Public operations (thin wrappers)
-    // ------------------------------------------------------------------
 
     public function getBankCertificate(string $serviceHeaderXml): string
     {
@@ -133,9 +116,6 @@ class BankConnectClient
         return $this->call(self::OP_RENEW_CUSTOMER_CERTIFICATE, $payloadXml);
     }
 
-    /**
-     * @param string $paymentMessageXml  Already encrypted + base64 content inside paymentMessage
-     */
     public function transferPayments(string $paymentMessageXml, string $endToEndMessageId): string
     {
         return $this->call(
@@ -185,35 +165,23 @@ class BankConnectClient
         return $this->call(self::OP_GET_ALTERNATE, $body);
     }
 
-    // ------------------------------------------------------------------
-    // Internals
-    // ------------------------------------------------------------------
-
-    private function buildEnvelope(string $bodyXml, string $soapHeaderXml = ''): string
+    protected function buildEnvelope(string $bodyXml, string $soapHeaderXml = ''): string
     {
+        $technicalAddress = '<technicalAddress xmlns="http://bankconnect.dk/schema/2014"></technicalAddress>';
         return '<?xml version="1.0" encoding="UTF-8"?>'
              . '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
-             . '<soapenv:Header>'.$soapHeaderXml.'</soapenv:Header>'
-             . '<soapenv:Body>'
-             . $bodyXml
-             . '</soapenv:Body>'
+             . '<soapenv:Header>'.$soapHeaderXml.$technicalAddress.'</soapenv:Header>'
+             . '<soapenv:Body>'.$bodyXml.'</soapenv:Body>'
              . '</soapenv:Envelope>';
     }
 
-    /**
-     * BankConnect serviceHeader belongs in the SOAP Header, not inside the
-     * operation payload. Existing callers may still pass it inside the body;
-     * normalize that representation at the transport boundary.
-     *
-     * @return array{0:string,1:string}
-     */
     private function extractServiceHeader(string $operation, string $bodyXml): array
     {
         if ($operation === self::OP_ACTIVATE_SERVICE_AGREEMENT) {
             return [$bodyXml, ''];
         }
 
-        if (preg_match('/<serviceHeader\\b[^>]*>.*?<\\/serviceHeader>/s', $bodyXml, $m)) {
+        if (preg_match('/<serviceHeader\b[^>]*>.*?<\/serviceHeader>/s', $bodyXml, $m)) {
             $header = $m[0];
             $body = str_replace($header, '', $bodyXml);
             return [$body, $header];
@@ -231,21 +199,36 @@ class BankConnectClient
     }
 
     /**
-     * Build the HTTP headers required by the Bank Connect CorporateService.
-     *
-     * transferPayments uses the WSDL SOAP action "transferPayment".
+     * Operation-specific SOAPAction values from the v3.7 CorporateService WSDL.
+     * transferPayments is the local method/constant name; the WSDL action is singular transferPayment.
      *
      * @return list<string>
      */
-    protected function buildHttpHeaders(): array
+    protected function buildHttpHeaders(string $operation = self::OP_TRANSFER_PAYMENTS): array
     {
+        $actions = [
+            self::OP_GET_BANK_CERTIFICATE          => 'getBankCertificate',
+            self::OP_ACTIVATE_SERVICE_AGREEMENT    => 'activateServiceAgreement',
+            self::OP_RENEW_CUSTOMER_CERTIFICATE    => 'renewCustomerCertificate',
+            self::OP_TRANSFER_PAYMENTS             => 'transferPayment',
+            self::OP_GET_STATUS                    => 'getStatus',
+            self::OP_GET_CUSTOMER_STATEMENT        => 'getCustomerStatement',
+            self::OP_GET_DEBIT_CREDIT_NOTIFICATION => 'getDebitCreditNotification',
+            self::OP_GET_CUSTOMER_ACCOUNT_REPORT   => 'getCustomerAccountReport',
+            self::OP_GET_ALTERNATE                 => 'getAlternate',
+        ];
+
+        if (!isset($actions[$operation])) {
+            throw new BankConnectException('Unsupported BankConnect CorporateService operation: '.$operation);
+        }
+
         return [
             'Content-Type: text/xml; charset=utf-8',
-            'SOAPAction: "urn:CorporateService:transferPayment"',
+            'SOAPAction: "urn:CorporateService:'.$actions[$operation].'"',
         ];
     }
 
-    private function httpPost(string $envelope): string
+    private function httpPost(string $envelope, string $operation): string
     {
         if (!function_exists('curl_init')) {
             throw new BankConnectException('cURL extension is required for BankConnectClient');
@@ -256,7 +239,7 @@ class BankConnectClient
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => $envelope,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPHEADER     => $this->buildHttpHeaders(),
+            CURLOPT_HTTPHEADER     => $this->buildHttpHeaders($operation),
             CURLOPT_TIMEOUT_MS     => $this->timeoutMs,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
