@@ -66,6 +66,60 @@ class PaymentBatchServiceTest extends TestCase
         $this->assertNull($row->response_code);
     }
 
+    public function testSendAttachesServiceHeaderToTransferPaymentRoot(): void
+    {
+        $key = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        $this->assertNotFalse($key);
+        $private = '';
+        $this->assertTrue(openssl_pkey_export($key, $private));
+        $csr = openssl_csr_new(['commonName' => 'bankconnect-test'], $key, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($csr);
+        $cert = openssl_csr_sign($csr, null, $key, 1, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($cert);
+        $certificate = '';
+        $this->assertTrue(openssl_x509_export($cert, $certificate));
+
+        $this->conf->global['BANKCONNECT_CUSTOMER_PRIVATE_KEY'] = $private;
+        $this->conf->global['BANKCONNECT_CUSTOMER_CERTIFICATE'] = $certificate;
+        $this->db->tables['llx_bankconnect_agreement'] = [[
+            'rowid' => 1,
+            'bank_connect_id' => 'AGREEMENT-1',
+            'main_registration_number' => '12345678',
+        ]];
+
+        $client = new class($this->conf) extends BankConnectClient {
+            public string $lastPayload = '';
+
+            public function transferPayments(string $paymentMessageXml, string $endToEndMessageId): string
+            {
+                $this->lastPayload = $paymentMessageXml;
+                return '<response><responseCode>OK</responseCode></response>';
+            }
+        };
+        $svc = new PaymentBatchService($this->db, $this->conf, $client);
+        $created = $svc->createBatch($this->sampleBuilder(), 1);
+
+        $result = $svc->sendBatch($created['batch_id']);
+
+        $this->assertSame('submitted', $result['status']);
+        $this->assertStringContainsString('<transferPayment', $client->lastPayload);
+        $this->assertStringContainsString('<serviceHeader', $client->lastPayload);
+
+        $dom = new DOMDocument();
+        $this->assertTrue($dom->loadXML($client->lastPayload));
+
+        $root = $dom->documentElement;
+        $this->assertSame('transferPayment', $root->localName);
+
+        $serviceHeaders = $root->getElementsByTagNameNS('http://bankconnect.dk/schema/2014', 'serviceHeader');
+        $this->assertSame(1, $serviceHeaders->length);
+        $this->assertSame($root, $serviceHeaders->item(0)->parentNode);
+
+        $paymentMessages = $root->getElementsByTagNameNS('http://bankconnect.dk/schema/2014', 'paymentMessage');
+        $this->assertSame(1, $paymentMessages->length);
+        $this->assertSame($root, $paymentMessages->item(0)->parentNode);
+    }
+
     public function testSendUnknownBatchThrows(): void
     {
         $this->expectException(BankConnectException::class);

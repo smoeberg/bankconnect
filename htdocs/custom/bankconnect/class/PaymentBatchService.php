@@ -104,7 +104,7 @@ class PaymentBatchService
             $paymentMessage = $built['xml'];
             $serviceHeader = $this->buildServiceHeaderForBatch($batch);
             $paymentMessage = preg_replace(
-                '/^(<transferPayments\\b[^>]*>)/',
+                '/^(<transferPayment\\b[^>]*>)/',
                 '$1'.$serviceHeader,
                 $paymentMessage,
                 1,
