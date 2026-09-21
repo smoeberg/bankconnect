@@ -99,6 +99,14 @@ XML;
         (new Pain002Parser())->parse('');
     }
 
+    public function testUnknownStatusRequiresManualReview(): void
+    {
+        $xml = str_replace('<TxSts>ACCP</TxSts>', '<TxSts>WTF1</TxSts>', self::PAIN002_ACCP);
+        $r = (new Pain002Parser())->parse($xml);
+        $this->assertSame('unknown', $r['transactions'][0]['semantic_status']);
+        $this->assertTrue($r['transactions'][0]['requires_manual_review']);
+    }
+
     public function testMalformedThrows(): void
     {
         $this->expectException(BankConnectException::class);
@@ -112,5 +120,7 @@ XML;
         $this->assertSame('rejected', Pain002Parser::mapToInternalStatus('RJCT'));
         $this->assertSame('pending', Pain002Parser::mapToInternalStatus('PDNG'));
         $this->assertSame('pending', Pain002Parser::mapToInternalStatus('RCVD'));
+        $this->assertSame('partial', Pain002Parser::mapToInternalStatus('PART'));
+        $this->assertSame('unknown', Pain002Parser::mapToInternalStatus('WTF1'));
     }
 }

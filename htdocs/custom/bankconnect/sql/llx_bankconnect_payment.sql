@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS llx_bankconnect_batch_line (
     status              VARCHAR(20) DEFAULT 'draft',
     pain002_status      VARCHAR(10),
     status_reason       VARCHAR(255),
+    requires_manual_review TINYINT NOT NULL DEFAULT 0,
     tms                 TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_bc_batchline_e2e (fk_batch, end_to_end_id),
     INDEX idx_bc_batchline_batch (fk_batch),

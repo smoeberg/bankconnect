@@ -3,6 +3,8 @@ CREATE TABLE IF NOT EXISTS llx_bankconnect_transaction (
 	rowid bigint AUTO_INCREMENT PRIMARY KEY,
 	fk_bank_account integer NOT NULL,
 	hash varchar(64) NOT NULL UNIQUE,
+	statement_id varchar(255) NOT NULL DEFAULT '',
+	transaction_id varchar(255) NOT NULL DEFAULT '',
 	tx_date date NOT NULL,
 	amount double NOT NULL,
 	currency varchar(3) NOT NULL DEFAULT 'DKK',
@@ -16,6 +18,7 @@ CREATE TABLE IF NOT EXISTS llx_bankconnect_transaction (
 	created_at datetime DEFAULT NULL,
 	KEY idx_bc_state (state),
 	KEY idx_bc_account (fk_bank_account),
+	UNIQUE KEY uk_bc_statement_transaction (fk_bank_account, statement_id, transaction_id),
 	KEY idx_bc_manual_review (requires_manual_review)
 ) ENGINE=innodb;
 

@@ -29,6 +29,8 @@ class modBankConnect extends DolibarrModules
 			'acct_svcr_ref' => "VARCHAR(255) NULL",
 			'is_reversal' => "INTEGER NOT NULL DEFAULT 0",
 			'requires_manual_review' => "INTEGER NOT NULL DEFAULT 0",
+			'statement_id' => "VARCHAR(255) NOT NULL DEFAULT ''",
+			'transaction_id' => "VARCHAR(255) NOT NULL DEFAULT ''",
 		];
 		foreach ($columns as $column => $definition) {
 			$sql = "SHOW COLUMNS FROM ".$table." LIKE '".$this->db->escape($column)."'";
@@ -41,6 +43,23 @@ class modBankConnect extends DolibarrModules
 					return -1;
 				}
 			}
+		}
+
+		$batchLineTable = MAIN_DB_PREFIX.'bankconnect_batch_line';
+		$checkManual = $this->db->query("SHOW COLUMNS FROM ".$batchLineTable." LIKE 'requires_manual_review'");
+		if ($checkManual && !$this->db->fetch_object($checkManual)) {
+			if (!$this->db->query("ALTER TABLE ".$batchLineTable." ADD COLUMN requires_manual_review TINYINT NOT NULL DEFAULT 0")) {
+				return -1;
+			}
+		}
+
+		// Existing installations need the same database-level idempotency boundary
+		// as fresh installs. A non-unique statement/transaction pair is retained for
+		// legacy rows with empty identity values.
+		$uniqueName = 'uk_bc_statement_transaction';
+		$check = $this->db->query("SHOW INDEX FROM ".$table." WHERE Key_name = '".$this->db->escape($uniqueName)."'");
+		if ($check && !$this->db->fetch_object($check)) {
+			$this->db->query("ALTER TABLE ".$table." ADD UNIQUE KEY ".$uniqueName." (fk_bank_account, statement_id, transaction_id)");
 		}
 
 		return $this->_init([], $options);
