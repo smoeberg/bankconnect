@@ -30,10 +30,16 @@ class CertificateManagerTest extends TestCase
 
     public function testRejectsShortEncryptionSecret(): void
     {
-        $this->conf->global['BANKCONNECT_KEY_ENCRYPTION_SECRET'] = 'short';
+        $previous = getenv('BANKCONNECT_KEY_ENCRYPTION_SECRET');
+        putenv('BANKCONNECT_KEY_ENCRYPTION_SECRET=short');
         $mgr = new BankConnectCertificateManager($this->conf);
         $this->expectException(BankConnectException::class);
-        $mgr->encryptPrivateKey('secret');
+        try {
+            $mgr->encryptPrivateKey('secret');
+        } finally {
+            if ($previous === false) { putenv('BANKCONNECT_KEY_ENCRYPTION_SECRET'); }
+            else { putenv('BANKCONNECT_KEY_ENCRYPTION_SECRET='.$previous); }
+        }
     }
 
     public function testCertificateKeyBindingRejectsMismatchedKey(): void
