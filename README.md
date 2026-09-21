@@ -44,7 +44,15 @@ $conf->global['BANKCONNECT_AI_TEMPERATURE'] = 0.1;   // konservativ
 $conf->global['BANKCONNECT_AI_TIMEOUT'] = 8;         // sekunder
 $conf->global['BANKCONNECT_RULE_DATE_WINDOW'] = 30;  // dage
 $conf->global['BANKCONNECT_RULE_AMOUNT_TOLERANCE'] = 0.05;
+
+// Required before live TransferPayment. Controls the normative v3.7
+// transport-signature/encryption order: BANKDATA, NBS or BEC.
+$conf->global['BANKCONNECT_DATACENTER'] = 'BANKDATA';
 ```
+
+Bankdata systemtest uses `BANKDATA`. BEC production requires a different
+security order and must therefore be configured explicitly as `BEC`; unknown
+values are rejected before any payment request is sent.
 
 ## Tests
 

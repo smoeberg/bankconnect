@@ -2,19 +2,14 @@
 /**
  * BankConnectXmlSecurity – encrypt payment payload + sign requests.
  *
- * Encryption (transferPayments content):
- *  - Optional gzip if > 5 MB
- *  - AES-256-CBC of payload
- *  - RSA-OAEP (SHA-1) wrap of AES key with bank certificate public key
- *  - Package: base64( version | iv | wrappedKeyLen | wrappedKey | ciphertext )
- *    BankConnect also accepts pure content encryption variants; this format is
- *    documented in encryptPayload() for interoperability testing. Adjust packing
- *    to match your datacenter's exact envelope when integrating against stest.
+ * Encryption (TransferPayment SOAP body):
+ *  - Optional gzip of the business payload if > 5 MB, then base64 in paymentMessage
+ *  - XML Encryption AES-256-CBC with IV prepended to ciphertext
+ *  - RSA-OAEP (SHA-1/MGF1) wrap of the AES key with the bank certificate
  *
  * Signature:
- *  - Prefer robrichards/xmlseclibs for WS-Security XMLDSig on serviceHeader + Body
- *  - Without xmlseclibs, signRequest returns XML unchanged only if no private key
- *    is set; with a key set it throws asking for the library.
+ *  - Bank Connect WS-Security XMLDSig on serviceHeader + SOAP Body
+ *  - Signature and customer BinarySecurityToken live inside wsse:Security
  */
 
 require_once __DIR__.'/BankConnectException.php';
@@ -38,6 +33,7 @@ class BankConnectXmlSecurity
     public const AES256_CBC = 'http://www.w3.org/2001/04/xmlenc#aes256-cbc';
     public const RSA_OAEP_MGF1P = 'http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p';
     public const WSSE_NS = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd';
+    public const WSU_NS = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd';
 
     public const PACK_VERSION = 1;
 
@@ -333,86 +329,74 @@ class BankConnectXmlSecurity
         return vsprintf('%s%s-%s-%s-%s-%s%s%s',str_split(bin2hex($d),4));
     }
 
-    /**
-     * Sign SOAP request. Uses xmlseclibs when present and private key is set.
-     */
+    /** Sign serviceHeader and SOAP Body using the v3.7 WS-Security wire profile. */
     public function signRequest(string $xml): string
     {
-        if ($this->customerPrivateKeyPem === null || $this->customerPrivateKeyPem === '') {
-            throw new BankConnectException(
-                'Customer private key is required to sign BankConnect requests'
-            );
+        $this->requireCustomerSigningMaterial();
+        $doc=$this->loadDocument($xml);
+        $xp=new DOMXPath($doc);
+        $xp->registerNamespace('s','http://schemas.xmlsoap.org/soap/envelope/');
+        $header=$xp->query('/s:Envelope/s:Header')->item(0);
+        $body=$xp->query('/s:Envelope/s:Body')->item(0);
+        $serviceHeader=$xp->query('/s:Envelope/s:Header/*[local-name()="serviceHeader" and namespace-uri()="'.self::BC_NS.'"]')->item(0);
+        if (!$header instanceof DOMElement || !$body instanceof DOMElement || !$serviceHeader instanceof DOMElement) {
+            throw new BankConnectException('SOAP Header, serviceHeader and Body are required for Bank Connect signing');
         }
 
-        if (!class_exists('\RobRichards\XMLSecLibs\XMLSecurityDSig')) {
-            throw new BankConnectException(
-                'Customer private key is configured but robrichards/xmlseclibs is not installed. '
-                .'Run: composer require robrichards/xmlseclibs'
-            );
+        $security=$xp->query('/s:Envelope/s:Header/*[local-name()="Security" and namespace-uri()="'.self::WSSE_NS.'"]')->item(0);
+        if (!$security instanceof DOMElement) {
+            $security=$doc->createElementNS(self::WSSE_NS,'wsse:Security');
+            $security->setAttributeNS('http://schemas.xmlsoap.org/soap/envelope/','soapenv:mustUnderstand','1');
+            $header->insertBefore($security,$header->firstChild);
         }
 
-        $doc = new DOMDocument();
-        $doc->preserveWhiteSpace = false;
-        $doc->formatOutput = false;
-        if (!$doc->loadXML($xml)) {
-            throw new BankConnectException('Cannot load XML for signing');
+        $signature=$doc->createElementNS(self::DS_NS,'ds:Signature');
+        $signature->setAttribute('Id','DS-'.$this->randomId());
+        $signedInfo=$doc->createElementNS(self::DS_NS,'ds:SignedInfo');
+        $signedInfo->appendChild($this->xmlElement($doc,self::DS_NS,'ds:CanonicalizationMethod',null,['Algorithm'=>self::EXC_C14N]));
+        $signedInfo->appendChild($this->xmlElement($doc,self::DS_NS,'ds:SignatureMethod',null,['Algorithm'=>self::RSA_SHA256]));
+
+        foreach ([$body,$serviceHeader] as $node) {
+            $id=$node->getAttributeNS(self::WSU_NS,'Id');
+            if ($id==='') {
+                $id='Id-'.$this->randomId();
+                $node->setAttributeNS(self::WSU_NS,'wsu:Id',$id);
+            }
+            $canonical=$node->C14N(true,false);
+            if ($canonical===false) throw new BankConnectException('Failed to canonicalize Bank Connect signed reference');
+            $reference=$doc->createElementNS(self::DS_NS,'ds:Reference');
+            $reference->setAttribute('URI','#'.$id);
+            $transforms=$doc->createElementNS(self::DS_NS,'ds:Transforms');
+            $transforms->appendChild($this->xmlElement($doc,self::DS_NS,'ds:Transform',null,['Algorithm'=>self::EXC_C14N]));
+            $reference->appendChild($transforms);
+            $reference->appendChild($this->xmlElement($doc,self::DS_NS,'ds:DigestMethod',null,['Algorithm'=>self::SHA256]));
+            $reference->appendChild($doc->createElementNS(self::DS_NS,'ds:DigestValue',base64_encode(hash('sha256',$canonical,true))));
+            $signedInfo->appendChild($reference);
         }
+        $signature->appendChild($signedInfo);
+        $security->insertBefore($signature,$security->firstChild);
 
-        $objDSig = new \RobRichards\XMLSecLibs\XMLSecurityDSig();
-        $objDSig->setCanonicalMethod(\RobRichards\XMLSecLibs\XMLSecurityDSig::EXC_C14N);
-
-        $xpath = new DOMXPath($doc);
-        $xpath->registerNamespace('soap', 'http://schemas.xmlsoap.org/soap/envelope/');
-
-        $nodes = [];
-
-        // ServiceHeader is expected in SOAP Header after BankConnectClient
-        // normalizes legacy callers at the transport boundary.
-        $serviceHeaders = $xpath->query(
-            '//*[local-name()="serviceHeader"]'
-        );
-        if ($serviceHeaders && $serviceHeaders->length > 0) {
-            $nodes[] = $serviceHeaders->item(0);
+        $canonicalSignedInfo=$signedInfo->C14N(true,false);
+        $signatureBytes='';
+        if ($canonicalSignedInfo===false || !openssl_sign($canonicalSignedInfo,$signatureBytes,$this->customerPrivateKeyPem,OPENSSL_ALGO_SHA256)) {
+            throw new BankConnectException('Bank Connect transport signature failed');
         }
+        $signature->appendChild($doc->createElementNS(self::DS_NS,'ds:SignatureValue',base64_encode($signatureBytes)));
 
-        // Always include the SOAP Body as a separate signed reference.
-        $bodies = $xpath->query('//soap:Body');
-        if (!$bodies || $bodies->length !== 1) {
-            throw new BankConnectException('SOAP Body is required for signed BankConnect requests');
-        }
-        $nodes[] = $bodies->item(0);
+        $tokenId='X509-'.$this->randomId();
+        $keyInfo=$doc->createElementNS(self::DS_NS,'ds:KeyInfo');
+        $tokenReference=$doc->createElementNS(self::WSSE_NS,'wsse:SecurityTokenReference');
+        $tokenReference->setAttributeNS(self::WSU_NS,'wsu:Id','Id-'.$this->randomId());
+        $reference=$doc->createElementNS(self::WSSE_NS,'wsse:Reference');
+        $reference->setAttribute('URI','#'.$tokenId);
+        $reference->setAttribute('ValueType','http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-x509-token-profile-1.0#X509v3');
+        $tokenReference->appendChild($reference); $keyInfo->appendChild($tokenReference); $signature->appendChild($keyInfo);
 
-        foreach ($nodes as $node) {
-            $objDSig->addReference(
-                $node,
-                \RobRichards\XMLSecLibs\XMLSecurityDSig::SHA256,
-                ['http://www.w3.org/2000/09/xmldsig#enveloped-signature'],
-                ['id_name' => 'Id', 'overwrite' => false]
-            );
-        }
-
-        $objKey = new \RobRichards\XMLSecLibs\XMLSecurityKey(
-            \RobRichards\XMLSecLibs\XMLSecurityKey::RSA_SHA256,
-            ['type' => 'private']
-        );
-        $objKey->loadKey($this->customerPrivateKeyPem, false);
-
-        $objDSig->sign($objKey);
-
-        if ($this->customerCertificatePem) {
-            $objDSig->add509Cert($this->customerCertificatePem, true);
-        }
-
-        $header = $doc->getElementsByTagNameNS(
-            'http://schemas.xmlsoap.org/soap/envelope/',
-            'Header'
-        )->item(0);
-        if ($header) {
-            $objDSig->appendSignature($header);
-        } else {
-            $objDSig->appendSignature($doc->documentElement);
-        }
-
+        $token=$doc->createElementNS(self::WSSE_NS,'wsse:BinarySecurityToken',$this->certificateDerBase64($this->customerCertificatePem));
+        $token->setAttribute('EncodingType','http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary');
+        $token->setAttribute('ValueType','http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-x509-token-profile-1.0#X509v3');
+        $token->setAttributeNS(self::WSU_NS,'wsu:Id',$tokenId);
+        $security->appendChild($token);
         return $doc->saveXML();
     }
 

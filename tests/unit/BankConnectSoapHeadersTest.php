@@ -70,4 +70,44 @@ final class BankConnectSoapHeadersTest extends TestCase
         );
         $this->assertSame('Header', $technicalAddress->parentNode->localName);
     }
+
+    public function testTransferPaymentSecurityOrderIsDatacenterSpecific(): void
+    {
+        $security = new class(new Conf()) extends BankConnectXmlSecurity {
+            public function signRequest(string $xml): string { return 'SIGN('.$xml.')'; }
+            public function encryptSoapBody(string $xml): string { return 'ENCRYPT('.$xml.')'; }
+        };
+        $bankdata = $this->securityClient('BANKDATA', $security);
+        $nbs = $this->securityClient('NBS', $security);
+        $bec = $this->securityClient('BEC', $security);
+
+        $this->assertSame('SIGN(ENCRYPT(payload))', $bankdata->secure('payload'));
+        $this->assertSame('SIGN(ENCRYPT(payload))', $nbs->secure('payload'));
+        $this->assertSame('ENCRYPT(SIGN(payload))', $bec->secure('payload'));
+    }
+
+    public function testTransferPaymentRejectsUnknownDatacenter(): void
+    {
+        $security = new class(new Conf()) extends BankConnectXmlSecurity {
+            public function signRequest(string $xml): string { return $xml; }
+            public function encryptSoapBody(string $xml): string { return $xml; }
+        };
+        $client = $this->securityClient('UNKNOWN', $security);
+        $this->expectException(BankConnectException::class);
+        $client->secure('payload');
+    }
+
+    private function securityClient(string $datacenter, BankConnectXmlSecurity $security): BankConnectClient
+    {
+        $conf = new Conf();
+        $conf->global['BANKCONNECT_DATACENTER'] = $datacenter;
+        $client = new class($conf) extends BankConnectClient {
+            public function secure(string $xml): string
+            {
+                return $this->secureEnvelope(BankConnectClient::OP_TRANSFER_PAYMENTS, $xml);
+            }
+        };
+        $client->setXmlSecurity($security);
+        return $client;
+    }
 }

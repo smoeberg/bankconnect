@@ -43,6 +43,7 @@ class BankConnectClient
     private string $endpoint;
     private int $timeoutMs = 180000;
     private ?BankConnectXmlSecurity $xmlSecurity = null;
+    private string $datacenter;
 
     public function __construct(Conf $conf, ?BankConnectLogger $logger = null)
     {
@@ -53,6 +54,7 @@ class BankConnectClient
         $g = $conf->global ?? [];
         $this->endpoint = (string) ($g['BANKCONNECT_ENDPOINT']
             ?? 'https://stest.bankconnect.dk/2019/04/04/services/CorporateService');
+        $this->datacenter = strtoupper(trim((string) ($g['BANKCONNECT_DATACENTER'] ?? 'BANKDATA')));
 
         if (isset($g['BANKCONNECT_TIMEOUT_MS'])) {
             $this->timeoutMs = max(30000, (int) $g['BANKCONNECT_TIMEOUT_MS']);
@@ -65,18 +67,7 @@ class BankConnectClient
         [$bodyXml, $soapHeaderXml] = $this->extractServiceHeader($operation, $bodyXml);
         $envelope = $this->buildEnvelope($bodyXml, $soapHeaderXml);
 
-        if ($operation === self::OP_TRANSFER_PAYMENTS) {
-            if ($this->xmlSecurity === null) {
-                throw new BankConnectException('XML security is required for TransferPayment');
-            }
-            $envelope = $this->xmlSecurity->encryptSoapBody($envelope);
-        }
-        if ($this->mustSign($operation)) {
-            if ($this->xmlSecurity === null) {
-                throw new BankConnectException('XML security is required for signed BankConnect operations');
-            }
-            $envelope = $this->xmlSecurity->signRequest($envelope);
-        }
+        $envelope = $this->secureEnvelope($operation, $envelope);
 
         try {
             $response = $this->httpPost($envelope, $operation);
@@ -196,6 +187,23 @@ class BankConnectClient
             self::OP_GET_BANK_CERTIFICATE,
             self::OP_ACTIVATE_SERVICE_AGREEMENT,
         ], true);
+    }
+
+    protected function secureEnvelope(string $operation, string $envelope): string
+    {
+        if ($this->xmlSecurity === null && ($operation === self::OP_TRANSFER_PAYMENTS || $this->mustSign($operation))) {
+            throw new BankConnectException('XML security is required for signed BankConnect operations');
+        }
+        if ($operation !== self::OP_TRANSFER_PAYMENTS) {
+            return $this->mustSign($operation) ? $this->xmlSecurity->signRequest($envelope) : $envelope;
+        }
+        if (!in_array($this->datacenter, ['BANKDATA', 'NBS', 'BEC'], true)) {
+            throw new BankConnectException('BANKCONNECT_DATACENTER must be BANKDATA, NBS or BEC for TransferPayment');
+        }
+        if ($this->datacenter === 'BEC') {
+            return $this->xmlSecurity->encryptSoapBody($this->xmlSecurity->signRequest($envelope));
+        }
+        return $this->xmlSecurity->signRequest($this->xmlSecurity->encryptSoapBody($envelope));
     }
 
     /**
