@@ -157,7 +157,7 @@ class PaymentBatchServiceTest extends TestCase
         ]];
 
         $calls = 0;
-        $client = new class($this->conf, $calls) extends BankConnectClient {
+        $client = new class($this->conf) extends BankConnectClient {
             public int $calls = 0;
 
             public function transferPayments(string $paymentMessageXml, string $endToEndMessageId): string
