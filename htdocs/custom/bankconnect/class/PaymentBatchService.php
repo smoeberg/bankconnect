@@ -9,6 +9,7 @@ require_once __DIR__.'/BankConnectClient.php';
 require_once __DIR__.'/BankConnectException.php';
 require_once __DIR__.'/BankConnectLogger.php';
 require_once __DIR__.'/ServiceHeaderBuilder.php';
+require_once __DIR__.'/PaymentStateMachine.php';
 
 if (!class_exists('Conf')) {
     class Conf { public $global = []; }
@@ -83,16 +84,49 @@ class PaymentBatchService
             throw new BankConnectException("Batch {$batchId} not found");
         }
         $status = (string) ($batch['status'] ?? '');
-        if (!in_array($status, ['draft', 'prepared'], true)) {
-            throw new BankConnectException("Batch {$batchId} cannot be submitted from status {$status}");
-        }
         if ($this->client === null) {
             throw new BankConnectException('BankConnectClient is required for payment submission');
         }
 
-        $this->updateBatchStatus($batchId, 'prepared', [
-            'message' => 'Payment payload prepared for BankConnect submission',
-        ]);
+        try {
+            if ($status === PaymentStateMachine::DRAFT) {
+                $this->transitionBatchStatus($batchId, $status, PaymentStateMachine::VALIDATED, [
+                    'message' => 'Payment batch validated before submission',
+                ]);
+                $status = PaymentStateMachine::VALIDATED;
+            }
+
+            if ($status === PaymentStateMachine::VALIDATED) {
+                $this->transitionBatchStatus($batchId, $status, PaymentStateMachine::PREPARED, [
+                    'message' => 'Payment payload prepared for BankConnect submission',
+                ]);
+                $status = PaymentStateMachine::PREPARED;
+            }
+
+            if ($status !== PaymentStateMachine::PREPARED) {
+                throw new BankConnectException(
+                    "Batch {$batchId} cannot be submitted from status {$status}"
+                );
+            }
+        } catch (Throwable $e) {
+            if ($e instanceof BankConnectException) {
+                throw $e;
+            }
+            throw new BankConnectException('Payment state transition failed: '.$e->getMessage(), 0, $e);
+        }
+
+        // Claim the submission slot before performing network I/O. The
+        // conditional UPDATE is the local idempotency boundary: only a batch
+        // still in PREPARED may become SUBMITTING. A concurrent caller that
+        // loses the race will observe the new state and fail closed.
+        $claimed = $this->claimSubmission($batchId);
+        if (!$claimed) {
+            $current = $this->fetchBatch($batchId);
+            $currentStatus = (string) ($current['status'] ?? '');
+            throw new BankConnectException(
+                "Batch {$batchId} cannot be submitted from status {$currentStatus}"
+            );
+        }
 
         try {
             require_once __DIR__.'/BankConnectXmlSecurity.php';
@@ -122,7 +156,7 @@ class PaymentBatchService
             $response = $this->client->transferPayments($paymentMessage, $batch['end_to_end_message_id']);
         } catch (Throwable $e) {
             // The transport outcome is unknown. Never claim rejection or success.
-            $this->updateBatchStatus($batchId, 'unknown', [
+            $this->transitionBatchStatus($batchId, PaymentStateMachine::SUBMITTING, PaymentStateMachine::UNKNOWN, [
                 'message' => 'BankConnect transport outcome is unknown: '.$e->getMessage(),
                 'date_status' => date('Y-m-d H:i:s'),
             ]);
@@ -138,7 +172,7 @@ class PaymentBatchService
             $responseCode = $m[1];
         }
 
-        $this->updateBatchStatus($batchId, 'submitted', [
+        $this->transitionBatchStatus($batchId, PaymentStateMachine::SUBMITTING, PaymentStateMachine::SUBMITTED, [
             'response_code' => $responseCode,
             'correlation_id' => $correlationId,
             'date_sent' => date('Y-m-d H:i:s'),
@@ -243,6 +277,55 @@ class PaymentBatchService
         $obj = $this->db->fetch_object($res);
         return $obj ? (array)$obj : null;
     }
+    private function claimSubmission(int $batchId): bool
+    {
+        $sql = "UPDATE llx_bankconnect_batch SET status = '".PaymentStateMachine::SUBMITTING."'"
+             . " WHERE rowid = ".(int)$batchId
+             . " AND status = '".PaymentStateMachine::PREPARED."'";
+        if (!$this->db->query($sql)) {
+            throw new BankConnectException('Failed to claim payment submission: '.$this->db->lasterror());
+        }
+
+        // DoliDB exposes affected_rows() on real database drivers. The
+        // fallback SELECT keeps the unit-test DB deterministic while the
+        // conditional UPDATE remains the production concurrency boundary.
+        if (method_exists($this->db, 'affected_rows')) {
+            return (int)$this->db->affected_rows() === 1;
+        }
+
+        $current = $this->fetchBatch($batchId);
+        return (string)($current['status'] ?? '') === PaymentStateMachine::SUBMITTING;
+    }
+
+    private function transitionBatchStatus(int $batchId, string $from, string $to, array $extra = []): void
+    {
+        PaymentStateMachine::assertTransition($from, $to);
+        $sets = ["status = '".$this->db->escape($to)."'"];
+        foreach (['response_code','message','correlation_id','date_sent','date_status'] as $field) {
+            if (isset($extra[$field])) {
+                $sets[] = $field." = '".$this->db->escape($extra[$field])."'";
+            }
+        }
+        $sql = 'UPDATE llx_bankconnect_batch SET '.implode(', ', $sets)
+             .' WHERE rowid = '.(int)$batchId
+             ." AND status = '".$this->db->escape($from)."'";
+        if (!$this->db->query($sql)) {
+            throw new BankConnectException('Payment state transition failed: '.$this->db->lasterror());
+        }
+
+        if (method_exists($this->db, 'affected_rows')) {
+            if ((int)$this->db->affected_rows() !== 1) {
+                throw new BankConnectException("Payment batch {$batchId} state changed concurrently");
+            }
+            return;
+        }
+
+        $current = $this->fetchBatch($batchId);
+        if ((string)($current['status'] ?? '') !== $to) {
+            throw new BankConnectException("Payment batch {$batchId} state transition did not persist");
+        }
+    }
+
     private function updateBatchStatus(int $batchId, string $status, array $extra = []): void
     {
         $sets = ["status = '".$this->db->escape($status)."'"];
