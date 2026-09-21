@@ -233,7 +233,7 @@ class MockDoliDB
 			if ($v === 'NULL') { $row[$c] = null; continue; }
 			if (strtoupper($v) === 'NOW()') { $row[$c] = date('Y-m-d H:i:s'); continue; }
 			if (is_numeric($v)) { $row[$c] = str_contains($v, '.') ? (float)$v : (int)$v; continue; }
-			$row[$c] = trim($v, "'");
+			$row[$c] = stripslashes(trim($v, "'"));
 		}
 		$id = ($this->nextId[$table] ?? 0) + 1;
 		$this->nextId[$table] = $id;
