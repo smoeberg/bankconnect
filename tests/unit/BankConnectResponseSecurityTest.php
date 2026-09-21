@@ -111,7 +111,7 @@ final class BankConnectResponseSecurityTest extends TestCase
     {
         $xml='<!DOCTYPE foo [ <!ENTITY xxe "blocked"> ]>'.$this->response();
         $this->expectException(BankConnectException::class);
-        (new BankConnectResponseSecurity($this->cert))->validateAndVerify($xml,'getStatusResponse');
+        $this->security()->verify($xml,'getStatusResponse');
     }
 
     public function testWrongCertificateFailsClosed(): void
