@@ -95,7 +95,7 @@ final class BankConnectResponseSecurityTest extends TestCase
         return $doc->saveXML();
     }
 
-    private function encryptedResponse(bool $tamper = false): string
+    private function encryptedResponse(string $payloadXml = '', bool $tamper = false): string
     {
         $doc = new DOMDocument('1.0', 'UTF-8');
         $doc->preserveWhiteSpace = false;
@@ -109,7 +109,7 @@ final class BankConnectResponseSecurityTest extends TestCase
         $this->assertInstanceOf(DOMElement::class, $body);
         $this->assertInstanceOf(DOMElement::class, $security);
 
-        $payload = $doc->saveXML($body->firstChild);
+        $payload = $payloadXml !== '' ? $payloadXml : $doc->saveXML($body->firstChild);
         $aesKey = random_bytes(32);
         $iv = random_bytes(16);
         $ciphertext = openssl_encrypt($payload, 'aes-256-cbc', $aesKey, OPENSSL_RAW_DATA, $iv);
@@ -222,6 +222,14 @@ final class BankConnectResponseSecurityTest extends TestCase
         $nodes = $doc->getElementsByTagNameNS('http://bankconnect.dk/schema/2014', 'getStatusResponse');
         $this->assertSame(1, $nodes->length);
         $this->assertSame(0, $doc->getElementsByTagNameNS('http://www.w3.org/2001/04/xmlenc#', 'EncryptedData')->length);
+    }
+
+    public function testMalformedDecryptedPayloadFailsClosed(): void
+    {
+        $encrypted = $this->encryptedResponse('<bc:getStatusResponse xmlns:bc="http://bankconnect.dk/schema/2014"><broken></bc:getStatusResponse>');
+        $verified = $this->security()->verify($encrypted);
+        $this->expectException(BankConnectException::class);
+        $this->security()->decrypt($verified, 'getStatusResponse');
     }
 
     public function testResponseTamperingFailsBeforeDecryption(): void
