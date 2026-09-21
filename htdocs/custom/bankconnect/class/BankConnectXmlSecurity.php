@@ -244,20 +244,16 @@ class BankConnectXmlSecurity
 
     private function createBusinessSignature(DOMDocument $doc,DOMElement $payment,string $paymentId): DOMElement
     {
-        $canonical=$payment->C14N(true,false,null,['soapenv']);
+        $canonical=$payment->C14N(true,false);
         if ($canonical===false) throw new BankConnectException('Failed to canonicalize paymentMessage');
         $sig=$doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:Signature');
         $sig->setAttribute('Id','DS-'.$this->randomId());
         $si=$doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:SignedInfo');
-        $cm=$this->xmlElement($doc,self::DS_NS,'ds:CanonicalizationMethod',null,['Algorithm'=>self::EXC_C14N]);
-        $cm->appendChild($this->inclusiveNamespaces($doc,'soapenv'));
-        $si->appendChild($cm);
+        $si->appendChild($this->xmlElement($doc,self::DS_NS,'ds:CanonicalizationMethod',null,['Algorithm'=>self::EXC_C14N]));
         $si->appendChild($this->xmlElement($doc,'http://www.w3.org/2000/09/xmldsig#','ds:SignatureMethod',null,['Algorithm'=>'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256']));
         $ref=$doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:Reference'); $ref->setAttribute('URI','#'.$paymentId);
         $ts=$doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:Transforms');
-        $transform=$this->xmlElement($doc,self::DS_NS,'ds:Transform',null,['Algorithm'=>self::EXC_C14N]);
-        $transform->appendChild($this->inclusiveNamespaces($doc,'soapenv'));
-        $ts->appendChild($transform);
+        $ts->appendChild($this->xmlElement($doc,self::DS_NS,'ds:Transform',null,['Algorithm'=>self::EXC_C14N]));
         $ref->appendChild($ts);
         $ref->appendChild($this->xmlElement($doc,'http://www.w3.org/2000/09/xmldsig#','ds:DigestMethod',null,['Algorithm'=>'http://www.w3.org/2001/04/xmlenc#sha256']));
         $ref->appendChild($doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:DigestValue',base64_encode(hash('sha256',$canonical,true))));
@@ -273,7 +269,7 @@ class BankConnectXmlSecurity
     {
         $signedInfo=$signature->getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#','SignedInfo')->item(0);
         if (!$signedInfo instanceof DOMElement) throw new BankConnectException('SignedInfo missing');
-        $canonical=$signedInfo->C14N(true,false,null,['soapenv']);
+        $canonical=$signedInfo->C14N(true,false);
         if ($canonical===false) throw new BankConnectException('Failed to canonicalize SignedInfo');
         $value='';
         if (!openssl_sign($canonical,$value,$this->customerPrivateKeyPem,OPENSSL_ALGO_SHA256)) {
@@ -393,7 +389,7 @@ class BankConnectXmlSecurity
         $signature->appendChild($signedInfo);
         $security->insertBefore($signature,$security->firstChild);
 
-        $canonicalSignedInfo=$signedInfo->C14N(true,false);
+        $canonicalSignedInfo=$signedInfo->C14N(true,false,null,['soapenv']);
         $signatureBytes='';
         if ($canonicalSignedInfo===false || !openssl_sign($canonicalSignedInfo,$signatureBytes,$this->customerPrivateKeyPem,OPENSSL_ALGO_SHA256)) {
             throw new BankConnectException('Bank Connect transport signature failed');
