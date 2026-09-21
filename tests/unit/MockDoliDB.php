@@ -84,7 +84,7 @@ class MockDoliDB
 			$hash = null;
 			$values = $this->splitValues($m[3]);
 			$cols = array_map('trim', explode(',', $m[2]));
-			foreach ($cols as $i => $col) if ($col === 'hash') $hash = trim($values[$i] ?? '', " '");
+            foreach ($cols as $i => $col) if ($col === 'hash') $hash = trim(trim($values[$i] ?? ''), "'");
 			foreach ($this->tables[$m[1]] ?? [] as $row) {
 				if ($hash !== null && ($row['hash'] ?? null) === $hash) { $this->lastRowCount = 0; return true; }
 			}
