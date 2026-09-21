@@ -18,4 +18,10 @@ class BankTransaction
 
     /** True when TxDtls cannot be safely split without inventing amounts. */
     public bool $requiresManualReview = false;
+
+    /** Stable statement identity from CAMT Stmt/Rpt/Ntfctn. */
+    public string $statementId = '';
+
+    /** Stable transaction identity from bank references. */
+    public string $transactionId = '';
 }
