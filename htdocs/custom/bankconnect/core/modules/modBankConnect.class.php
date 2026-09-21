@@ -45,6 +45,14 @@ class modBankConnect extends DolibarrModules
 			}
 		}
 
+		$batchLineTable = MAIN_DB_PREFIX.'bankconnect_batch_line';
+		$checkManual = $this->db->query("SHOW COLUMNS FROM ".$batchLineTable." LIKE 'requires_manual_review'");
+		if ($checkManual && !$this->db->fetch_object($checkManual)) {
+			if (!$this->db->query("ALTER TABLE ".$batchLineTable." ADD COLUMN requires_manual_review TINYINT NOT NULL DEFAULT 0")) {
+				return -1;
+			}
+		}
+
 		// Existing installations need the same database-level idempotency boundary
 		// as fresh installs. A non-unique statement/transaction pair is retained for
 		// legacy rows with empty identity values.
