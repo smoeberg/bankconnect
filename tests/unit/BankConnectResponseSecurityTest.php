@@ -234,8 +234,17 @@ final class BankConnectResponseSecurityTest extends TestCase
 
     public function testResponseTamperingFailsBeforeDecryption(): void
     {
+        $xml = $this->encryptedResponse(false);
+        $this->assertStringContainsString('<xenc:CipherValue>', $xml);
+        $start = strrpos($xml, '<xenc:CipherValue>');
+        $end = $start === false ? false : strpos($xml, '</xenc:CipherValue>', $start);
+        $this->assertNotFalse($start);
+        $this->assertNotFalse($end);
+        $xml = substr($xml, 0, $start + strlen('<xenc:CipherValue>'))
+            .base64_encode(random_bytes(64))
+            .substr($xml, $end);
         $this->expectException(BankConnectException::class);
-        $this->security()->verify($this->encryptedResponse(true));
+        $this->security()->verify($xml);
     }
 
     public function testWrongCustomerKeyFailsClosed(): void

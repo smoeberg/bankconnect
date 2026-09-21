@@ -51,7 +51,7 @@ class BankConnectStoreTest extends TestCase
         ];
 
         $hash = hash('sha256', implode('|', [
-            $tx['date'], $tx['amount'], $tx['reference'],
+            1, '', '', $tx['date'], $tx['amount'], $tx['reference'],
             $tx['counterparty'], $tx['text'], $tx['acctSvcrRef'],
         ]));
 

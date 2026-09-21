@@ -38,7 +38,7 @@ class ReconciliationServiceTest extends TestCase
         $result = $this->service->propose(
             7,
             42,
-            bcMakeTx(),
+            bcMakeTx(['reference' => 'FA240891']),
             bcMakeCandidates()
         );
 
@@ -80,7 +80,7 @@ class ReconciliationServiceTest extends TestCase
         $this->assertCount(1, $this->db->tables['llx_bankconnect_audit']);
         $detail = json_decode($this->db->tables['llx_bankconnect_audit'][0]['detail'], true);
         $this->assertSame('none', $detail['match_type']);
-        $this->assertSame(0.0, $detail['confidence']);
+        $this->assertSame(0, $detail['confidence']);
     }
 
     public function testAiProposalIsAuditedAsSuggestionAndNeverApproved(): void

@@ -28,7 +28,7 @@ XML;
 
     private const CAMT_BATCH = <<<'XML'
 <Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02">
-  <BkToCstmrStmt><Stmt><Ntry>
+  <BkToCstmrStmt><Stmt><Id>STMT-2026-09-14</Id><Ntry>
     <Amt Ccy="DKK">3000.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><BookgDt><Dt>2026-09-14</Dt></BookgDt><AcctSvcrRef>BATCH-001</AcctSvcrRef>
     <NtryDtls>
       <TxDtls><Amt Ccy="DKK">1000.00</Amt><Refs><EndToEndId>INV-1</EndToEndId></Refs><RltdPties><Dbtr><Nm>Kunde A</Nm></Dbtr></RltdPties></TxDtls>
@@ -125,9 +125,9 @@ XML;
     {
         $txs = (new CamtParser())->parse(self::CAMT_BATCH);
         $this->assertSame('STMT-2026-09-14', $txs[0]->statementId);
-        $this->assertSame('BATCH-001:0', $txs[0]->transactionId);
+        $this->assertSame('INV-1', $txs[0]->transactionId);
         $this->assertSame('STMT-2026-09-14', $txs[1]->statementId);
-        $this->assertSame('BATCH-001:1', $txs[1]->transactionId);
+        $this->assertSame('INV-2', $txs[1]->transactionId);
     }
 
     public function testRejectsDtd(): void

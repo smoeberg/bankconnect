@@ -84,7 +84,7 @@ class MockDoliDB
 			$hash = null;
 			$values = $this->splitValues($m[3]);
 			$cols = array_map('trim', explode(',', $m[2]));
-			foreach ($cols as $i => $col) if ($col === 'hash') $hash = trim($values[$i] ?? '', " '");
+            foreach ($cols as $i => $col) if ($col === 'hash') $hash = trim(trim($values[$i] ?? ''), "'");
 			foreach ($this->tables[$m[1]] ?? [] as $row) {
 				if ($hash !== null && ($row['hash'] ?? null) === $hash) { $this->lastRowCount = 0; return true; }
 			}
@@ -233,7 +233,7 @@ class MockDoliDB
 			if ($v === 'NULL') { $row[$c] = null; continue; }
 			if (strtoupper($v) === 'NOW()') { $row[$c] = date('Y-m-d H:i:s'); continue; }
 			if (is_numeric($v)) { $row[$c] = str_contains($v, '.') ? (float)$v : (int)$v; continue; }
-			$row[$c] = trim($v, "'");
+			$row[$c] = stripslashes(trim($v, "'"));
 		}
 		$id = ($this->nextId[$table] ?? 0) + 1;
 		$this->nextId[$table] = $id;

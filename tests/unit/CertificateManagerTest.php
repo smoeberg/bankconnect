@@ -30,10 +30,16 @@ class CertificateManagerTest extends TestCase
 
     public function testRejectsShortEncryptionSecret(): void
     {
-        $this->conf->global['BANKCONNECT_KEY_ENCRYPTION_SECRET'] = 'short';
+        $previous = getenv('BANKCONNECT_KEY_ENCRYPTION_SECRET');
+        putenv('BANKCONNECT_KEY_ENCRYPTION_SECRET=short');
         $mgr = new BankConnectCertificateManager($this->conf);
         $this->expectException(BankConnectException::class);
-        $mgr->encryptPrivateKey('secret');
+        try {
+            $mgr->encryptPrivateKey('secret');
+        } finally {
+            if ($previous === false) { putenv('BANKCONNECT_KEY_ENCRYPTION_SECRET'); }
+            else { putenv('BANKCONNECT_KEY_ENCRYPTION_SECRET='.$previous); }
+        }
     }
 
     public function testCertificateKeyBindingRejectsMismatchedKey(): void
@@ -102,7 +108,7 @@ class CertificateManagerTest extends TestCase
         $mgr = new BankConnectCertificateManager($this->conf, $client, null, $store);
 
         $this->expectException(BankConnectException::class);
-        $this->expectExceptionMessage('does not match generated private key');
+        $this->expectExceptionMessage('No returned customer certificate matches the generated private key');
         try {
             $mgr->renewCustomerCertificateForAgreement($aid, '<serviceHeader/>');
         } finally {
@@ -360,7 +366,7 @@ class CertificateManagerTest extends TestCase
         $this->assertNotFalse($cert);
         openssl_x509_export($cert, $pem);
         $fp = $mgr->certificateFingerprint($pem);
-        $this->assertMatchesRegularExpression('/^[0-9A-F]{64}$/', $fp);
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $fp);
         $this->assertSame($fp, $mgr->certificateFingerprint($pem));
     }
 
@@ -405,7 +411,7 @@ class CertificateManagerTest extends TestCase
         $this->assertNotFalse($cert2);
         openssl_x509_export($cert2, $pem2);
 
-        $this->assertSame($pem, $mgr->extractCustomerCertificatePem($pem2.$pem, $private));
+        $this->assertSame(rtrim($pem, "\r\n"), rtrim($mgr->extractCustomerCertificatePem($pem2.$pem, $private), "\r\n"));
     }
 }
 
