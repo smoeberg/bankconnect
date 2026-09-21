@@ -153,7 +153,7 @@ class BankConnectXmlSecurityTest extends TestCase
             $id=substr($reference->getAttribute('URI'),1);
             $target=$xp->query('//*[@wsu:Id="'.$id.'"]')->item(0);
             $this->assertInstanceOf(DOMElement::class,$target);
-            $this->assertSame(base64_encode(hash('sha256',$target->C14N(true,false),true)),$xp->query('./ds:DigestValue',$reference)->item(0)->textContent);
+            $this->assertSame(base64_encode(hash('sha256',$target->C14N(true,false,null,['soapenv']),true)),$xp->query('./ds:DigestValue',$reference)->item(0)->textContent);
         }
         $token=$xp->query('/s:Envelope/s:Header/wsse:Security/wsse:BinarySecurityToken')->item(0);
         $this->assertInstanceOf(DOMElement::class,$token);
