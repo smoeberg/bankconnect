@@ -121,6 +121,21 @@ XML;
         $this->assertTrue($txs[0]->requiresManualReview);
     }
 
+    public function testPreservesStatementAndTransactionIdentity(): void
+    {
+        $txs = (new CamtParser())->parse(self::CAMT_BATCH);
+        $this->assertSame('STMT-2026-09-14', $txs[0]->statementId);
+        $this->assertSame('BATCH-001:0', $txs[0]->transactionId);
+        $this->assertSame('STMT-2026-09-14', $txs[1]->statementId);
+        $this->assertSame('BATCH-001:1', $txs[1]->transactionId);
+    }
+
+    public function testRejectsDtd(): void
+    {
+        $this->expectException(RuntimeException::class);
+        (new CamtParser())->parse('<!DOCTYPE foo><Document/>');
+    }
+
     public function testMalformedXmlThrows(): void
     {
         $this->expectException(RuntimeException::class);
