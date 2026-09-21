@@ -207,4 +207,68 @@ class BankConnectResponseSecurity
             throw new BankConnectException('BankConnect response certificate is not trusted');
         }
     }
-}
+}    public function validateStructure(string $xml): DOMDocument
+    {
+        if (strlen($xml) > self::MAX_RESPONSE_BYTES) {
+            throw new BankConnectException('BankConnect response exceeds the maximum allowed size');
+        }
+        if ($xml === '') {
+            throw new BankConnectException('BankConnect response is empty');
+        }
+        $doc = $this->loadXml($xml);
+        $xp = new DOMXPath($doc);
+        $xp->registerNamespace('s', self::SOAP_NS);
+        $envelope = $xp->query('/s:Envelope')->item(0);
+        $header = $xp->query('/s:Envelope/s:Header')->item(0);
+        $body = $xp->query('/s:Envelope/s:Body')->item(0);
+        if (!$envelope instanceof DOMElement || !$header instanceof DOMElement || !$body instanceof DOMElement) {
+            throw new BankConnectException('BankConnect response must contain SOAP Envelope, Header and Body');
+        }
+        if ($xp->query('/s:Envelope/s:Body/s:Fault')->length > 0) {
+            throw new BankConnectException('BankConnect returned a SOAP Fault');
+        }
+        return $doc;
+    }
+
+    public function validateAndVerify(string $xml, ?string $expectedOperation = null): DOMDocument
+    {
+        $doc = $this->validateStructure($xml);
+        $xp = new DOMXPath($doc);
+        $xp->registerNamespace('s', self::SOAP_NS);
+        $xp->registerNamespace('wsse', self::WSSE_NS);
+        $xp->registerNamespace('wsu', self::WSU_NS);
+        $xp->registerNamespace('ds', self::DS_NS);
+        $body = $xp->query('/s:Envelope/s:Body')->item(0);
+        if (!$body instanceof DOMElement) {
+            throw new BankConnectException('BankConnect response SOAP Body is required');
+        }
+
+        $securityNodes = $xp->query('/s:Envelope/s:Header/wsse:Security');
+        if ($securityNodes->length !== 1) {
+            throw new BankConnectException('BankConnect response must contain exactly one WS-Security Security header');
+        }
+        $security = $securityNodes->item(0);
+        $signatures = $xp->query('./ds:Signature', $security);
+        if ($signatures->length !== 1) {
+            throw new BankConnectException('BankConnect response must contain exactly one WS-Security signature');
+        }
+        $signature = $signatures->item(0);
+        $tokens = $xp->query('./wsse:BinarySecurityToken', $security);
+        if ($tokens->length !== 1) {
+            throw new BankConnectException('BankConnect response must contain exactly one BinarySecurityToken');
+        }
+        $token = $tokens->item(0);
+        $certificate = $this->certificateFromToken($token);
+        if ($this->trustedCertificatePem !== null &&
+            $this->fingerprint($certificate) !== $this->fingerprint($this->trustedCertificatePem)) {
+            throw new BankConnectException('BankConnect response certificate does not match the configured trusted bank certificate');
+        }
+        $this->validateCertificateTime($certificate);
+        $this->verifySignature($doc, $xp, $signature, $certificate);
+        if ($expectedOperation !== null) {
+            $this->validateOperation($body, $expectedOperation);
+        }
+        return $doc;
+    }
+
+
