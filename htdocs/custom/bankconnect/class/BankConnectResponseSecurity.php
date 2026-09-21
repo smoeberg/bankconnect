@@ -1,14 +1,11 @@
 <?php
 /**
- * Verifies Bank Connect SOAP responses before any business parsing.
+ * Verifies Bank Connect SOAP responses before business parsing.
  *
- * Security boundary:
- *   1. reject oversized / DTD / entity-bearing XML;
- *   2. validate SOAP envelope/body structure;
- *   3. locate exactly one WS-Security signature and X.509 token;
- *   4. validate every signed reference and digest;
- *   5. verify SignedInfo with the trusted configured bank certificate;
- *   6. return the original response only after all checks succeed.
+ * The configured BANKCONNECT_BANK_CERTIFICATE is pinned by SHA-256
+ * certificate fingerprint. Responses fail closed on malformed XML,
+ * unsafe XML declarations, missing/ambiguous WS-Security, unsupported
+ * algorithms, duplicate IDs, invalid reference digests or bad signatures.
  */
 require_once __DIR__.'/BankConnectException.php';
 
@@ -22,40 +19,27 @@ class BankConnectResponseSecurity
     public function __construct(Conf $conf, int $maxResponseBytes = self::DEFAULT_MAX_RESPONSE_BYTES)
     {
         $this->conf = $conf;
-        $this->maxResponseBytes = $maxResponseBytes;
         if ($maxResponseBytes < 1024) {
             throw new BankConnectException('BankConnect response size limit is too small');
         }
+        $this->maxResponseBytes = $maxResponseBytes;
     }
 
-    public function verify(string $responseXml): string
+    public function validateStructure(string $responseXml): string
     {
-        if ($responseXml === '') {
-            throw new BankConnectException('BankConnect response is empty');
-        }
-        if (strlen($responseXml) > $this->maxResponseBytes) {
-            throw new BankConnectException('BankConnect response exceeds configured size limit');
-        }
-        if (preg_match('/<!DOCTYPE|<!ENTITY/i', $responseXml)) {
-            throw new BankConnectException('DTD and entity declarations are not permitted in BankConnect responses');
-        }
+        $this->loadDocument($responseXml);
+        return $responseXml;
+    }
 
-        $doc = new DOMDocument('1.0', 'UTF-8');
-        $doc->preserveWhiteSpace = false;
-        $previous = libxml_use_internal_errors(true);
-        try {
-            if (!$doc->loadXML($responseXml, LIBXML_NONET | LIBXML_NOBLANKS)) {
-                throw new BankConnectException('Invalid BankConnect response XML');
-            }
-        } finally {
-            libxml_use_internal_errors($previous);
-            libxml_clear_errors();
-        }
+    public function verify(string $responseXml, ?string $expectedOperation = null): string
+    {
+        $doc = $this->loadDocument($responseXml);
 
         $soapNs = 'http://schemas.xmlsoap.org/soap/envelope/';
         $wsseNs = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd';
         $wsuNs = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd';
         $dsNs = 'http://www.w3.org/2000/09/xmldsig#';
+        $bcNs = 'http://bankconnect.dk/schema/2014';
 
         $xp = new DOMXPath($doc);
         $xp->registerNamespace('s', $soapNs);
@@ -63,28 +47,45 @@ class BankConnectResponseSecurity
         $xp->registerNamespace('wsu', $wsuNs);
         $xp->registerNamespace('ds', $dsNs);
 
-        $envelopes = $xp->query('/s:Envelope');
-        $bodies = $xp->query('/s:Envelope/s:Body');
-        if ($envelopes->length !== 1 || $bodies->length !== 1) {
-            throw new BankConnectException('BankConnect response must contain exactly one SOAP Envelope and Body');
+        if ($xp->query('/s:Envelope')->length !== 1
+            || $xp->query('/s:Envelope/s:Header')->length !== 1
+            || $xp->query('/s:Envelope/s:Body')->length !== 1) {
+            throw new BankConnectException('BankConnect response must contain exactly one SOAP Envelope, Header and Body');
+        }
+        $body = $xp->query('/s:Envelope/s:Body')->item(0);
+        if ($xp->query('/s:Envelope/s:Body/s:Fault')->length !== 0) {
+            throw new BankConnectException('BankConnect returned a SOAP Fault');
+        }
+
+        if ($expectedOperation !== null) {
+            $children = [];
+            foreach ($body->childNodes as $child) {
+                if ($child instanceof DOMElement) $children[] = $child;
+            }
+            if (count($children) !== 1
+                || $children[0]->namespaceURI !== $bcNs
+                || $children[0]->localName !== $expectedOperation) {
+                throw new BankConnectException('Unexpected BankConnect response operation');
+            }
         }
 
         $security = $xp->query('/s:Envelope/s:Header/wsse:Security');
-        if ($security->length !== 1 || !$security->item(0) instanceof DOMElement) {
-            throw new BankConnectException('Verified BankConnect response requires exactly one WS-Security Security header');
+        if ($security->length !== 1) {
+            throw new BankConnectException('BankConnect response must contain exactly one WS-Security Security header');
         }
+        $security = $security->item(0);
 
-        $signatures = $xp->query('./ds:Signature', $security->item(0));
+        $signatures = $xp->query('./ds:Signature', $security);
         if ($signatures->length !== 1 || !$signatures->item(0) instanceof DOMElement) {
-            throw new BankConnectException('Verified BankConnect response requires exactly one WS-Security signature');
+            throw new BankConnectException('BankConnect response must contain exactly one WS-Security signature');
         }
         $signature = $signatures->item(0);
 
-        $certNodes = $xp->query('./wsse:BinarySecurityToken', $security->item(0));
-        if ($certNodes->length !== 1 || !$certNodes->item(0) instanceof DOMElement) {
-            throw new BankConnectException('BankConnect response signature certificate is missing');
+        $tokens = $xp->query('./wsse:BinarySecurityToken', $security);
+        if ($tokens->length !== 1 || !$tokens->item(0) instanceof DOMElement) {
+            throw new BankConnectException('BankConnect response must contain exactly one BinarySecurityToken');
         }
-        $certificate = $this->decodeCertificate((string) $certNodes->item(0)->textContent);
+        $certificate = $this->decodeCertificate($tokens->item(0)->textContent);
         $this->requireTrustedCertificate($certificate);
 
         $signedInfo = $xp->query('./ds:SignedInfo', $signature);
@@ -93,22 +94,17 @@ class BankConnectResponseSecurity
             throw new BankConnectException('BankConnect response signature is incomplete');
         }
 
-        $canonicalization = $xp->query('./ds:CanonicalizationMethod', $signedInfo->item(0));
-        $signatureMethod = $xp->query('./ds:SignatureMethod', $signedInfo->item(0));
-        if ($canonicalization->length !== 1
-            || $canonicalization->item(0)->getAttribute('Algorithm') !== 'http://www.w3.org/2001/10/xml-exc-c14n#'
-            || $signatureMethod->length !== 1
-            || $signatureMethod->item(0)->getAttribute('Algorithm') !== 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256') {
+        if ($xp->query('./ds:CanonicalizationMethod', $signedInfo->item(0))->length !== 1
+            || $xp->query('./ds:CanonicalizationMethod', $signedInfo->item(0))->item(0)->getAttribute('Algorithm')
+                !== 'http://www.w3.org/2001/10/xml-exc-c14n#'
+            || $xp->query('./ds:SignatureMethod', $signedInfo->item(0))->length !== 1
+            || $xp->query('./ds:SignatureMethod', $signedInfo->item(0))->item(0)->getAttribute('Algorithm')
+                !== 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256') {
             throw new BankConnectException('Unsupported BankConnect response signature algorithm');
         }
 
-        $references = $xp->query('./ds:Reference', $signedInfo->item(0));
-        if ($references->length < 1) {
-            throw new BankConnectException('BankConnect response signature contains no references');
-        }
-
-        $seenIds = [];
         $allIds = $xp->query('//*[@wsu:Id or @Id]');
+        $idTargets = [];
         foreach ($allIds as $node) {
             $ids = [];
             $wsuId = $node->getAttributeNS($wsuNs, 'Id');
@@ -116,13 +112,19 @@ class BankConnectResponseSecurity
             if ($wsuId !== '') $ids[] = $wsuId;
             if ($plainId !== '') $ids[] = $plainId;
             foreach ($ids as $id) {
-                if (isset($seenIds[$id])) {
+                if (isset($idTargets[$id])) {
                     throw new BankConnectException('Duplicate XML security identifier: '.$id);
                 }
-                $seenIds[$id] = true;
+                $idTargets[$id] = $node;
             }
         }
 
+        $references = $xp->query('./ds:Reference', $signedInfo->item(0));
+        if ($references->length < 1) {
+            throw new BankConnectException('BankConnect response signature contains no references');
+        }
+
+        $seenReferences = [];
         foreach ($references as $reference) {
             if (!$reference instanceof DOMElement) {
                 throw new BankConnectException('Invalid BankConnect signature reference');
@@ -132,14 +134,12 @@ class BankConnectResponseSecurity
                 throw new BankConnectException('BankConnect signature reference must be a local fragment');
             }
             $id = substr($uri, 1);
-            $targets = [];
-            foreach ($allIds as $candidate) {
-                if ($candidate->getAttributeNS($wsuNs, 'Id') === $id || $candidate->getAttribute('Id') === $id) {
-                    $targets[] = $candidate;
-                }
+            if (isset($seenReferences[$id])) {
+                throw new BankConnectException('Duplicate BankConnect signature reference');
             }
-            if (count($targets) !== 1) {
-                throw new BankConnectException('BankConnect signature reference does not resolve uniquely');
+            $seenReferences[$id] = true;
+            if (!isset($idTargets[$id])) {
+                throw new BankConnectException('BankConnect signature reference does not resolve');
             }
 
             $transforms = $xp->query('./ds:Transforms/ds:Transform', $reference);
@@ -155,29 +155,52 @@ class BankConnectResponseSecurity
                 throw new BankConnectException('Unsupported BankConnect reference digest');
             }
 
-            $canonicalTarget = $targets[0]->C14N(true, false);
-            if ($canonicalTarget === false) {
-                throw new BankConnectException('Failed to canonicalize BankConnect signed response reference');
+            $canonical = $idTargets[$id]->C14N(true, false);
+            if ($canonical === false) {
+                throw new BankConnectException('Failed to canonicalize signed BankConnect response data');
             }
-            $actualDigest = base64_encode(hash('sha256', $canonicalTarget, true));
+            $actualDigest = base64_encode(hash('sha256', $canonical, true));
             if (!hash_equals(trim($digestValue->item(0)->textContent), $actualDigest)) {
                 throw new BankConnectException('BankConnect response reference digest verification failed');
             }
         }
 
         $canonicalSignedInfo = $signedInfo->item(0)->C14N(true, false);
-        if ($canonicalSignedInfo === false) {
-            throw new BankConnectException('Failed to canonicalize BankConnect SignedInfo');
-        }
         $signatureBytes = base64_decode(trim($signatureValue->item(0)->textContent), true);
-        if ($signatureBytes === false || $signatureBytes === '') {
-            throw new BankConnectException('Invalid BankConnect SignatureValue');
+        if ($canonicalSignedInfo === false || $signatureBytes === false || $signatureBytes === '') {
+            throw new BankConnectException('Invalid BankConnect response signature encoding');
         }
         if (openssl_verify($canonicalSignedInfo, $signatureBytes, $certificate, OPENSSL_ALGO_SHA256) !== 1) {
             throw new BankConnectException('BankConnect response signature verification failed');
         }
 
         return $responseXml;
+    }
+
+    private function loadDocument(string $responseXml): DOMDocument
+    {
+        if ($responseXml === '') {
+            throw new BankConnectException('BankConnect response is empty');
+        }
+        if (strlen($responseXml) > $this->maxResponseBytes) {
+            throw new BankConnectException('BankConnect response exceeds configured size limit');
+        }
+        if (preg_match('/<!DOCTYPE|<!ENTITY/i', $responseXml)) {
+            throw new BankConnectException('DTD and entity declarations are not permitted in BankConnect responses');
+        }
+
+        $doc = new DOMDocument('1.0', 'UTF-8');
+        $doc->preserveWhiteSpace = false;
+        $previous = libxml_use_internal_errors(true);
+        try {
+            if (!$doc->loadXML($responseXml, LIBXML_NONET | LIBXML_NOBLANKS | LIBXML_NOCDATA)) {
+                throw new BankConnectException('Invalid BankConnect response XML');
+            }
+        } finally {
+            libxml_use_internal_errors($previous);
+            libxml_clear_errors();
+        }
+        return $doc;
     }
 
     private function decodeCertificate(string $base64): string
@@ -207,68 +230,4 @@ class BankConnectResponseSecurity
             throw new BankConnectException('BankConnect response certificate is not trusted');
         }
     }
-}    public function validateStructure(string $xml): DOMDocument
-    {
-        if (strlen($xml) > self::MAX_RESPONSE_BYTES) {
-            throw new BankConnectException('BankConnect response exceeds the maximum allowed size');
-        }
-        if ($xml === '') {
-            throw new BankConnectException('BankConnect response is empty');
-        }
-        $doc = $this->loadXml($xml);
-        $xp = new DOMXPath($doc);
-        $xp->registerNamespace('s', self::SOAP_NS);
-        $envelope = $xp->query('/s:Envelope')->item(0);
-        $header = $xp->query('/s:Envelope/s:Header')->item(0);
-        $body = $xp->query('/s:Envelope/s:Body')->item(0);
-        if (!$envelope instanceof DOMElement || !$header instanceof DOMElement || !$body instanceof DOMElement) {
-            throw new BankConnectException('BankConnect response must contain SOAP Envelope, Header and Body');
-        }
-        if ($xp->query('/s:Envelope/s:Body/s:Fault')->length > 0) {
-            throw new BankConnectException('BankConnect returned a SOAP Fault');
-        }
-        return $doc;
-    }
-
-    public function validateAndVerify(string $xml, ?string $expectedOperation = null): DOMDocument
-    {
-        $doc = $this->validateStructure($xml);
-        $xp = new DOMXPath($doc);
-        $xp->registerNamespace('s', self::SOAP_NS);
-        $xp->registerNamespace('wsse', self::WSSE_NS);
-        $xp->registerNamespace('wsu', self::WSU_NS);
-        $xp->registerNamespace('ds', self::DS_NS);
-        $body = $xp->query('/s:Envelope/s:Body')->item(0);
-        if (!$body instanceof DOMElement) {
-            throw new BankConnectException('BankConnect response SOAP Body is required');
-        }
-
-        $securityNodes = $xp->query('/s:Envelope/s:Header/wsse:Security');
-        if ($securityNodes->length !== 1) {
-            throw new BankConnectException('BankConnect response must contain exactly one WS-Security Security header');
-        }
-        $security = $securityNodes->item(0);
-        $signatures = $xp->query('./ds:Signature', $security);
-        if ($signatures->length !== 1) {
-            throw new BankConnectException('BankConnect response must contain exactly one WS-Security signature');
-        }
-        $signature = $signatures->item(0);
-        $tokens = $xp->query('./wsse:BinarySecurityToken', $security);
-        if ($tokens->length !== 1) {
-            throw new BankConnectException('BankConnect response must contain exactly one BinarySecurityToken');
-        }
-        $token = $tokens->item(0);
-        $certificate = $this->certificateFromToken($token);
-        if ($this->trustedCertificatePem !== null &&
-            $this->fingerprint($certificate) !== $this->fingerprint($this->trustedCertificatePem)) {
-            throw new BankConnectException('BankConnect response certificate does not match the configured trusted bank certificate');
-        }
-        $this->validateCertificateTime($certificate);
-        $this->verifySignature($doc, $xp, $signature, $certificate);
-        if ($expectedOperation !== null) {
-            $this->validateOperation($body, $expectedOperation);
-        }
-        return $doc;
-    }
-
-
+}
