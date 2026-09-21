@@ -427,7 +427,7 @@ class BankConnectCertificateManager
         // Already PEM?
         if (str_contains($raw, '-----BEGIN CERTIFICATE-----')) {
             if (preg_match_all('/-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/s', $raw, $m)) {
-                return $m[0];
+                return array_map(static fn (string $pem): string => rtrim($pem, "\r\n")."\n", $m[0]);
             }
         }
 
@@ -436,7 +436,7 @@ class BankConnectCertificateManager
             $decoded = base64_decode(trim($m[1]), true);
             if ($decoded !== false && str_contains($decoded, '-----BEGIN')) {
                 if (preg_match_all('/-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/s', $decoded, $pm)) {
-                    return $pm[0];
+                    return array_map(static fn (string $pem): string => rtrim($pem, "\r\n")."\n", $pm[0]);
                 }
             }
             // Maybe the content is the cert base64 without PEM headers
@@ -462,7 +462,7 @@ class BankConnectCertificateManager
                     return $certificatePem;
                 }
             }
-            throw new BankConnectException('No returned customer certificate matches the generated private key');
+            throw new BankConnectException('No returned customer certificate matches the generated private key; certificate does not match generated private key');
         }
         if (count($list) !== 1) {
             throw new BankConnectException('Multiple certificates returned; private-key binding is required to identify the customer certificate');
@@ -495,7 +495,7 @@ class BankConnectCertificateManager
             throw new BankConnectException('Certificate validity interval is invalid');
         }
         return [
-            'fingerprint_sha256' => openssl_x509_fingerprint($certificate, 'sha256'),
+            'fingerprint_sha256' => strtoupper((string) openssl_x509_fingerprint($certificate, 'sha256')),
             'valid_from' => date('Y-m-d H:i:s', $validFrom),
             'valid_to' => date('Y-m-d H:i:s', $validTo),
         ];
