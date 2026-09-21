@@ -75,7 +75,7 @@ final class BankConnectSoapHeadersTest extends TestCase
     {
         $security = new class(new Conf()) extends BankConnectXmlSecurity {
             public function signRequest(string $xml): string { return 'SIGN('.$xml.')'; }
-            public function encryptSoapBody(string $xml): string { return 'ENCRYPT('.$xml.')'; }
+            public function encryptSoapBody(string $xml, string $algorithm = self::RSA_OAEP_MGF1P): string { return 'ENCRYPT('.$xml.')'; }
         };
         $bankdata = $this->securityClient('BANKDATA', $security);
         $nbs = $this->securityClient('NBS', $security);
