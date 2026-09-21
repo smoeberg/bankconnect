@@ -231,6 +231,7 @@ class PaymentBatchServiceTest extends TestCase
                 $this->assertSame(1, $client->calls);
             }
         }
+    }
 
     public function testUnknownPain002StatusBecomesUnknownAndManualReview(): void
     {

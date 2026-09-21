@@ -303,8 +303,6 @@ class CertificateManagerTest extends TestCase
         $this->assertSame($cid, (int) $active['rowid']);
         $this->assertSame(1, (int) $active['is_active']);
     }
-}
-
 
     public function testCertificateStateDistinguishesValidExpiringExpiredAndImported(): void
     {
@@ -409,6 +407,7 @@ class CertificateManagerTest extends TestCase
 
         $this->assertSame($pem, $mgr->extractCustomerCertificatePem($pem2.$pem, $private));
     }
+}
 
 
 
