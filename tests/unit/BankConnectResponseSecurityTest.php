@@ -7,6 +7,13 @@ require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectResponse
 
 final class BankConnectResponseSecurityTest extends TestCase
 {
+    private function security(): BankConnectResponseSecurity
+    {
+        $conf = new Conf();
+        $conf->global['BANKCONNECT_BANK_CERTIFICATE'] = $this->cert;
+        return new BankConnectResponseSecurity($conf);
+    }
+
     private string $private = '';
     private string $cert = '';
 
@@ -89,7 +96,7 @@ final class BankConnectResponseSecurityTest extends TestCase
 
     public function testValidResponseIsAccepted(): void
     {
-        $doc=(new BankConnectResponseSecurity($this->cert))->validateAndVerify($this->response(),'getStatusResponse');
+        $doc=$this->security()->verify($this->response(),'getStatusResponse');
         $this->assertSame('getStatusResponse',$doc->getElementsByTagNameNS('http://bankconnect.dk/schema/2014','getStatusResponse')->item(0)->localName);
     }
 
@@ -97,7 +104,7 @@ final class BankConnectResponseSecurityTest extends TestCase
     {
         $xml=str_replace('getStatusResponse','getStatusResponseX',$this->response());
         $this->expectException(BankConnectException::class);
-        (new BankConnectResponseSecurity($this->cert))->validateAndVerify($xml,'getStatusResponse');
+        $this->security()->verify($xml,'getStatusResponse');
     }
 
     public function testDoctypeFailsClosed(): void
@@ -111,7 +118,9 @@ final class BankConnectResponseSecurityTest extends TestCase
     {
         [, $otherCert] = $this->certificate();
         $this->expectException(BankConnectException::class);
-        (new BankConnectResponseSecurity($otherCert))->validateAndVerify($this->response(),'getStatusResponse');
+        $conf = new Conf();
+        $conf->global['BANKCONNECT_BANK_CERTIFICATE'] = $otherCert;
+        (new BankConnectResponseSecurity($conf))->verify($this->response(),'getStatusResponse');
     }
 
     public function testDuplicateReferenceFailsClosed(): void
