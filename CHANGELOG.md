@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Security
+- Align TransferPayment transport signatures with developer package v3.7:
+  `wsu:Id` references, exclusive C14N, `wsse:Security`, customer
+  `BinarySecurityToken` and `SecurityTokenReference`.
+- Apply the documented Bankdata/NBS versus BEC signing/encryption order.
+- Reject unknown datacenter configuration before sending a payment.
+- Remove the obsolete proprietary payload-package description; active XML
+  Encryption uses the official AES-256-CBC IV+ciphertext representation.
+
 ## 0.3.0-dev (feature/pain001-soap-client)
 
 ### Added

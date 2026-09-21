@@ -128,6 +128,43 @@ class BankConnectXmlSecurityTest extends TestCase
         $this->assertStringNotContainsString('<bc:transferPayment', $encrypted);
     }
 
+    public function testTransportSignatureMatchesV37WsSecurityStructure(): void
+    {
+        $soap='<?xml version="1.0"?>'
+            .'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:bc="http://bankconnect.dk/schema/2014">'
+            .'<soapenv:Header><bc:serviceHeader><bc:x>1</bc:x></bc:serviceHeader><bc:technicalAddress/></soapenv:Header>'
+            .'<soapenv:Body><bc:getStatus/></soapenv:Body>'
+            .'</soapenv:Envelope>';
+        $signed=$this->security()->signRequest($soap);
+        $doc=new DOMDocument();
+        $this->assertTrue($doc->loadXML($signed,LIBXML_NONET));
+        $xp=new DOMXPath($doc);
+        $xp->registerNamespace('s','http://schemas.xmlsoap.org/soap/envelope/');
+        $xp->registerNamespace('ds',BankConnectXmlSecurity::DS_NS);
+        $xp->registerNamespace('wsse',BankConnectXmlSecurity::WSSE_NS);
+        $xp->registerNamespace('wsu',BankConnectXmlSecurity::WSU_NS);
+
+        $signature=$xp->query('/s:Envelope/s:Header/wsse:Security/ds:Signature')->item(0);
+        $this->assertInstanceOf(DOMElement::class,$signature);
+        $references=$xp->query('./ds:SignedInfo/ds:Reference',$signature);
+        $this->assertCount(2,$references);
+        foreach ($references as $reference) {
+            $this->assertSame(BankConnectXmlSecurity::EXC_C14N,$xp->query('./ds:Transforms/ds:Transform',$reference)->item(0)->getAttribute('Algorithm'));
+            $id=substr($reference->getAttribute('URI'),1);
+            $target=$xp->query('//*[@wsu:Id="'.$id.'"]')->item(0);
+            $this->assertInstanceOf(DOMElement::class,$target);
+            $this->assertSame(base64_encode(hash('sha256',$target->C14N(true,false),true)),$xp->query('./ds:DigestValue',$reference)->item(0)->textContent);
+        }
+        $token=$xp->query('/s:Envelope/s:Header/wsse:Security/wsse:BinarySecurityToken')->item(0);
+        $this->assertInstanceOf(DOMElement::class,$token);
+        $tokenReference=$xp->query('./ds:KeyInfo/wsse:SecurityTokenReference/wsse:Reference',$signature)->item(0);
+        $this->assertSame('#'.$token->getAttributeNS(BankConnectXmlSecurity::WSU_NS,'Id'),$tokenReference->getAttribute('URI'));
+        $signedInfo=$xp->query('./ds:SignedInfo',$signature)->item(0)->C14N(true,false);
+        $signatureValue=base64_decode($xp->query('./ds:SignatureValue',$signature)->item(0)->textContent,true);
+        $this->assertSame(1,openssl_verify($signedInfo,$signatureValue,$this->customerCert,OPENSSL_ALGO_SHA256));
+        $this->assertSame(0,$xp->query('/s:Envelope/s:Header/ds:Signature')->length,'Signature must be inside wsse:Security');
+    }
+
     public function testFailsClosedWithoutRequiredCertificates(): void
     {
         $empty=new BankConnectXmlSecurity(new Conf());
