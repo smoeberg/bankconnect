@@ -17,6 +17,7 @@ require_once __DIR__.'/BankConnectException.php';
 require_once __DIR__.'/BankConnectLogger.php';
 require_once __DIR__.'/AgreementStore.php';
 require_once __DIR__.'/ServiceHeaderBuilder.php';
+require_once __DIR__.'/BankConnectSecretStore.php';
 
 if (!class_exists('Conf')) {
     class Conf
@@ -583,19 +584,8 @@ class BankConnectCertificateManager
 
     private function getEncryptionSecret(): string
     {
-        $g = $this->conf->global ?? [];
-        $secret = (string) ($g['BANKCONNECT_KEY_ENCRYPTION_SECRET'] ?? getenv('BANKCONNECT_KEY_ENCRYPTION_SECRET') ?: '');
-        if ($secret === '') {
-            throw new BankConnectException(
-                'BANKCONNECT_KEY_ENCRYPTION_SECRET is not configured. '
-                .'Set a strong random secret (32+ bytes) in conf or environment.'
-            );
-        }
-        if (strlen($secret) < 32) {
-            throw new BankConnectException(
-                'BANKCONNECT_KEY_ENCRYPTION_SECRET must contain at least 32 bytes'
-            );
-        }
+        $secret = (new BankConnectSecretStore($this->conf))
+            ->requireMinLength('BANKCONNECT_KEY_ENCRYPTION_SECRET', 32);
         return hash('sha256', $secret, true);
     }
 
