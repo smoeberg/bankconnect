@@ -28,6 +28,14 @@ if (!class_exists('Conf')) {
 
 class BankConnectCertificateManager
 {
+    public const STATE_MISSING = 'MISSING';
+    public const STATE_IMPORTED = 'IMPORTED';
+    public const STATE_VALID = 'VALID';
+    public const STATE_EXPIRING = 'EXPIRING';
+    public const STATE_EXPIRED = 'EXPIRED';
+    public const STATE_REVOKED = 'REVOKED';
+    public const STATE_INVALID = 'INVALID';
+
     private Conf $conf;
     private BankConnectClient $client;
     private BankConnectLogger $logger;
@@ -98,7 +106,7 @@ class BankConnectCertificateManager
 
         if (!$dryRun) {
             $raw = $this->activateServiceAgreement($activationCode, $keypair['csr'], $header);
-            $customerCertPem = $this->extractCustomerCertificatePem($raw);
+            $customerCertPem = $this->extractCustomerCertificatePem($raw, $keypair['private_key']);
             if ($customerCertPem === null || $customerCertPem === '') {
                 throw new BankConnectException('No customer certificate found in activateServiceAgreement response');
             }
@@ -176,6 +184,7 @@ class BankConnectCertificateManager
         if (empty($pem)) {
             throw new BankConnectException('Bank certificate response did not contain a certificate');
         }
+        $this->validateCertificatePem($pem[0]);
         return $pem[0];
     }
 
@@ -217,7 +226,7 @@ class BankConnectCertificateManager
         $csrB64 = $this->csrToRequestBody($keypair['csr']);
 
         $raw = $this->renewCustomerCertificate($keypair['csr'], $serviceHeaderXml);
-        $customerCertPem = $this->extractCustomerCertificatePem($raw);
+        $customerCertPem = $this->extractCustomerCertificatePem($raw, $keypair['private_key']);
         if ($customerCertPem === null || $customerCertPem === '') {
             throw new BankConnectException('No customer certificate found in renewCustomerCertificate response');
         }
@@ -440,16 +449,100 @@ class BankConnectCertificateManager
         return $pems;
     }
 
-    public function extractCustomerCertificatePem(string $raw): ?string
+    public function extractCustomerCertificatePem(string $raw, ?string $privateKeyPem = null): ?string
     {
         $list = $this->extractCertificatesFromContent($raw);
-        // Guide: response contains several certs; customer cert is among them.
-        // Prefer the last leaf-looking cert; for now return last non-empty.
         if (empty($list)) {
             return null;
         }
-        return $list[count($list) - 1];
+        if ($privateKeyPem !== null) {
+            foreach ($list as $certificatePem) {
+                if ($this->validateCertificateAndPrivateKey($certificatePem, $privateKeyPem)) {
+                    return $certificatePem;
+                }
+            }
+            throw new BankConnectException('No returned customer certificate matches the generated private key');
+        }
+        if (count($list) !== 1) {
+            throw new BankConnectException('Multiple certificates returned; private-key binding is required to identify the customer certificate');
+        }
+        $this->validateCertificatePem($list[0]);
+        return $list[0];
     }
+
+    public function validateCertificatePem(string $certificatePem): array
+    {
+        $certificate = openssl_x509_read($certificatePem);
+        if ($certificate === false) {
+            throw new BankConnectException('Invalid X.509 certificate');
+        }
+        $parsed = openssl_x509_parse($certificate);
+        if ($parsed === false) {
+            throw new BankConnectException('Unable to parse X.509 certificate');
+        }
+        $publicKey = openssl_pkey_get_public($certificate);
+        if ($publicKey === false) {
+            throw new BankConnectException('Certificate does not contain a usable public key');
+        }
+        $details = openssl_pkey_get_details($publicKey);
+        if (!is_array($details) || ($details['type'] ?? null) !== OPENSSL_KEYTYPE_RSA || (int) ($details['bits'] ?? 0) < 2048) {
+            throw new BankConnectException('BankConnect requires an RSA certificate with at least 2048 bits');
+        }
+        $validFrom = isset($parsed['validFrom_time_t']) ? (int) $parsed['validFrom_time_t'] : null;
+        $validTo = isset($parsed['validTo_time_t']) ? (int) $parsed['validTo_time_t'] : null;
+        if ($validFrom === null || $validTo === null || $validFrom > $validTo) {
+            throw new BankConnectException('Certificate validity interval is invalid');
+        }
+        return [
+            'fingerprint_sha256' => openssl_x509_fingerprint($certificate, 'sha256'),
+            'valid_from' => date('Y-m-d H:i:s', $validFrom),
+            'valid_to' => date('Y-m-d H:i:s', $validTo),
+        ];
+    }
+
+    public function certificateState(array $certificate, ?int $now = null, int $warningDays = 30): string
+    {
+        if (!empty($certificate['revoked_at']) || (($certificate['status'] ?? '') === self::STATE_REVOKED)) {
+            return self::STATE_REVOKED;
+        }
+        $pem = (string) ($certificate['certificate_pem'] ?? '');
+        if ($pem === '') {
+            return self::STATE_MISSING;
+        }
+        try {
+            $meta = $this->validateCertificatePem($pem);
+        } catch (BankConnectException $e) {
+            return self::STATE_INVALID;
+        }
+        $now = $now ?? time();
+        $from = strtotime($meta['valid_from']);
+        $to = strtotime($meta['valid_to']);
+        if ($from === false || $to === false) {
+            return self::STATE_INVALID;
+        }
+        if ($now < $from) {
+            return self::STATE_IMPORTED;
+        }
+        if ($now > $to) {
+            return self::STATE_EXPIRED;
+        }
+        if ($warningDays > 0 && $now >= ($to - ($warningDays * 86400))) {
+            return self::STATE_EXPIRING;
+        }
+        return self::STATE_VALID;
+    }
+
+    public function certificateFingerprint(string $certificatePem): string
+    {
+        $meta = $this->validateCertificatePem($certificatePem);
+        return (string) $meta['fingerprint_sha256'];
+    }
+
+    public function isCertificateExpiringSoon(string $certificatePem, int $warningDays = 30, ?int $now = null): bool
+    {
+        return $this->certificateState(['certificate_pem' => $certificatePem], $now, $warningDays) === self::STATE_EXPIRING;
+    }
+
 
     /** @return array{from:?string, to:?string} */
     public function validateCertificateAndPrivateKey(string $certificatePem, string $privateKeyPem): bool
