@@ -407,8 +407,7 @@ class CertificateManagerTest extends TestCase
 
         $this->assertSame($pem, $mgr->extractCustomerCertificatePem($pem2.$pem, $private));
     }
-
-
+}
 
 class RenewalMismatchClient extends BankConnectClient
 {
