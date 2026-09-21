@@ -1,11 +1,12 @@
 <?php
 /**
- * Admin: BankConnect agreement + certificate onboarding.
+ * Admin: BankConnect agreement + certificate onboarding + bank account mapping.
  */
 
 require '../../../main.inc.php';
 require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/BankConnectCertificateManager.php';
 require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/AgreementStore.php';
+require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/BankConnectAccountMappingStore.php';
 require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/BankConnectException.php';
 
 if (!$user->admin) {
@@ -15,11 +16,15 @@ if (!$user->admin) {
 $langs->load('bankconnect@bankconnect');
 $action = GETPOST('action', 'aZ09');
 $store = new AgreementStore($db);
+$mappingStore = new BankConnectAccountMappingStore($db);
 
-if ($action === 'onboard' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+if (in_array($action, ['onboard', 'map_account', 'unmap_account'], true) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!checkToken()) {
         accessforbidden();
     }
+}
+
+if ($action === 'onboard') {
     $activation = GETPOST('activation_code', 'alpha');
     $functionId = GETPOST('function_identification', 'alpha');
     $mainReg = GETPOST('main_registration_number', 'alpha') ?: '8079';
@@ -54,6 +59,35 @@ if ($action === 'onboard' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (Throwable $e) {
         setEventMessages($e->getMessage(), null, 'errors');
     }
+} elseif ($action === 'map_account') {
+    try {
+        $mappingStore->map(
+            (int) $conf->entity,
+            GETPOSTINT('agreement_id'),
+            GETPOSTINT('bank_account_id'),
+            (int) $user->id
+        );
+        setEventMessages('BankConnect-aftalen er nu mappet til Dolibarr-bankkontoen.', null);
+    } catch (Throwable $e) {
+        setEventMessages($e->getMessage(), null, 'errors');
+    }
+} elseif ($action === 'unmap_account') {
+    try {
+        $mappingStore->unmap((int) $conf->entity, GETPOSTINT('agreement_id'));
+        setEventMessages('BankConnect-mapping fjernet.', null);
+    } catch (Throwable $e) {
+        setEventMessages($e->getMessage(), null, 'errors');
+    }
+}
+
+$agreements = $store->listAgreements((int) $conf->entity);
+$bankAccounts = [];
+$resAccounts = $db->query(
+    'SELECT rowid, label, ref, account_number FROM '.MAIN_DB_PREFIX.'bank_account'
+    .' WHERE entity IN ('.getEntity('bank_account').') AND clos = 0 ORDER BY label'
+);
+while ($resAccounts && ($account = $db->fetch_object($resAccounts))) {
+    $bankAccounts[] = $account;
 }
 
 llxHeader('', 'BankConnect certificates');
@@ -72,10 +106,57 @@ print '</table>';
 print '<br><input type="submit" class="button button-save" value="Onboard">';
 print '</form>';
 
+print '<br><h3>Bank account mapping</h3>';
+print '<p>Hver BankConnect-aftale kan mappes til én åben Dolibarr-bankkonto i den aktuelle entity. Bankkontoen genbruges fra Dolibarr; BankConnect opretter ikke en parallel konto.</p>';
+print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
+print '<input type="hidden" name="token" value="'.newToken().'">';
+print '<input type="hidden" name="action" value="map_account">';
+print '<select name="agreement_id" required><option value="">Vælg aftale</option>';
+foreach ($agreements as $a) {
+    print '<option value="'.(int)$a['rowid'].'">'.dol_escape_htmltag($a['label'].' (#'.$a['rowid'].')').'</option>';
+}
+print '</select> ';
+print '<select name="bank_account_id" required><option value="">Vælg bankkonto</option>';
+foreach ($bankAccounts as $account) {
+    $label = ($account->label ?: $account->ref).' (#'.$account->rowid.')';
+    if (!empty($account->account_number)) {
+        $label .= ' — '.$account->account_number;
+    }
+    print '<option value="'.(int)$account->rowid.'">'.dol_escape_htmltag($label).'</option>';
+}
+print '</select> ';
+print '<input type="submit" class="button button-save" value="Gem mapping">';
+print '</form>';
+
+print '<br><table class="noborder centpercent">';
+print '<tr class="liste_titre"><th>Aftale</th><th>BankConnect ID</th><th>Dolibarr bankkonto</th><th></th></tr>';
+foreach ($mappingStore->listMappings((int)$conf->entity) as $mapping) {
+    $agreement = $store->getAgreement((int)$mapping['fk_agreement']);
+    $bank = null;
+    $resBank = $db->query('SELECT rowid, label, ref, account_number FROM '.MAIN_DB_PREFIX.'bank_account WHERE rowid = '.(int)$mapping['fk_bank_account'].' AND entity IN ('.getEntity('bank_account').')');
+    if ($resBank) {
+        $bank = $db->fetch_object($resBank);
+    }
+    print '<tr class="oddeven">';
+    print '<td>'.dol_escape_htmltag(($agreement['label'] ?? 'Agreement').' (#'.$mapping['fk_agreement'].')').'</td>';
+    print '<td>'.dol_escape_htmltag($agreement['bank_connect_id'] ?? '').'</td>';
+    print '<td>'.($bank ? dol_escape_htmltag(($bank->label ?: $bank->ref).' (#'.$bank->rowid.')') : '—').'</td>';
+    print '<td>';
+    print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
+    print '<input type="hidden" name="token" value="'.newToken().'">';
+    print '<input type="hidden" name="action" value="unmap_account">';
+    print '<input type="hidden" name="agreement_id" value="'.(int)$mapping['fk_agreement'].'">';
+    print '<input type="submit" class="button" value="Fjern">';
+    print '</form>';
+    print '</td>';
+    print '</tr>';
+}
+print '</table>';
+
 print '<br><h3>Eksisterende aftaler</h3>';
 print '<table class="noborder centpercent">';
 print '<tr class="liste_titre"><th>ID</th><th>Label</th><th>BC ID</th><th>Status</th><th>Aktiv cert</th></tr>';
-foreach ($store->listAgreements((int) $conf->entity) as $a) {
+foreach ($agreements as $a) {
     $cert = $store->getActiveCertificate((int) $a['rowid']);
     print '<tr class="oddeven">';
     print '<td>'.(int) $a['rowid'].'</td>';
