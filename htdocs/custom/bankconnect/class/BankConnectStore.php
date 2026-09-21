@@ -1,176 +1,146 @@
 <?php
-/* Persistence layer for BankConnect: transactions, matches, audit events. */
-
+/**
+ * BankConnectStore – persistence boundary for imported bank transactions.
+ *
+ * The database UNIQUE(hash) constraint is the concurrency/idempotency boundary.
+ */
 class BankConnectStore
 {
-	/** @var DoliDB */
-	private $db;
+    private $db;
 
-	public function __construct($db)
-	{
-		$this->db = $db;
-	}
+    public function __construct($db) { $this->db = $db; }
 
-	/** Insert or update a transaction keyed by its content hash. Returns rowid. */
-	public function upsertTransaction(array $t, int $fkBankAccount, string $sourceFile): int
-	{
-		return $this->upsertTransactionDetailed($t, $fkBankAccount, $sourceFile)['rowid'];
-	}
+    public function upsertTransaction(array $t, int $fkBankAccount, string $sourceFile): int
+    {
+        return $this->upsertTransactionDetailed($t, $fkBankAccount, $sourceFile)['rowid'];
+    }
 
-	/**
-	 * Prefer hash computed by CamtParser (includes text + acctSvcrRef).
-	 * Fallback hash only when parser did not supply one.
-	 *
-	 * The UNIQUE(hash) database constraint is the concurrency boundary.
-	 * The initial SELECT is only a fast duplicate path; correctness must not
-	 * depend on it because another importer may insert the same hash after it.
-	 *
-	 * @return array{rowid:int, duplicate:bool}
-	 */
-	public function upsertTransactionDetailed(array $t, int $fkBankAccount, string $sourceFile): array
-	{
-		if (!empty($t['hash'])) {
-			$hash = (string) $t['hash'];
-		} else {
-			$hash = hash('sha256', implode('|', [
-				$t['date'] ?? '',
-				$t['amount'] ?? '',
-				$t['reference'] ?? '',
-				$t['counterparty'] ?? '',
-				$t['text'] ?? '',
-				$t['acctSvcrRef'] ?? '',
-			]));
-		}
+    /** @return array{rowid:int,duplicate:bool} */
+    public function upsertTransactionDetailed(array $t, int $fkBankAccount, string $sourceFile): array
+    {
+        if ($fkBankAccount <= 0) {
+            throw new RuntimeException('BankConnect: a valid bank account is required for CAMT import');
+        }
 
-		$sql = "SELECT rowid FROM llx_bankconnect_transaction WHERE hash = '".$this->db->escape($hash)."'";
-		$res = $this->db->query($sql);
-		if ($res && $obj = $this->db->fetch_object($res)) {
-			return ['rowid' => (int)$obj->rowid, 'duplicate' => true];
-		}
+        $hash = !empty($t['hash'])
+            ? (string)$t['hash']
+            : hash('sha256', implode('|', [
+                $fkBankAccount,
+                $t['statement_id'] ?? '',
+                $t['transaction_id'] ?? '',
+                $t['date'] ?? '',
+                $t['amount'] ?? '',
+                $t['reference'] ?? '',
+                $t['counterparty'] ?? '',
+                $t['text'] ?? '',
+                $t['acctSvcrRef'] ?? '',
+            ]));
 
-		$manualReview = !empty($t['requiresManualReview']) ? 1 : 0;
-		$isReversal = !empty($t['isReversal']) ? 1 : 0;
-		$acctSvcrRef = (string) ($t['acctSvcrRef'] ?? '');
+        $manualReview = !empty($t['requiresManualReview']) ? 1 : 0;
+        $isReversal = !empty($t['isReversal']) ? 1 : 0;
+        $acctSvcrRef = (string)($t['acctSvcrRef'] ?? '');
 
-		// Do not use SELECT-then-INSERT as the correctness mechanism. The
-		// UNIQUE(hash) constraint arbitrates concurrent importers atomically.
-		$sql = "INSERT INTO llx_bankconnect_transaction (fk_bank_account, hash, tx_date, amount, currency, reference, counterparty, acct_svcr_ref, is_reversal, requires_manual_review, cam_file, state, created_at)
-				VALUES (".(int)$fkBankAccount.", '".$this->db->escape($hash)."', '".$this->db->escape($t['date'])."', ".(float)$t['amount'].", '".$this->db->escape($t['currency'] ?? 'DKK')."', '".$this->db->escape($t['reference'] ?? '')."', '".$this->db->escape($t['counterparty'] ?? '')."', '".$this->db->escape($acctSvcrRef)."', ".$isReversal.", ".$manualReview.", '".$this->db->escape($sourceFile)."', 'unmatched', NOW())
-				ON DUPLICATE KEY UPDATE rowid = rowid";
-		if (!$this->db->query($sql)) {
-			throw new RuntimeException('BankConnect: insert transaction failed: '.$this->db->lasterror());
-		}
+        $sql = "INSERT INTO llx_bankconnect_transaction
+            (fk_bank_account,hash,statement_id,transaction_id,tx_date,amount,currency,reference,counterparty,
+             acct_svcr_ref,is_reversal,requires_manual_review,cam_file,state,created_at)
+            VALUES (".(int)$fkBankAccount.",
+            '".$this->db->escape($hash)."',
+            '".$this->db->escape((string)($t['statement_id'] ?? ''))."',
+            '".$this->db->escape((string)($t['transaction_id'] ?? ''))."',
+            '".$this->db->escape((string)$t['date'])."',
+            ".(float)$t['amount'].",
+            '".$this->db->escape($t['currency'] ?? 'DKK')."',
+            '".$this->db->escape($t['reference'] ?? '')."',
+            '".$this->db->escape($t['counterparty'] ?? '')."',
+            '".$this->db->escape($acctSvcrRef)."',
+            ".$isReversal.",
+            ".$manualReview.",
+            '".$this->db->escape($sourceFile)."',
+            'unmatched',NOW())
+            ON DUPLICATE KEY UPDATE rowid=rowid";
 
-		// MySQL reports 1 row affected for an insert and 0 for our no-op
-		// duplicate-key update. Capture that before the reload.
-		$affectedRes = $this->db->query('SELECT ROW_COUNT() AS affected');
-		$affected = $affectedRes ? $this->db->fetch_object($affectedRes) : false;
-		$isDuplicate = $affected && (int)$affected->affected === 0;
+        if (!$this->db->query($sql)) {
+            throw new RuntimeException('BankConnect: transaction upsert failed: '.$this->db->lasterror());
+        }
 
-		// Re-read after the atomic write. This also handles the race where
-		// another importer won between our initial SELECT and INSERT.
-		$res = $this->db->query($sql = "SELECT rowid FROM llx_bankconnect_transaction WHERE hash = '".$this->db->escape($hash)."'");
-		if (!$res || !($obj = $this->db->fetch_object($res))) {
-			throw new RuntimeException('BankConnect: transaction upsert succeeded but row cannot be reloaded');
-		}
-		return ['rowid' => (int)$obj->rowid, 'duplicate' => $isDuplicate];
-	}
+        $affectedRes = $this->db->query('SELECT ROW_COUNT() AS affected');
+        $affected = $affectedRes ? $this->db->fetch_object($affectedRes) : false;
+        $duplicate = $affected && (int)$affected->affected === 0;
 
-	/** Persist a proposed match (rule or AI). */
-	public function saveMatch(int $txRowid, string $matchType, ?string $ruleName, ?int $fkBankentry, float $score, string $reason): void
-	{
-		$sql = "INSERT INTO llx_bankconnect_match (fk_transaction, match_type, rule_name, fk_bankentry, score, reason)
-				VALUES (".(int)$txRowid.", '".$this->db->escape($matchType)."', ".$this->nullable($ruleName).", ".$this->nullableInt($fkBankentry).", ".(float)$score.", '".$this->db->escape($reason)."')";
-		if (!$this->db->query($sql)) {
-			throw new RuntimeException('BankConnect: save match failed: '.$this->db->lasterror());
-		}
-		$this->setTransactionState($txRowid, 'proposed');
-	}
+        $res = $this->db->query("SELECT rowid FROM llx_bankconnect_transaction WHERE hash='".$this->db->escape($hash)."'");
+        if (!$res || !($obj=$this->db->fetch_object($res))) {
+            throw new RuntimeException('BankConnect: transaction upsert succeeded but row cannot be reloaded');
+        }
+        return ['rowid'=>(int)$obj->rowid,'duplicate'=>$duplicate];
+    }
 
-	/** Approve a match: user + audit event. Does NOT post — posting is separate step. */
-	public function approveMatch(int $matchRowid, int $userId): void
-	{
-		$sql = "UPDATE llx_bankconnect_match SET approved_by = ".(int)$userId.", approved_at = NOW() WHERE rowid = ".(int)$matchRowid;
-		if (!$this->db->query($sql)) {
-			throw new RuntimeException('BankConnect: approve failed: '.$this->db->lasterror());
-		}
-		$txid = $this->txOfMatch($matchRowid);
-		$this->setTransactionState($txid, 'approved');
-		$this->audit($userId, 'match_approved', 'match rowid '.$matchRowid.' tx '.$txid);
-	}
+    public function saveMatch(int $txRowid,string $matchType,?string $ruleName,?int $fkBankentry,float $score,string $reason): void
+    {
+        $sql="INSERT INTO llx_bankconnect_match (fk_transaction,match_type,rule_name,fk_bankentry,score,reason)
+              VALUES (".$txRowid.",'".$this->db->escape($matchType)."',".$this->nullable($ruleName).",
+              ".$this->nullableInt($fkBankentry).",".(float)$score.",'".$this->db->escape($reason)."')";
+        if(!$this->db->query($sql)) throw new RuntimeException('BankConnect: save match failed: '.$this->db->lasterror());
+        $this->setTransactionState($txRowid,'proposed');
+    }
 
-	public function rejectMatch(int $matchRowid, int $userId): void
-	{
-		$txid = $this->txOfMatch($matchRowid);
-		$this->setTransactionState($txid, 'rejected');
-		$this->audit($userId, 'match_rejected', 'match rowid '.$matchRowid.' tx '.$txid);
-	}
+    public function approveMatch(int $matchRowid,int $userId): void
+    {
+        $sql="UPDATE llx_bankconnect_match SET approved_by=".(int)$userId.",approved_at=NOW() WHERE rowid=".(int)$matchRowid;
+        if(!$this->db->query($sql)) throw new RuntimeException('BankConnect: approve failed: '.$this->db->lasterror());
+        $txid=$this->txOfMatch($matchRowid);
+        $this->setTransactionState($txid,'approved');
+        $this->audit($userId,'match_approved','match rowid '.$matchRowid.' tx '.$txid);
+    }
 
-	public function setTransactionState(int $txRowid, string $state): void
-	{
-		$sql = "UPDATE llx_bankconnect_transaction SET state = '".$this->db->escape($state)."' WHERE rowid = ".(int)$txRowid;
-		if (!$this->db->query($sql)) {
-			throw new RuntimeException('BankConnect: state update failed: '.$this->db->lasterror());
-		}
-	}
+    public function rejectMatch(int $matchRowid,int $userId): void
+    {
+        $txid=$this->txOfMatch($matchRowid);
+        $this->setTransactionState($txid,'rejected');
+        $this->audit($userId,'match_rejected','match rowid '.$matchRowid.' tx '.$txid);
+    }
 
-	public function transactionState(int $txRowid): string
-	{
-		$sql = "SELECT state FROM llx_bankconnect_transaction WHERE rowid = ".(int)$txRowid;
-		$res = $this->db->query($sql);
-		if ($res && $o = $this->db->fetch_object($res)) {
-			return (string)$o->state;
-		}
-		throw new RuntimeException('BankConnect: transaction not found: '.$txRowid);
-	}
+    public function setTransactionState(int $txRowid,string $state): void
+    {
+        $sql="UPDATE llx_bankconnect_transaction SET state='".$this->db->escape($state)."' WHERE rowid=".(int)$txRowid;
+        if(!$this->db->query($sql)) throw new RuntimeException('BankConnect: state update failed: '.$this->db->lasterror());
+    }
 
-	public function audit(int $userId, string $eventType, string $detail): void
-	{
-		$sql = "INSERT INTO llx_bankconnect_audit (datetime_event, fk_user, event_type, detail)
-				VALUES (NOW(), ".(int)$userId.", '".$this->db->escape($eventType)."', '".$this->db->escape($detail)."')";
-		if (!$this->db->query($sql)) {
-			throw new RuntimeException('BankConnect: audit insert failed: '.$this->db->lasterror());
-		}
-	}
+    public function transactionState(int $txRowid): string
+    {
+        $res=$this->db->query('SELECT state FROM llx_bankconnect_transaction WHERE rowid='.(int)$txRowid);
+        if($res && $o=$this->db->fetch_object($res)) return (string)$o->state;
+        throw new RuntimeException('BankConnect: transaction not found: '.$txRowid);
+    }
 
-	/** All unmatched transactions for an account, newest first. */
-	public function unmatchedTransactions(int $fkBankAccount): array
-	{
-		$sql = "SELECT rowid, tx_date, amount, currency, reference, counterparty, acct_svcr_ref, is_reversal, requires_manual_review, cam_file FROM llx_bankconnect_transaction
-				WHERE fk_bank_account = ".(int)$fkBankAccount." AND state = 'unmatched' ORDER BY tx_date DESC";
-		$res = $this->db->query($sql);
-		$out = [];
-		while ($res && $obj = $this->db->fetch_object($res)) {
-			$out[] = (array)$obj;
-		}
-		return $out;
-	}
+    public function audit(int $userId,string $eventType,string $detail): void
+    {
+        $sql="INSERT INTO llx_bankconnect_audit (datetime_event,fk_user,event_type,detail)
+              VALUES (NOW(),".(int)$userId.",'".$this->db->escape($eventType)."','".$this->db->escape($detail)."')";
+        if(!$this->db->query($sql)) throw new RuntimeException('BankConnect: audit insert failed: '.$this->db->lasterror());
+    }
 
-	/** Count of unmatched — for the "differences visible" requirement. */
-	public function unmatchedCount(int $fkBankAccount): int
-	{
-		$sql = "SELECT COUNT(*) AS c FROM llx_bankconnect_transaction WHERE fk_bank_account = ".(int)$fkBankAccount." AND state = 'unmatched'";
-		$res = $this->db->query($sql);
-		return $res ? (int)$this->db->fetch_object($res)->c : 0;
-	}
+    public function unmatchedTransactions(int $fkBankAccount): array
+    {
+        $sql="SELECT rowid,tx_date,amount,currency,reference,counterparty,acct_svcr_ref,is_reversal,requires_manual_review,cam_file
+              FROM llx_bankconnect_transaction WHERE fk_bank_account=".(int)$fkBankAccount." AND state='unmatched' ORDER BY tx_date DESC";
+        $res=$this->db->query($sql); $out=[];
+        while($res && $o=$this->db->fetch_object($res)) $out[]=(array)$o;
+        return $out;
+    }
 
-	private function txOfMatch(int $matchRowid): int
-	{
-		$sql = "SELECT fk_transaction FROM llx_bankconnect_match WHERE rowid = ".(int)$matchRowid;
-		$res = $this->db->query($sql);
-		if (!$res || !($obj = $this->db->fetch_object($res))) {
-			throw new RuntimeException('BankConnect: match not found: '.$matchRowid);
-		}
-		return (int)$obj->fk_transaction;
-	}
+    public function unmatchedCount(int $fkBankAccount): int
+    {
+        $res=$this->db->query('SELECT COUNT(*) AS c FROM llx_bankconnect_transaction WHERE fk_bank_account='.(int)$fkBankAccount." AND state='unmatched'");
+        return $res ? (int)$this->db->fetch_object($res)->c : 0;
+    }
 
-	private function nullable(?string $v): string
-	{
-		return $v === null ? 'NULL' : "'".$this->db->escape($v)."'";
-	}
+    private function txOfMatch(int $matchRowid): int
+    {
+        $res=$this->db->query('SELECT fk_transaction FROM llx_bankconnect_match WHERE rowid='.(int)$matchRowid);
+        if(!$res || !($o=$this->db->fetch_object($res))) throw new RuntimeException('BankConnect: match not found: '.$matchRowid);
+        return (int)$o->fk_transaction;
+    }
 
-	private function nullableInt(?int $v): string
-	{
-		return $v === null ? 'NULL' : (string)$v;
-	}
+    private function nullable(?string $v): string { return $v===null?'NULL':"'".$this->db->escape($v)."'"; }
+    private function nullableInt(?int $v): string { return $v===null?'NULL':(string)$v; }
 }
