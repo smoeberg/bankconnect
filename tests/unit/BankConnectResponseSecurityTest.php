@@ -96,8 +96,14 @@ final class BankConnectResponseSecurityTest extends TestCase
 
     public function testValidResponseIsAccepted(): void
     {
-        $doc=$this->security()->verify($this->response(),'getStatusResponse');
-        $this->assertSame('getStatusResponse',$doc->getElementsByTagNameNS('http://bankconnect.dk/schema/2014','getStatusResponse')->item(0)->localName);
+        $verified = $this->security()->verify($this->response(),'getStatusResponse');
+        $this->assertSame($this->response(), $verified);
+
+        $doc = new DOMDocument();
+        $this->assertTrue($doc->loadXML($verified, LIBXML_NONET | LIBXML_NOBLANKS | LIBXML_NOCDATA));
+        $nodes = $doc->getElementsByTagNameNS('http://bankconnect.dk/schema/2014','getStatusResponse');
+        $this->assertSame(1, $nodes->length);
+        $this->assertSame('getStatusResponse', $nodes->item(0)->localName);
     }
 
     public function testTamperedBodyFailsClosed(): void
