@@ -17,6 +17,7 @@
 require_once __DIR__.'/BankConnectException.php';
 require_once __DIR__.'/BankConnectLogger.php';
 require_once __DIR__.'/BankConnectXmlSecurity.php';
+require_once __DIR__.'/BankConnectResponseSecurity.php';
 
 if (!class_exists('Conf')) {
     class Conf
@@ -71,6 +72,12 @@ class BankConnectClient
 
         try {
             $response = $this->httpPost($envelope, $operation);
+            $responseSecurity = new BankConnectResponseSecurity($this->conf);
+            if ($operation === self::OP_GET_BANK_CERTIFICATE) {
+                $responseSecurity->validateStructure($response);
+            } else {
+                $responseSecurity->verify($response, $this->expectedResponseOperation($operation));
+            }
             $duration = (int) ((microtime(true) - $start) * 1000);
             $this->logger->info('soap_call', [
                 'operation' => $operation,
@@ -212,6 +219,25 @@ class BankConnectClient
      *
      * @return list<string>
      */
+    private function expectedResponseOperation(string $operation): string
+    {
+        $responses = [
+            self::OP_GET_BANK_CERTIFICATE => 'getBankCertificateResponse',
+            self::OP_ACTIVATE_SERVICE_AGREEMENT => 'activateServiceAgreementResponse',
+            self::OP_RENEW_CUSTOMER_CERTIFICATE => 'renewCustomerCertificateResponse',
+            self::OP_TRANSFER_PAYMENTS => 'transferPaymentResponse',
+            self::OP_GET_STATUS => 'getStatusResponse',
+            self::OP_GET_CUSTOMER_STATEMENT => 'getCustomerStatementResponse',
+            self::OP_GET_CUSTOMER_ACCOUNT_REPORT => 'getCustomerAccountReportResponse',
+            self::OP_GET_DEBIT_CREDIT_NOTIFICATION => 'getDebitCreditNotificationResponse',
+            self::OP_GET_ALTERNATE => 'getAlternateResponse',
+        ];
+        if (!isset($responses[$operation])) {
+            throw new BankConnectException('Unsupported BankConnect response operation: '.$operation);
+        }
+        return $responses[$operation];
+    }
+
     protected function buildHttpHeaders(string $operation = self::OP_TRANSFER_PAYMENTS): array
     {
         $actions = [
