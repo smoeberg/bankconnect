@@ -18,6 +18,7 @@ require_once __DIR__.'/BankConnectException.php';
 require_once __DIR__.'/BankConnectLogger.php';
 require_once __DIR__.'/BankConnectXmlSecurity.php';
 require_once __DIR__.'/BankConnectResponseSecurity.php';
+require_once __DIR__.'/BankConnectEndpointPolicy.php';
 
 if (!class_exists('Conf')) {
     class Conf
@@ -55,6 +56,8 @@ class BankConnectClient
         $g = $conf->global ?? [];
         $this->endpoint = (string) ($g['BANKCONNECT_ENDPOINT']
             ?? 'https://stest.bankconnect.dk/2019/04/04/services/CorporateService');
+        $environment = (string) ($g['BANKCONNECT_ENVIRONMENT'] ?? 'test');
+        $this->endpoint = BankConnectEndpointPolicy::validateBankConnect($this->endpoint, $environment);
         $this->datacenter = strtoupper(trim((string) ($g['BANKCONNECT_DATACENTER'] ?? 'BANKDATA')));
 
         if (isset($g['BANKCONNECT_TIMEOUT_MS'])) {
