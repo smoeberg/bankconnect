@@ -32,6 +32,7 @@ class BankConnectXmlSecurity
     public const XENC_NS = 'http://www.w3.org/2001/04/xmlenc#';
     public const AES256_CBC = 'http://www.w3.org/2001/04/xmlenc#aes256-cbc';
     public const RSA_OAEP_MGF1P = 'http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p';
+    public const RSA_1_5 = 'http://www.w3.org/2001/04/xmlenc#rsa-1_5';
     public const WSSE_NS = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd';
     public const WSU_NS = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd';
 
@@ -167,7 +168,7 @@ class BankConnectXmlSecurity
      * XML Encryption of the SOAP Body. Bank Connect uses standard XML
      * Encryption: AES-256-CBC for data and RSA-OAEP-mgf1p for the AES key.
      */
-    public function encryptSoapBody(string $soapXml): string
+    public function encryptSoapBody(string $soapXml, string $keyTransportAlgorithm = self::RSA_OAEP_MGF1P): string
     {
         $this->requireBankCertificate();
         $doc=$this->loadDocument($soapXml);
@@ -186,8 +187,9 @@ class BankConnectXmlSecurity
         $bankKey=openssl_pkey_get_public($this->bankCertificatePem);
         if ($bankKey===false) throw new BankConnectException('Invalid bank certificate');
         $wrapped='';
-        if (!openssl_public_encrypt($aesKey,$wrapped,$bankKey,OPENSSL_PKCS1_OAEP_PADDING)) {
-            throw new BankConnectException('RSA-OAEP key encryption failed');
+        $padding = $keyTransportAlgorithm === self::RSA_1_5 ? OPENSSL_PKCS1_PADDING : ($keyTransportAlgorithm === self::RSA_OAEP_MGF1P ? OPENSSL_PKCS1_OAEP_PADDING : null);
+        if ($padding === null || !openssl_public_encrypt($aesKey,$wrapped,$bankKey,$padding)) {
+            throw new BankConnectException('RSA key transport encryption failed');
         }
 
         $ekId='EK-'.$this->randomId(); $edId='ED-'.$this->randomId();
@@ -209,7 +211,7 @@ class BankConnectXmlSecurity
         $wsse11Real='http://docs.oasis-open.org/wss/oasis-wss-wssecurity-secext-1.1.xsd';
 
         $ek=$doc->createElementNS($xenc,'xenc:EncryptedKey'); $ek->setAttribute('Id',$ekId);
-        $ek->appendChild($this->xmlElement($doc,$xenc,'xenc:EncryptionMethod',null,['Algorithm'=>'http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p']));
+        $ek->appendChild($this->xmlElement($doc,$xenc,'xenc:EncryptionMethod',null,['Algorithm'=>$keyTransportAlgorithm]));
         $ki=$doc->createElementNS($ds,'ds:KeyInfo');
         $str=$doc->createElementNS($wsse,'wsse:SecurityTokenReference');
         $kid=$doc->createElementNS($wsse,'wsse:KeyIdentifier',$this->certificateDerBase64($this->bankCertificatePem));
@@ -242,16 +244,20 @@ class BankConnectXmlSecurity
 
     private function createBusinessSignature(DOMDocument $doc,DOMElement $payment,string $paymentId): DOMElement
     {
-        $canonical=$payment->C14N(true,false);
+        $canonical=$payment->C14N(true,false,null,['soapenv']);
         if ($canonical===false) throw new BankConnectException('Failed to canonicalize paymentMessage');
         $sig=$doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:Signature');
         $sig->setAttribute('Id','DS-'.$this->randomId());
         $si=$doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:SignedInfo');
-        $si->appendChild($this->xmlElement($doc,'http://www.w3.org/2000/09/xmldsig#','ds:CanonicalizationMethod',null,['Algorithm'=>'http://www.w3.org/2001/10/xml-exc-c14n#']));
+        $cm=$this->xmlElement($doc,self::DS_NS,'ds:CanonicalizationMethod',null,['Algorithm'=>self::EXC_C14N]);
+        $cm->appendChild($this->inclusiveNamespaces($doc,'soapenv'));
+        $si->appendChild($cm);
         $si->appendChild($this->xmlElement($doc,'http://www.w3.org/2000/09/xmldsig#','ds:SignatureMethod',null,['Algorithm'=>'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256']));
         $ref=$doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:Reference'); $ref->setAttribute('URI','#'.$paymentId);
         $ts=$doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:Transforms');
-        $ts->appendChild($this->xmlElement($doc,'http://www.w3.org/2000/09/xmldsig#','ds:Transform',null,['Algorithm'=>'http://www.w3.org/2001/10/xml-exc-c14n#']));
+        $transform=$this->xmlElement($doc,self::DS_NS,'ds:Transform',null,['Algorithm'=>self::EXC_C14N]);
+        $transform->appendChild($this->inclusiveNamespaces($doc,'soapenv'));
+        $ts->appendChild($transform);
         $ref->appendChild($ts);
         $ref->appendChild($this->xmlElement($doc,'http://www.w3.org/2000/09/xmldsig#','ds:DigestMethod',null,['Algorithm'=>'http://www.w3.org/2001/04/xmlenc#sha256']));
         $ref->appendChild($doc->createElementNS('http://www.w3.org/2000/09/xmldsig#','ds:DigestValue',base64_encode(hash('sha256',$canonical,true))));
@@ -267,7 +273,7 @@ class BankConnectXmlSecurity
     {
         $signedInfo=$signature->getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#','SignedInfo')->item(0);
         if (!$signedInfo instanceof DOMElement) throw new BankConnectException('SignedInfo missing');
-        $canonical=$signedInfo->C14N(true,false);
+        $canonical=$signedInfo->C14N(true,false,null,['soapenv']);
         if ($canonical===false) throw new BankConnectException('Failed to canonicalize SignedInfo');
         $value='';
         if (!openssl_sign($canonical,$value,$this->customerPrivateKeyPem,OPENSSL_ALGO_SHA256)) {
@@ -292,6 +298,13 @@ class BankConnectXmlSecurity
             if (!$doc->loadXML($xml,LIBXML_NONET|LIBXML_NOBLANKS)) throw new BankConnectException('Cannot parse XML');
             return $doc;
         } finally { libxml_use_internal_errors($prev); libxml_clear_errors(); }
+    }
+
+    private function inclusiveNamespaces(DOMDocument $doc, string $prefixList): DOMElement
+    {
+        $el=$doc->createElementNS(self::EXC_C14N,'ec:InclusiveNamespaces');
+        $el->setAttribute('PrefixList',$prefixList);
+        return $el;
     }
 
     private function xmlElement(DOMDocument $doc,string $ns,string $name,?string $value,array $attrs=[]): DOMElement
@@ -353,7 +366,9 @@ class BankConnectXmlSecurity
         $signature=$doc->createElementNS(self::DS_NS,'ds:Signature');
         $signature->setAttribute('Id','DS-'.$this->randomId());
         $signedInfo=$doc->createElementNS(self::DS_NS,'ds:SignedInfo');
-        $signedInfo->appendChild($this->xmlElement($doc,self::DS_NS,'ds:CanonicalizationMethod',null,['Algorithm'=>self::EXC_C14N]));
+        $cm=$this->xmlElement($doc,self::DS_NS,'ds:CanonicalizationMethod',null,['Algorithm'=>self::EXC_C14N]);
+        $cm->appendChild($this->inclusiveNamespaces($doc,'soapenv'));
+        $signedInfo->appendChild($cm);
         $signedInfo->appendChild($this->xmlElement($doc,self::DS_NS,'ds:SignatureMethod',null,['Algorithm'=>self::RSA_SHA256]));
 
         foreach ([$body,$serviceHeader] as $node) {
@@ -362,12 +377,14 @@ class BankConnectXmlSecurity
                 $id='Id-'.$this->randomId();
                 $node->setAttributeNS(self::WSU_NS,'wsu:Id',$id);
             }
-            $canonical=$node->C14N(true,false);
+            $canonical=$node->C14N(true,false,null,['soapenv']);
             if ($canonical===false) throw new BankConnectException('Failed to canonicalize Bank Connect signed reference');
             $reference=$doc->createElementNS(self::DS_NS,'ds:Reference');
             $reference->setAttribute('URI','#'.$id);
             $transforms=$doc->createElementNS(self::DS_NS,'ds:Transforms');
-            $transforms->appendChild($this->xmlElement($doc,self::DS_NS,'ds:Transform',null,['Algorithm'=>self::EXC_C14N]));
+            $transform=$this->xmlElement($doc,self::DS_NS,'ds:Transform',null,['Algorithm'=>self::EXC_C14N]);
+            $transform->appendChild($this->inclusiveNamespaces($doc,'soapenv'));
+            $transforms->appendChild($transform);
             $reference->appendChild($transforms);
             $reference->appendChild($this->xmlElement($doc,self::DS_NS,'ds:DigestMethod',null,['Algorithm'=>self::SHA256]));
             $reference->appendChild($doc->createElementNS(self::DS_NS,'ds:DigestValue',base64_encode(hash('sha256',$canonical,true))));
