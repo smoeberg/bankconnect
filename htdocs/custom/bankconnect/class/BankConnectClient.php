@@ -17,6 +17,7 @@
 require_once __DIR__.'/BankConnectException.php';
 require_once __DIR__.'/BankConnectLogger.php';
 require_once __DIR__.'/BankConnectXmlSecurity.php';
+require_once __DIR__.'/BankConnectResponseSecurity.php';
 
 if (!class_exists('Conf')) {
     class Conf
@@ -71,6 +72,11 @@ class BankConnectClient
 
         try {
             $response = $this->httpPost($envelope, $operation);
+            $trustedBankCertificate = (string) (($this->conf->global ?? [])['BANKCONNECT_BANK_CERTIFICATE'] ?? '');
+            if ($trustedBankCertificate === '') {
+                throw new BankConnectException('Trusted BankConnect response certificate is not configured');
+            }
+            (new BankConnectResponseSecurity($trustedBankCertificate))->validateAndVerify($response, $operation.'Response');
             $duration = (int) ((microtime(true) - $start) * 1000);
             $this->logger->info('soap_call', [
                 'operation' => $operation,
