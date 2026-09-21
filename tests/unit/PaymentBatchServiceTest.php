@@ -135,6 +135,104 @@ class PaymentBatchServiceTest extends TestCase
         $this->assertSame($root, $paymentMessages->item(0)->parentNode);
     }
 
+    public function testSubmittedBatchCannotBeSubmittedAgain(): void
+    {
+        $key = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        $this->assertNotFalse($key);
+        $private = '';
+        $this->assertTrue(openssl_pkey_export($key, $private));
+        $csr = openssl_csr_new(['commonName' => 'bankconnect-test'], $key, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($csr);
+        $cert = openssl_csr_sign($csr, null, $key, 1, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($cert);
+        $certificate = '';
+        $this->assertTrue(openssl_x509_export($cert, $certificate));
+
+        $this->conf->global['BANKCONNECT_CUSTOMER_PRIVATE_KEY'] = $private;
+        $this->conf->global['BANKCONNECT_CUSTOMER_CERTIFICATE'] = $certificate;
+        $this->db->tables['llx_bankconnect_agreement'] = [[
+            'rowid' => 1,
+            'bank_connect_id' => 'AGREEMENT-1',
+            'main_registration_number' => '12345678',
+        ]];
+
+        $calls = 0;
+        $client = new class($this->conf) extends BankConnectClient {
+            public int $calls = 0;
+
+            public function transferPayments(string $paymentMessageXml, string $endToEndMessageId): string
+            {
+                $this->calls++;
+                return '<response><responseCode>OK</responseCode></response>';
+            }
+        };
+        $svc = new PaymentBatchService($this->db, $this->conf, $client);
+        $created = $svc->createBatch($this->sampleBuilder(), 1);
+
+        $first = $svc->sendBatch($created['batch_id']);
+        $this->assertSame('submitted', $first['status']);
+        $this->assertSame(1, $client->calls);
+
+        $this->expectException(BankConnectException::class);
+        $this->expectExceptionMessage('cannot be submitted from status submitted');
+        try {
+            $svc->sendBatch($created['batch_id']);
+        } finally {
+            $this->assertSame(1, $client->calls, 'A submitted payment must never invoke transport twice');
+        }
+    }
+
+    public function testTransportFailureMovesBatchToUnknownAndBlocksBlindRetry(): void
+    {
+        $key = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        $this->assertNotFalse($key);
+        $private = '';
+        $this->assertTrue(openssl_pkey_export($key, $private));
+        $csr = openssl_csr_new(['commonName' => 'bankconnect-test'], $key, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($csr);
+        $cert = openssl_csr_sign($csr, null, $key, 1, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($cert);
+        $certificate = '';
+        $this->assertTrue(openssl_x509_export($cert, $certificate));
+
+        $this->conf->global['BANKCONNECT_CUSTOMER_PRIVATE_KEY'] = $private;
+        $this->conf->global['BANKCONNECT_CUSTOMER_CERTIFICATE'] = $certificate;
+        $this->db->tables['llx_bankconnect_agreement'] = [[
+            'rowid' => 1,
+            'bank_connect_id' => 'AGREEMENT-1',
+            'main_registration_number' => '12345678',
+        ]];
+
+        $client = new class($this->conf) extends BankConnectClient {
+            public int $calls = 0;
+
+            public function transferPayments(string $paymentMessageXml, string $endToEndMessageId): string
+            {
+                $this->calls++;
+                throw new RuntimeException('simulated timeout');
+            }
+        };
+        $svc = new PaymentBatchService($this->db, $this->conf, $client);
+        $created = $svc->createBatch($this->sampleBuilder(), 1);
+
+        $this->expectException(BankConnectException::class);
+        $this->expectExceptionMessage('outcome is unknown');
+        try {
+            $svc->sendBatch($created['batch_id']);
+        } finally {
+            $row = $this->db->findFirst('llx_bankconnect_batch', 'rowid', $created['batch_id']);
+            $this->assertSame('unknown', $row['status']);
+
+            try {
+                $svc->sendBatch($created['batch_id']);
+                $this->fail('UNKNOWN payment must not be blindly retried');
+            } catch (BankConnectException $retry) {
+                $this->assertStringContainsString('cannot be submitted from status unknown', $retry->getMessage());
+                $this->assertSame(1, $client->calls);
+            }
+        }
+    }
+
     public function testSendUnknownBatchThrows(): void
     {
         $this->expectException(BankConnectException::class);
