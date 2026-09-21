@@ -75,7 +75,7 @@ final class BankConnectSoapHeadersTest extends TestCase
     {
         $security = new class(new Conf()) extends BankConnectXmlSecurity {
             public function signRequest(string $xml): string { return 'SIGN('.$xml.')'; }
-            public function encryptSoapBody(string $xml): string { return 'ENCRYPT('.$xml.')'; }
+            public function encryptSoapBody(string $xml, string $algorithm = self::RSA_OAEP_MGF1P): string { return 'ENCRYPT('.$xml.')'; }
         };
         $bankdata = $this->securityClient('BANKDATA', $security);
         $nbs = $this->securityClient('NBS', $security);
@@ -90,11 +90,49 @@ final class BankConnectSoapHeadersTest extends TestCase
     {
         $security = new class(new Conf()) extends BankConnectXmlSecurity {
             public function signRequest(string $xml): string { return $xml; }
-            public function encryptSoapBody(string $xml): string { return $xml; }
+            public function encryptSoapBody(string $xml, string $algorithm = self::RSA_OAEP_MGF1P): string { return $xml; }
         };
         $client = $this->securityClient('UNKNOWN', $security);
         $this->expectException(BankConnectException::class);
         $client->secure('payload');
+    }
+
+    public function testGetBankCertificateUsesActivationHeaderAndEmptyBodyParameters(): void
+    {
+        $client = new class(new Conf()) extends BankConnectClient {
+            public string $capturedBody = '';
+            public array $capturedContext = [];
+            public function call(string $operation, string $bodyXml, array $context = []): string
+            {
+                $this->capturedBody = $bodyXml;
+                $this->capturedContext = $context;
+                return 'ok';
+            }
+        };
+
+        $activation = '<activationHeader xmlns="http://bankconnect.dk/schema/2014"><functionIdentification>001</functionIdentification></activationHeader>';
+        $this->assertSame('ok', $client->getBankCertificate($activation));
+        $this->assertStringNotContainsString('<activationHeader', $client->capturedBody);
+        $this->assertSame($activation, $client->capturedContext['activationHeaderXml']);
+    }
+
+    public function testActivateAndRenewUseEncryptionProfiles(): void
+    {
+        $security = new class(new Conf()) extends BankConnectXmlSecurity {
+            public function signRequest(string $xml): string { return 'SIGN('.$xml.')'; }
+            public function encryptSoapBody(string $xml, string $algorithm = self::RSA_OAEP_MGF1P): string { return 'ENCRYPT('.$algorithm.')('.$xml.')'; }
+        };
+
+        $activate = $this->securityClient('BANKDATA', $security);
+        $activated = $activate->secureOperation(BankConnectClient::OP_ACTIVATE_SERVICE_AGREEMENT, 'payload');
+        $this->assertSame('ENCRYPT('.BankConnectXmlSecurity::RSA_OAEP_MGF1P.')(payload)', $activated);
+
+        $renew = $this->securityClient('BANKDATA', $security);
+        $renewed = $renew->secureOperation(BankConnectClient::OP_RENEW_CUSTOMER_CERTIFICATE, 'payload');
+        $this->assertSame('SIGN(ENCRYPT('.BankConnectXmlSecurity::RSA_OAEP_MGF1P.')(payload))', $renewed);
+
+        $renewBec = $this->securityClient('BEC', $security);
+        $this->assertSame('ENCRYPT('.BankConnectXmlSecurity::RSA_1_5.')(SIGN(payload))', $renewBec->secureOperation(BankConnectClient::OP_RENEW_CUSTOMER_CERTIFICATE, 'payload'));
     }
 
     private function securityClient(string $datacenter, BankConnectXmlSecurity $security): BankConnectClient
@@ -105,6 +143,10 @@ final class BankConnectSoapHeadersTest extends TestCase
             public function secure(string $xml): string
             {
                 return $this->secureEnvelope(BankConnectClient::OP_TRANSFER_PAYMENTS, $xml);
+            }
+            public function secureOperation(string $operation, string $xml): string
+            {
+                return $this->secureEnvelope($operation, $xml);
             }
         };
         $client->setXmlSecurity($security);

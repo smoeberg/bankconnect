@@ -153,16 +153,52 @@ class BankConnectXmlSecurityTest extends TestCase
             $id=substr($reference->getAttribute('URI'),1);
             $target=$xp->query('//*[@wsu:Id="'.$id.'"]')->item(0);
             $this->assertInstanceOf(DOMElement::class,$target);
-            $this->assertSame(base64_encode(hash('sha256',$target->C14N(true,false),true)),$xp->query('./ds:DigestValue',$reference)->item(0)->textContent);
+            $this->assertSame(base64_encode(hash('sha256',$target->C14N(true,false,null,['soapenv']),true)),$xp->query('./ds:DigestValue',$reference)->item(0)->textContent);
         }
         $token=$xp->query('/s:Envelope/s:Header/wsse:Security/wsse:BinarySecurityToken')->item(0);
         $this->assertInstanceOf(DOMElement::class,$token);
         $tokenReference=$xp->query('./ds:KeyInfo/wsse:SecurityTokenReference/wsse:Reference',$signature)->item(0);
         $this->assertSame('#'.$token->getAttributeNS(BankConnectXmlSecurity::WSU_NS,'Id'),$tokenReference->getAttribute('URI'));
-        $signedInfo=$xp->query('./ds:SignedInfo',$signature)->item(0)->C14N(true,false);
+        $signedInfo=$xp->query('./ds:SignedInfo',$signature)->item(0)->C14N(true,false,null,['soapenv']);
         $signatureValue=base64_decode($xp->query('./ds:SignatureValue',$signature)->item(0)->textContent,true);
         $this->assertSame(1,openssl_verify($signedInfo,$signatureValue,$this->customerCert,OPENSSL_ALGO_SHA256));
         $this->assertSame(0,$xp->query('/s:Envelope/s:Header/ds:Signature')->length,'Signature must be inside wsse:Security');
+    }
+
+    public function testXmlEncryptionSupportsV37Rsa15KeyTransport(): void
+    {
+        $soap='<?xml version="1.0"?>'
+            .'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:bc="http://bankconnect.dk/schema/2014">'
+            .'<soapenv:Header><bc:serviceHeader/><bc:technicalAddress/></soapenv:Header>'
+            .'<soapenv:Body><bc:transferPayment/></soapenv:Body>'
+            .'</soapenv:Envelope>';
+        $encrypted=$this->security()->encryptSoapBody($soap, BankConnectXmlSecurity::RSA_1_5);
+        $doc=new DOMDocument();
+        $this->assertTrue($doc->loadXML($encrypted,LIBXML_NONET));
+        $xp=new DOMXPath($doc);
+        $xp->registerNamespace('s','http://schemas.xmlsoap.org/soap/envelope/');
+        $xp->registerNamespace('xenc',BankConnectXmlSecurity::XENC_NS);
+        $this->assertSame(BankConnectXmlSecurity::RSA_1_5, $xp->query('/s:Envelope/s:Header/*[local-name()="Security"]/xenc:EncryptedKey/xenc:EncryptionMethod')->item(0)->getAttribute('Algorithm'));
+    }
+
+    public function testSignaturesDeclareInclusiveNamespacesForV37Canonicalization(): void
+    {
+        $soap='<?xml version="1.0"?>'
+            .'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:bc="http://bankconnect.dk/schema/2014">'
+            .'<soapenv:Header><bc:serviceHeader><bc:x>1</bc:x></bc:serviceHeader><bc:technicalAddress/></soapenv:Header>'
+            .'<soapenv:Body><bc:getStatus/></soapenv:Body>'
+            .'</soapenv:Envelope>';
+        $signed=$this->security()->signRequest($soap);
+        $doc=new DOMDocument();
+        $this->assertTrue($doc->loadXML($signed,LIBXML_NONET));
+        $xp=new DOMXPath($doc);
+        $xp->registerNamespace('s','http://schemas.xmlsoap.org/soap/envelope/');
+        $xp->registerNamespace('ds',BankConnectXmlSecurity::DS_NS);
+        $xp->registerNamespace('ec',BankConnectXmlSecurity::EXC_C14N);
+        $signature=$xp->query('/s:Envelope/s:Header/*[local-name()="Security"]/ds:Signature')->item(0);
+        $this->assertInstanceOf(DOMElement::class,$signature);
+        $this->assertSame('soapenv',$xp->query('./ds:SignedInfo/ds:CanonicalizationMethod/ec:InclusiveNamespaces',$signature)->item(0)->getAttribute('PrefixList'));
+        $this->assertSame('soapenv',$xp->query('./ds:SignedInfo/ds:Reference/ds:Transforms/ds:Transform/ec:InclusiveNamespaces',$signature)->item(0)->getAttribute('PrefixList'));
     }
 
     public function testFailsClosedWithoutRequiredCertificates(): void
