@@ -351,7 +351,7 @@ class CertificateManagerTest extends TestCase
         ]));
     }
 
-    public function testCertificateFingerprintIsStableAndValidationRejectsWeakRsa(): void
+    public function testCertificateFingerprintIsStable(): void
     {
         $mgr = new BankConnectCertificateManager($this->conf);
         $key = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
@@ -374,7 +374,8 @@ class CertificateManagerTest extends TestCase
         $this->assertNotFalse($key);
         $this->assertNotFalse($other);
         openssl_pkey_export($key, $private);
-        openssl_csr_new(['commonName' => 'customer'], $key, ['digest_alg' => 'sha256'], $csr);
+        $csr = openssl_csr_new(['commonName' => 'customer'], $key, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($csr);
         $cert = openssl_csr_sign($csr, null, $key, 365, ['digest_alg' => 'sha256']);
         $this->assertNotFalse($cert);
         openssl_x509_export($cert, $pem);
