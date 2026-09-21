@@ -135,7 +135,7 @@ class BankAccountMappingStore
     {
         $sql = "SELECT rowid FROM llx_bank_account"
             . " WHERE rowid = ".(int) $bankAccountId
-            . " AND entity IN (".max(1, $entity).")"
+            . " AND entity = ".max(1, $entity)
             . " AND clos = 0"
             . " LIMIT 1";
         $res = $this->db->query($sql);
