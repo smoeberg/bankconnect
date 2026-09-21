@@ -32,7 +32,7 @@ class CamtParser
         $txs=[];
         $entries=$root->xpath('//*[local-name()="Ntry"]')?:[];
 
-        foreach($entries as $ntry){
+        foreach($entries as $entryIndex=>$ntry){
             $creditDebit=strtoupper((string)($this->first($ntry,'./*[local-name()="CdtDbtInd"]')??'CRDT'));
             if(!in_array($creditDebit,['CRDT','DBIT'],true)) throw new RuntimeException('Invalid CAMT credit/debit indicator');
 
@@ -65,10 +65,10 @@ class CamtParser
                         $txs[]=$this->buildFromTxDtls($tx,$date,$creditDebit,$ntryAmount,$ntryCcy,$ntryRef,$isReversal,$ntry,$statementId,$txId);
                     }
                 }else{
-                    $txs[]=$this->buildFromNtryOnly($ntry,$date,$creditDebit,$ntryAmount,$ntryCcy,$ntryRef,$isReversal,true,$statementId,$ntryRef);
+                    $txs[]=$this->buildFromNtryOnly($ntry,$date,$creditDebit,$ntryAmount,$ntryCcy,$ntryRef,$isReversal,true,$statementId,$ntryRef!==''?$ntryRef:'entry:'.$entryIndex);
                 }
             }else{
-                $txs[]=$this->buildFromNtryOnly($ntry,$date,$creditDebit,$ntryAmount,$ntryCcy,$ntryRef,$isReversal,false,$statementId,$ntryRef);
+                $txs[]=$this->buildFromNtryOnly($ntry,$date,$creditDebit,$ntryAmount,$ntryCcy,$ntryRef,$isReversal,false,$statementId,$ntryRef!==''?$ntryRef:'entry:'.$entryIndex);
             }
         }
         return $txs;
