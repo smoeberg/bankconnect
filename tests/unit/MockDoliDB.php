@@ -279,7 +279,7 @@ class MockDoliDB
 	{
 		$before = count($this->rows($table));
 		$this->tables[$table] = array_values(array_filter($this->rows($table), fn($r) => !$this->evalWhere($r, $where)));
-		return count($this->tables[$table]) < $before;
+		return true;
 	}
 
 	// ------------------------------------------------------------ test helpers
