@@ -1,383 +1,142 @@
 <?php
-
 /**
- * CamtParser – parses camt.053 / camt.054 (ISO 20022) into BankTransaction DTOs.
+ * CamtParser – parses camt.053 / camt.054 into safe BankTransaction DTOs.
  *
- * Spec-aligned behaviour (BankConnect / CGI camt.053.001.02):
- *  - One BankTransaction per TxDtls when present only when every transaction
- *    amount is explicit and the split reconciles exactly to Ntry/Amt
- *  - Otherwise preserve the Ntry as one aggregate transaction and flag it for
- *    manual review rather than inventing transaction amounts
- *  - Structured reference priority:
- *      1. Refs/EndToEndId (2.148)
- *      2. RmtInf/Strd/CdtrRefInf/Ref (OCR/FIK, 2.262)
- *      3. RmtInf/Strd/RfrdDocInf/Nb (2.243)
- *      4. Fallback: first 4–15 digit token in unstructured text only if no structured ref
- *  - Counterparty: Cdtr/Nm on DBIT (outgoing), Dbtr/Nm on CRDT (incoming)
- *  - RvslInd → isReversal flag
- *  - Hash includes text + acctSvcrRef for stable dedup
+ * Statement and transaction identities are preserved for database idempotency.
  */
-
 require_once __DIR__.'/BankTransaction.php';
 
 class CamtParser
 {
-    /**
-     * @return BankTransaction[]
-     */
+    public const MAX_XML_BYTES = 10 * 1024 * 1024;
+
     public function parse(string $xml): array
     {
-        if (trim($xml) === '') {
-            throw new RuntimeException('Empty XML');
-        }
-        if (strlen($xml) > 10 * 1024 * 1024) {
-            throw new RuntimeException('XML too large: maximum size is 10MB');
-        }
-        if (preg_match('/<!DOCTYPE\s/i', $xml) || preg_match('/<!ENTITY\s/i', $xml)) {
-            throw new RuntimeException('XML with DTD/entity declarations is not allowed');
-        }
+        if (trim($xml)==='') throw new RuntimeException('Empty XML');
+        if (strlen($xml)>self::MAX_XML_BYTES) throw new RuntimeException('XML too large: maximum size is 10MB');
+        if (preg_match('/<!DOCTYPE\s/i',$xml)||preg_match('/<!ENTITY\s/i',$xml)) throw new RuntimeException('XML with DTD/entity declarations is not allowed');
 
-        $prev = libxml_use_internal_errors(true);
-        $root = simplexml_load_string(
-            $xml,
-            SimpleXMLElement::class,
-            LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING
-        );
-        if ($root === false) {
-            libxml_clear_errors();
-            libxml_use_internal_errors($prev);
+        $prev=libxml_use_internal_errors(true);
+        $root=simplexml_load_string($xml,SimpleXMLElement::class,LIBXML_NONET|LIBXML_NOERROR|LIBXML_NOWARNING);
+        if($root===false){
+            libxml_clear_errors(); libxml_use_internal_errors($prev);
             throw new RuntimeException('Malformed camt XML');
         }
         libxml_use_internal_errors($prev);
 
-        $local = $root->getName();
-        $okRoots = ['Document', 'BkToCstmrStmt', 'BkToCstmrAcctRpt', 'BkToCstmrDbtCdtNtfctn'];
-        $inner = $root->xpath('/*[local-name()="Document"]/*') ?: [];
-        if (!empty($inner)) {
-            $innerName = $inner[0]->getName();
-            $allowed = ['BkToCstmrStmt', 'BkToCstmrAcctRpt', 'BkToCstmrDbtCdtNtfctn'];
-            if (!in_array($innerName, $allowed, true)
-                && !in_array($local, $allowed, true)
-                && $local !== 'Document') {
-                // continue parsing Ntry nodes if any
-            }
+        if(!in_array($root->getName(),['Document','BkToCstmrStmt','BkToCstmrAcctRpt','BkToCstmrDbtCdtNtfctn'],true)){
+            throw new RuntimeException('Unsupported CAMT document root: '.$root->getName());
         }
 
-        $txs = [];
-        $entries = $root->xpath('//*[local-name()="Ntry"]') ?: [];
+        $statementId=$this->extractStatementId($root);
+        $txs=[];
+        $entries=$root->xpath('//*[local-name()="Ntry"]')?:[];
 
-        foreach ($entries as $ntry) {
-            $creditDebit = strtoupper((string) ($this->first($ntry, './*[local-name()="CdtDbtInd"]') ?? 'CRDT'));
-            $isReversal = strtoupper((string) ($this->first($ntry, './*[local-name()="RvslInd"]') ?? '')) === 'TRUE'
-                || strtoupper((string) ($this->first($ntry, './*[local-name()="RvslInd"]') ?? '')) === '1';
+        foreach($entries as $ntry){
+            $creditDebit=strtoupper((string)($this->first($ntry,'./*[local-name()="CdtDbtInd"]')??'CRDT'));
+            if(!in_array($creditDebit,['CRDT','DBIT'],true)) throw new RuntimeException('Invalid CAMT credit/debit indicator');
 
-            $dateEl = $this->first($ntry, './*[local-name()="BookgDt"]/*[local-name()="Dt"]');
-            if ($dateEl === null) {
-                $dateEl = $this->first($ntry, './*[local-name()="ValDt"]/*[local-name()="Dt"]');
-            }
-            $date = substr((string) ($dateEl ?? ''), 0, 10);
+            $reversalValue=strtoupper(trim((string)($this->first($ntry,'./*[local-name()="RvslInd"]')??'')));
+            $isReversal=in_array($reversalValue,['TRUE','1'],true);
 
-            $ntryAmtEl = $this->first($ntry, './*[local-name()="Amt"]');
-            $ntryAmount = abs((float) (string) ($ntryAmtEl ?? 0));
-            $ntryCcy = (string) (($ntryAmtEl['Ccy'] ?? null) ?: 'DKK');
+            $dateEl=$this->first($ntry,'./*[local-name()="BookgDt"]/*[local-name()="Dt"]')??$this->first($ntry,'./*[local-name()="ValDt"]/*[local-name()="Dt"]');
+            $date=substr(trim((string)($dateEl??'')),0,10);
+            if($date==='') throw new RuntimeException('CAMT entry has no booking/value date');
 
-            $ntryAcctSvcrRef = (string) ($this->first($ntry, './*[local-name()="AcctSvcrRef"]') ?? '');
-            if ($ntryAcctSvcrRef === '') {
-                $ntryAcctSvcrRef = (string) ($this->first($ntry, './*[local-name()="NtryRef"]') ?? '');
-            }
+            $ntryAmtEl=$this->first($ntry,'./*[local-name()="Amt"]');
+            $ntryAmount=abs((float)(string)($ntryAmtEl??0));
+            $ntryCcy=(string)(($ntryAmtEl['Ccy']??null)?:'DKK');
+            $ntryRef=(string)($this->first($ntry,'./*[local-name()="AcctSvcrRef"]')??'');
+            if($ntryRef==='') $ntryRef=(string)($this->first($ntry,'./*[local-name()="NtryRef"]')??'');
 
-            $txDtlsList = $ntry->xpath('.//*[local-name()="TxDtls"]') ?: [];
-
-            if (count($txDtlsList) > 0) {
-                $amounts = [];
-                $allAmountsExplicit = true;
-                $sameCurrency = true;
-
-                foreach ($txDtlsList as $txDtls) {
-                    $amtEl = $this->firstTransactionAmount($txDtls);
-                    if ($amtEl === null) {
-                        $allAmountsExplicit = false;
-                        break;
-                    }
-
-                    $ccy = (string) (($amtEl['Ccy'] ?? null) ?: $ntryCcy);
-                    if ($ccy !== $ntryCcy) {
-                        $sameCurrency = false;
-                    }
-
-                    $amounts[] = abs((float) (string) $amtEl);
+            $txDtls=$ntry->xpath('.//*[local-name()="TxDtls"]')?:[];
+            if($txDtls){
+                $amounts=[];$explicit=true;$sameCurrency=true;
+                foreach($txDtls as $tx){
+                    $amt=$this->firstTransactionAmount($tx);
+                    if($amt===null){$explicit=false;break;}
+                    $ccy=(string)(($amt['Ccy']??null)?:$ntryCcy);
+                    if($ccy!==$ntryCcy)$sameCurrency=false;
+                    $amounts[]=abs((float)(string)$amt);
                 }
-
-                if ($allAmountsExplicit && $sameCurrency && $this->amountsReconcile($amounts, $ntryAmount)) {
-                    foreach ($txDtlsList as $txDtls) {
-                        $txs[] = $this->buildFromTxDtls(
-                            $txDtls,
-                            $date,
-                            $creditDebit,
-                            $ntryAmount,
-                            $ntryCcy,
-                            $ntryAcctSvcrRef,
-                            $isReversal,
-                            $ntry
-                        );
+                if($explicit&&$sameCurrency&&$this->amountsReconcile($amounts,$ntryAmount)){
+                    foreach($txDtls as $index=>$tx){
+                        $txId=$this->transactionIdentity($tx,$ntry,$index);
+                        $txs[]=$this->buildFromTxDtls($tx,$date,$creditDebit,$ntryAmount,$ntryCcy,$ntryRef,$isReversal,$ntry,$statementId,$txId);
                     }
-                } else {
-                    // Never duplicate the Ntry total across TxDtls. Preserve the
-                    // bank-reported aggregate and force manual review of the split.
-                    $txs[] = $this->buildFromNtryOnly(
-                        $ntry,
-                        $date,
-                        $creditDebit,
-                        $ntryAmount,
-                        $ntryCcy,
-                        $ntryAcctSvcrRef,
-                        $isReversal,
-                        true
-                    );
+                }else{
+                    $txs[]=$this->buildFromNtryOnly($ntry,$date,$creditDebit,$ntryAmount,$ntryCcy,$ntryRef,$isReversal,true,$statementId,$ntryRef);
                 }
-            } else {
-                // No TxDtls – one transaction from Ntry level
-                $txs[] = $this->buildFromNtryOnly(
-                    $ntry,
-                    $date,
-                    $creditDebit,
-                    $ntryAmount,
-                    $ntryCcy,
-                    $ntryAcctSvcrRef,
-                    $isReversal
-                );
+            }else{
+                $txs[]=$this->buildFromNtryOnly($ntry,$date,$creditDebit,$ntryAmount,$ntryCcy,$ntryRef,$isReversal,false,$statementId,$ntryRef);
             }
         }
-
         return $txs;
     }
 
-    private function buildFromTxDtls(
-        $txDtls,
-        string $date,
-        string $creditDebit,
-        float $ntryAmount,
-        string $ntryCcy,
-        string $ntryAcctSvcrRef,
-        bool $isReversal,
-        $ntry
-    ): BankTransaction {
-        $amtEl = $this->firstTransactionAmount($txDtls);
-        $amount = $amtEl !== null ? abs((float) (string) $amtEl) : $ntryAmount;
-        $ccy = $amtEl !== null ? (string) (($amtEl['Ccy'] ?? null) ?: $ntryCcy) : $ntryCcy;
-        $signed = $creditDebit === 'DBIT' ? -abs($amount) : abs($amount);
-
-        $text = $this->collectUnstructured($txDtls);
-        if ($text === '') {
-            $info = $this->first($ntry, './*[local-name()="AddtlNtryInf"]');
-            $text = trim((string) ($info ?? ''));
+    private function extractStatementId($root): string {
+        foreach(['//*[local-name()="Stmt"]/*[local-name()="Id"]','//*[local-name()="Rpt"]/*[local-name()="Id"]','//*[local-name()="Ntfctn"]/*[local-name()="Id"]'] as $path){
+            $node=$this->first($root,$path);
+            if($node!==null&&trim((string)$node)!=='') return trim((string)$node);
         }
-
-        $ref = $this->extractStructuredReference($txDtls);
-        if ($ref === '') {
-            $ref = $this->extractFallbackReference($text);
-        }
-
-        $cp = $this->extractCounterparty($txDtls, $creditDebit);
-        if ($cp === '') {
-            $cp = $this->extractCounterparty($ntry, $creditDebit);
-        }
-
-        $acctRef = (string) ($this->first($txDtls, './/*[local-name()="AcctSvcrRef"]') ?? '');
-        if ($acctRef === '') {
-            $acctRef = $ntryAcctSvcrRef;
-        }
-        $e2e = (string) ($this->first($txDtls, './/*[local-name()="EndToEndId"]') ?? '');
-        if ($acctRef === '' && $e2e !== '') {
-            $acctRef = $e2e;
-        }
-
-        return $this->makeTx($date, $signed, $ccy, $text, $ref, $cp, $acctRef, $isReversal);
+        return '';
     }
 
-    private function buildFromNtryOnly(
-        $ntry,
-        string $date,
-        string $creditDebit,
-        float $ntryAmount,
-        string $ntryCcy,
-        string $ntryAcctSvcrRef,
-        bool $isReversal,
-        bool $requiresManualReview = false
-    ): BankTransaction {
-        $signed = $creditDebit === 'DBIT' ? -abs($ntryAmount) : abs($ntryAmount);
-
-        $text = $this->collectUnstructured($ntry);
-        if ($text === '') {
-            $info = $this->first($ntry, './*[local-name()="AddtlNtryInf"]');
-            $text = trim((string) ($info ?? ''));
+    private function transactionIdentity($tx,$ntry,int $index): string {
+        foreach(['./*[local-name()="Refs"]/*[local-name()="AcctSvcrRef"]','./*[local-name()="Refs"]/*[local-name()="InstrId"]','./*[local-name()="Refs"]/*[local-name()="EndToEndId"]'] as $path){
+            $v=$this->first($tx,$path);
+            if($v!==null&&trim((string)$v)!=='') return trim((string)$v);
         }
-
-        $ref = $this->extractStructuredReference($ntry);
-        if ($ref === '') {
-            $ref = $this->extractFallbackReference($text);
-        }
-
-        $cp = $this->extractCounterparty($ntry, $creditDebit);
-
-        return $this->makeTx(
-            $date,
-            $signed,
-            $ntryCcy,
-            $text,
-            $ref,
-            $cp,
-            $ntryAcctSvcrRef,
-            $isReversal,
-            $requiresManualReview
-        );
+        $v=$this->first($tx,'.//*[local-name()="AcctSvcrRef"]');
+        if($v!==null&&trim((string)$v)!=='') return trim((string)$v);
+        return trim((string)($this->first($ntry,'./*[local-name()="AcctSvcrRef"]')??$this->first($ntry,'./*[local-name()="NtryRef"]')??'')).':'.$index;
     }
 
-    private function makeTx(
-        string $date,
-        float $amount,
-        string $currency,
-        string $text,
-        string $ref,
-        string $cp,
-        string $acctSvcrRef,
-        bool $isReversal,
-        bool $requiresManualReview = false
-    ): BankTransaction {
-        $tx = new BankTransaction();
-        $tx->date = $date;
-        $tx->amount = $amount;
-        $tx->currency = $currency !== '' ? $currency : 'DKK';
-        $tx->text = $text;
-        $tx->reference = $ref;
-        $tx->counterparty = $cp;
-        $tx->acctSvcrRef = $acctSvcrRef;
-        $tx->isReversal = $isReversal;
-        $tx->requiresManualReview = $requiresManualReview;
-        $tx->hash = hash(
-            'sha256',
-            implode('|', [$date, $amount, $ref, $cp, $text, $acctSvcrRef])
-        );
+    private function buildFromTxDtls($txDtls,string $date,string $creditDebit,float $ntryAmount,string $ntryCcy,string $ntryAcctSvcrRef,bool $isReversal,$ntry,string $statementId,string $transactionId): BankTransaction {
+        $amtEl=$this->firstTransactionAmount($txDtls);
+        $amount=$amtEl!==null?abs((float)(string)$amtEl):$ntryAmount;
+        $ccy=$amtEl!==null?(string)(($amtEl['Ccy']??null)?:$ntryCcy):$ntryCcy;
+        $signed=$creditDebit==='DBIT'?-abs($amount):abs($amount);
+        $text=$this->collectUnstructured($txDtls);
+        if($text==='')$text=trim((string)($this->first($ntry,'./*[local-name()="AddtlNtryInf"]')??''));
+        $ref=$this->extractStructuredReference($txDtls);if($ref==='')$ref=$this->extractFallbackReference($text);
+        $cp=$this->extractCounterparty($txDtls,$creditDebit);if($cp==='')$cp=$this->extractCounterparty($ntry,$creditDebit);
+        $acct=(string)($this->first($txDtls,'.//*[local-name()="AcctSvcrRef"]')??'');if($acct==='')$acct=$ntryAcctSvcrRef;
+        $e2e=(string)($this->first($txDtls,'.//*[local-name()="EndToEndId"]')??'');if($acct===''&&$e2e!=='')$acct=$e2e;
+        return $this->makeTx($date,$signed,$ccy,$text,$ref,$cp,$acct,$isReversal,false,$statementId,$transactionId);
+    }
+
+    private function buildFromNtryOnly($ntry,string $date,string $creditDebit,float $amount,string $ccy,string $acct,bool $reversal,bool $manual,string $statementId,string $transactionId): BankTransaction {
+        $signed=$creditDebit==='DBIT'?-abs($amount):abs($amount);
+        $text=$this->collectUnstructured($ntry);if($text==='')$text=trim((string)($this->first($ntry,'./*[local-name()="AddtlNtryInf"]')??''));
+        $ref=$this->extractStructuredReference($ntry);if($ref==='')$ref=$this->extractFallbackReference($text);
+        $cp=$this->extractCounterparty($ntry,$creditDebit);
+        return $this->makeTx($date,$signed,$ccy,$text,$ref,$cp,$acct,$reversal,$manual,$statementId,$transactionId);
+    }
+
+    private function makeTx(string $date,float $amount,string $currency,string $text,string $ref,string $cp,string $acct,bool $reversal,bool $manual,string $statementId,string $transactionId): BankTransaction {
+        $tx=new BankTransaction();
+        $tx->date=$date;$tx->amount=$amount;$tx->currency=$currency!==''?$currency:'DKK';$tx->text=$text;$tx->reference=$ref;$tx->counterparty=$cp;$tx->acctSvcrRef=$acct;
+        $tx->statementId=$statementId;$tx->transactionId=$transactionId;$tx->isReversal=$reversal;$tx->requiresManualReview=$manual;
+        $tx->hash=hash('sha256',implode('|',[$statementId,$transactionId,$date,$amount,$ref,$cp,$text,$acct]));
         return $tx;
     }
 
-    /**
-     * Return the transaction-level amount without falling back to Ntry/Amt.
-     */
-    private function firstTransactionAmount($txDtls)
-    {
-        $amtEl = $this->first($txDtls, './*[local-name()="Amt"]');
-        if ($amtEl === null) {
-            $amtEl = $this->first($txDtls, './*[local-name()="InstdAmt"]');
-        }
-        return $amtEl;
-    }
-
-    /**
-     * Compare money in cents to avoid float equality decisions.
-     *
-     * The parser already exposes amounts as floats, so normalize to cents at
-     * this boundary and require an exact reconciliation of the reported total.
-     *
-     * @param float[] $amounts
-     */
-    private function amountsReconcile(array $amounts, float $ntryAmount): bool
-    {
-        $sumCents = 0;
-        foreach ($amounts as $amount) {
-            $sumCents += (int) round(abs($amount) * 100);
-        }
-
-        $ntryCents = (int) round(abs($ntryAmount) * 100);
-
-        return $sumCents === $ntryCents;
-    }
-
-    /**
-     * Priority: EndToEndId → CdtrRefInf/Ref → RfrdDocInf/Nb
-     */
-    private function extractStructuredReference($ctx): string
-    {
-        $e2e = $this->first($ctx, './/*[local-name()="EndToEndId"]');
-        if ($e2e !== null && trim((string) $e2e) !== '' && strtoupper((string) $e2e) !== 'NOTPROVIDED') {
-            return trim((string) $e2e);
-        }
-
-        $cdtrRef = $this->first($ctx, './/*[local-name()="CdtrRefInf"]/*[local-name()="Ref"]');
-        if ($cdtrRef !== null && trim((string) $cdtrRef) !== '') {
-            return trim((string) $cdtrRef);
-        }
-
-        $docNb = $this->first($ctx, './/*[local-name()="RfrdDocInf"]/*[local-name()="Nb"]');
-        if ($docNb !== null && trim((string) $docNb) !== '') {
-            return trim((string) $docNb);
-        }
-
+    private function firstTransactionAmount($ctx){return $this->first($ctx,'./*[local-name()="Amt"]')??$this->first($ctx,'./*[local-name()="InstdAmt"]');}
+    private function amountsReconcile(array $amounts,float $total): bool {$sum=0;foreach($amounts as $a)$sum+=(int)round(abs($a)*100);return $sum===(int)round(abs($total)*100);}
+    private function extractStructuredReference($ctx): string {
+        $v=$this->first($ctx,'.//*[local-name()="EndToEndId"]');if($v!==null&&trim((string)$v)!==''&&strtoupper(trim((string)$v))!=='NOTPROVIDED')return trim((string)$v);
+        $v=$this->first($ctx,'.//*[local-name()="CdtrRefInf"]/*[local-name()="Ref"]');if($v!==null&&trim((string)$v)!=='')return trim((string)$v);
+        $v=$this->first($ctx,'.//*[local-name()="RfrdDocInf"]/*[local-name()="Nb"]');if($v!==null&&trim((string)$v)!=='')return trim((string)$v);
         return '';
     }
-
-    /** Last resort only – never preferred over structured fields */
-    private function extractFallbackReference(string $text): string
-    {
-        if ($text === '') {
-            return '';
-        }
-        if (preg_match('/\b(\d{4,15})\b/', $text, $m)) {
-            return $m[1];
-        }
-        return '';
+    private function extractFallbackReference(string $text): string{return preg_match('/\b(\d{4,15})\b/',$text,$m)?$m[1]:'';}
+    private function extractCounterparty($ctx,string $direction): string {
+        $party=$direction==='DBIT'?'Cdtr':'Dbtr';
+        $v=$this->first($ctx,'.//*[local-name()="'.$party.'"]/*[local-name()="Nm"]');if($v!==null&&trim((string)$v)!=='')return trim((string)$v);
+        $v=$this->first($ctx,'.//*[local-name()="RltdPties"]/*[local-name()="'.$party.'"]/*[local-name()="Nm"]');if($v!==null&&trim((string)$v)!=='')return trim((string)$v);
+        $v=$this->first($ctx,'.//*[local-name()="RltdPties"]//*[local-name()="Nm"]');return $v!==null?trim((string)$v):'';
     }
-
-    /**
-     * DBIT (money out) → creditor is the counterparty
-     * CRDT (money in) → debtor is the counterparty
-     */
-    private function extractCounterparty($ctx, string $creditDebit): string
-    {
-        if ($creditDebit === 'DBIT') {
-            $nm = $this->first($ctx, './/*[local-name()="Cdtr"]/*[local-name()="Nm"]');
-            if ($nm !== null && trim((string) $nm) !== '') {
-                return trim((string) $nm);
-            }
-            $nm = $this->first($ctx, './/*[local-name()="RltdPties"]/*[local-name()="Cdtr"]/*[local-name()="Nm"]');
-            if ($nm !== null && trim((string) $nm) !== '') {
-                return trim((string) $nm);
-            }
-        } else {
-            $nm = $this->first($ctx, './/*[local-name()="Dbtr"]/*[local-name()="Nm"]');
-            if ($nm !== null && trim((string) $nm) !== '') {
-                return trim((string) $nm);
-            }
-            $nm = $this->first($ctx, './/*[local-name()="RltdPties"]/*[local-name()="Dbtr"]/*[local-name()="Nm"]');
-            if ($nm !== null && trim((string) $nm) !== '') {
-                return trim((string) $nm);
-            }
-        }
-
-        $nm = $this->first($ctx, './/*[local-name()="RltdPties"]//*[local-name()="Nm"]');
-        if ($nm !== null && trim((string) $nm) !== '') {
-            return trim((string) $nm);
-        }
-
-        return '';
-    }
-
-    private function collectUnstructured($ctx): string
-    {
-        $parts = [];
-        foreach ($ctx->xpath('.//*[local-name()="Ustrd"]') ?: [] as $u) {
-            $t = trim((string) $u);
-            if ($t !== '') {
-                $parts[] = $t;
-            }
-        }
-        return trim(implode(' ', $parts));
-    }
-
-    /** @return \SimpleXMLElement|null */
-    private function first($ctx, string $xpath)
-    {
-        $nodes = @$ctx->xpath($xpath);
-        return (!empty($nodes)) ? $nodes[0] : null;
-    }
+    private function collectUnstructured($ctx): string{$parts=[];foreach($ctx->xpath('.//*[local-name()="Ustrd"]')?:[] as $u){$v=trim((string)$u);if($v!=='')$parts[]=$v;}return trim(implode(' ',$parts));}
+    private function first($ctx,string $xpath){$nodes=@$ctx->xpath($xpath);return !empty($nodes)?$nodes[0]:null;}
 }
