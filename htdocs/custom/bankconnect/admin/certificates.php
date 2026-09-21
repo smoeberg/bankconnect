@@ -6,7 +6,7 @@
 require '../../../main.inc.php';
 require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/BankConnectCertificateManager.php';
 require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/AgreementStore.php';
-require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/BankConnectAccountMappingStore.php';
+require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/BankAccountMappingStore.php';
 require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/BankConnectException.php';
 
 if (!$user->admin) {
@@ -16,7 +16,7 @@ if (!$user->admin) {
 $langs->load('bankconnect@bankconnect');
 $action = GETPOST('action', 'aZ09');
 $store = new AgreementStore($db);
-$mappingStore = new BankConnectAccountMappingStore($db);
+$mappingStore = new BankAccountMappingStore($db);
 
 if (in_array($action, ['onboard', 'map_account', 'unmap_account'], true) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!checkToken()) {
