@@ -15,6 +15,8 @@ require_once __DIR__.'/BankTransaction.php';
 require_once __DIR__.'/Candidate.php';
 require_once __DIR__.'/BankConnectException.php';
 require_once __DIR__.'/BankConnectLogger.php';
+require_once __DIR__.'/BankConnectSecretStore.php';
+require_once __DIR__.'/BankConnectEndpointPolicy.php';
 
 class MistralMatcher
 {
@@ -58,7 +60,7 @@ class MistralMatcher
 
     private function apiKey(): string
     {
-        return (string) ($this->conf->global['BANKCONNECT_MISTRAL_API_KEY'] ?? '');
+        return (new BankConnectSecretStore($this->conf))->get('BANKCONNECT_MISTRAL_API_KEY', false) ?? '';
     }
 
     private function model(): string
@@ -68,7 +70,8 @@ class MistralMatcher
 
     private function endpoint(): string
     {
-        return (string) ($this->conf->global['BANKCONNECT_MISTRAL_ENDPOINT'] ?? '');
+        $endpoint = (string) ($this->conf->global['BANKCONNECT_MISTRAL_ENDPOINT'] ?? 'https://api.mistral.ai/v1/chat/completions');
+        return BankConnectEndpointPolicy::validateMistral($endpoint);
     }
 
     private function isCloudEndpoint(): bool
