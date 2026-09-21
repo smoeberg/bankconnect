@@ -1,4 +1,20 @@
-# Changelog
+## 0.4.0 (2026-09-21)
+
+### Added
+- **PaymentStateMachine** — eksplicit batch-livscyklus med idempotens-nøgle.
+- **UNKNOWN payment recovery** — sikker håndtering af ukendte betalinger.
+- **Pain.002 status-livscyklus** — verbatim bankstatus + semantisk mapping.
+- **CAMT import-livscyklus** — identitetsgrænser, dedup, provenance end-to-end.
+- **BankConnectSecretStore** — secrets udelukkende fra miljøvariabler (fail-closed).
+- **BankConnectEndpointPolicy** — endpoint-whitelisting, fail-closed.
+- **BankAccountMappingStore** — atomisk bankkonto-mapping.
+- **ReconciliationService confidence-audit** — sporbar confidence-grænse.
+- **Certificate lifecycle hardening** — atomisk renewal, per-agreement lock.
+
+### Security
+- TransferPayment wire security aligned med developer package v3.7.
+- Response decryption boundary verificeret før parsing.
+- Log-redaction: ingen secrets/PII i logs.
 
 ## Unreleased
 
