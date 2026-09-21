@@ -90,7 +90,7 @@ final class BankConnectSoapHeadersTest extends TestCase
     {
         $security = new class(new Conf()) extends BankConnectXmlSecurity {
             public function signRequest(string $xml): string { return $xml; }
-            public function encryptSoapBody(string $xml): string { return $xml; }
+            public function encryptSoapBody(string $xml, string $algorithm = self::RSA_OAEP_MGF1P): string { return $xml; }
         };
         $client = $this->securityClient('UNKNOWN', $security);
         $this->expectException(BankConnectException::class);
