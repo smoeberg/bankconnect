@@ -149,6 +149,7 @@ final class FailureInjectionQualificationTest extends TestCase
             'counterparty' => 'Qualification Supplier',
             'text' => 'Qualification import',
             'acctSvcrRef' => 'BANK-QUAL-001',
+            'hash' => hash('sha256', 'qualification-import-BANK-QUAL-001'),
         ];
 
         $store = new BankConnectStore($this->db);
