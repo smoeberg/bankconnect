@@ -3,6 +3,8 @@
  * Read-only production health checks. No secret values are returned.
  */
 require_once __DIR__.'/BankConnectEndpointPolicy.php';
+require_once __DIR__.'/BankConnectSecretStore.php';
+require_once __DIR__.'/BankConnectException.php';
 
 class BankConnectHealth
 {
