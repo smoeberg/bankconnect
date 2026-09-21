@@ -99,7 +99,7 @@ class MockDoliDB
 			return $this->update($m[1], $m[2], $m[3]);
 		}
 		if (preg_match('/^DELETE FROM\s+(\w+)\s*WHERE\s+(.*)$/is', $s, $m)) {
-			return $this->deleteRows($m[1], $m[3]);
+			return $this->deleteRows($m[1], $m[2]);
 		}
 		$this->lastError = 'MockDoliDB: unsupported SQL: '.$s;
 		return false;
@@ -279,7 +279,7 @@ class MockDoliDB
 	{
 		$before = count($this->rows($table));
 		$this->tables[$table] = array_values(array_filter($this->rows($table), fn($r) => !$this->evalWhere($r, $where)));
-		return count($this->tables[$table]) < $before;
+		return true;
 	}
 
 	// ------------------------------------------------------------ test helpers
