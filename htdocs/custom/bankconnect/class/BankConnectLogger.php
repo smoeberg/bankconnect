@@ -12,6 +12,11 @@ class BankConnectLogger
     /** @var resource|null */
     private $sink;
 
+    private const SECRET_KEYS = [
+        'api_key', 'apikey', 'authorization', 'password', 'private_key', 'private_key_pem',
+        'private_key_enc', 'secret', 'token', 'certificate_pem', 'soap_credentials', 'activation_code'
+    ];
+
     public function __construct($stream = null, $sink = null)
     {
         $this->stream = $stream;
@@ -48,5 +53,27 @@ class BankConnectLogger
         if (function_exists('dol_syslog')) {
             dol_syslog($line);
         }
+    }
+
+    private function sanitizeContext(array $context): array
+    {
+        $out = [];
+        foreach ($context as $key => $value) {
+            $normalized = strtolower((string)$key);
+            foreach (self::SECRET_KEYS as $secretKey) {
+                if ($normalized === $secretKey || str_contains($normalized, $secretKey)) {
+                    $out[$key] = '[REDACTED]';
+                    continue 2;
+                }
+            }
+            if (is_array($value)) {
+                $out[$key] = $this->sanitizeContext($value);
+            } elseif (is_scalar($value) || $value === null) {
+                $out[$key] = $value;
+            } else {
+                $out[$key] = '[REDACTED]';
+            }
+        }
+        return $out;
     }
 }
