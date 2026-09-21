@@ -81,19 +81,13 @@ class PaymentBatchService
     public function sendBatch(int $batchId): array
     {
         $batch = $this->fetchBatch($batchId);
-<<<<<<< HEAD
         if (!$batch) {
             throw new BankConnectException("Batch {$batchId} not found");
         }
         $status = (string) ($batch['status'] ?? '');
-=======
-        if (!$batch) throw new BankConnectException("Batch {$batchId} not found");
-
-        $status = (string)($batch['status'] ?? '');
-        if (!in_array($status, ['draft', 'prepared'], true)) {
+        if (!in_array($status, [PaymentStateMachine::DRAFT, PaymentStateMachine::VALIDATED, PaymentStateMachine::PREPARED], true)) {
             throw new BankConnectException("Batch {$batchId} cannot be submitted from status {$status}");
         }
->>>>>>> origin/feature/pr38-status-camt-lifecycle
         if ($this->client === null) {
             throw new BankConnectException('BankConnectClient is required for payment submission');
         }
@@ -162,14 +156,9 @@ class PaymentBatchService
         try {
             $response = $this->client->transferPayments($paymentMessage, $batch['end_to_end_message_id']);
         } catch (Throwable $e) {
-<<<<<<< HEAD
             // The transport outcome is unknown. Never claim rejection or success.
             $this->transitionBatchStatus($batchId, PaymentStateMachine::SUBMITTING, PaymentStateMachine::UNKNOWN, [
                 'message' => 'BankConnect transport outcome is unknown: '.$e->getMessage(),
-=======
-            $this->updateBatchStatus($batchId, 'unknown', [
-                'message' => 'BankConnect transport outcome is unknown',
->>>>>>> origin/feature/pr38-status-camt-lifecycle
                 'date_status' => date('Y-m-d H:i:s'),
             ]);
             $this->logger->error('payment_unknown', ['batch_id' => $batchId, 'error_class' => get_class($e)]);
@@ -252,7 +241,14 @@ class PaymentBatchService
             'unknown' => $unknown,
         ]);
 
-<<<<<<< HEAD
+        return [
+            'group_status' => $parsed['group_status'],
+            'updated_lines' => $updated,
+            'unknown_lines' => $unknown,
+            'transactions' => $parsed['transactions'],
+        ];
+    }
+
     /**
      * Reconcile a batch whose submission outcome is unknown.
      *
@@ -382,14 +378,6 @@ class PaymentBatchService
             ->setFunctionIdentification($functionId)
             ->setEndToEndMessageId((string) $batch['end_to_end_message_id'])
             ->build();
-=======
-        return [
-            'group_status' => $parsed['group_status'],
-            'updated_lines' => $updated,
-            'unknown_lines' => $unknown,
-            'transactions' => $parsed['transactions'],
-        ];
->>>>>>> origin/feature/pr38-status-camt-lifecycle
     }
 
     private function deriveBatchStatus(?string $groupStatus, array $transactions): string
@@ -421,26 +409,6 @@ class PaymentBatchService
         return (bool)$this->db->query($sql);
     }
 
-    private function buildServiceHeaderForBatch(array $batch): string
-    {
-        $agreementId = (int)($batch['fk_agreement'] ?? 0);
-        if ($agreementId <= 0) throw new BankConnectException('Payment batch has no valid agreement');
-
-        $res = $this->db->query('SELECT bank_connect_id, main_registration_number FROM llx_bankconnect_agreement WHERE rowid = '.$agreementId);
-        if (!$res) throw new BankConnectException('Failed to load BankConnect agreement for serviceHeader');
-        $agreement = $this->db->fetch_object($res);
-        if (!$agreement) throw new BankConnectException("BankConnect agreement {$agreementId} not found");
-
-        $mainReg = trim((string)($agreement->main_registration_number ?? ''));
-        $functionId = trim((string)($agreement->bank_connect_id ?? ''));
-        if ($mainReg === '' || $functionId === '') throw new BankConnectException('BankConnect agreement is missing serviceHeader identity');
-
-        return (new ServiceHeaderBuilder())
-            ->setOrganisation($mainReg, 'DK')
-            ->setFunctionIdentification($functionId)
-            ->setEndToEndMessageId((string)$batch['end_to_end_message_id'])
-            ->build();
-    }
 
     private function begin(): void { if (method_exists($this->db, 'begin')) $this->db->begin(); }
     private function commit(): void { if (method_exists($this->db, 'commit')) $this->db->commit(); }
@@ -469,7 +437,6 @@ class PaymentBatchService
         $obj = $this->db->fetch_object($res);
         return $obj ? (array)$obj : null;
     }
-<<<<<<< HEAD
     private function claimSubmission(int $batchId): bool
     {
         $sql = "UPDATE llx_bankconnect_batch SET status = '".PaymentStateMachine::SUBMITTING."'"
@@ -518,8 +485,6 @@ class PaymentBatchService
             throw new BankConnectException("Payment batch {$batchId} state transition did not persist");
         }
     }
-=======
->>>>>>> origin/feature/pr38-status-camt-lifecycle
 
     private function updateBatchStatus(int $batchId, string $status, array $extra = []): void
     {
