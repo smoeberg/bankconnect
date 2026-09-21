@@ -36,11 +36,17 @@ class BankAccountMappingStore
             // A bank account can only belong to one BankConnect agreement in an
             // entity. Remove the previous mapping only after all references have
             // been validated.
-            $delete = "DELETE FROM llx_bankconnect_account_mapping"
+            $deleteAgreement = "DELETE FROM llx_bankconnect_account_mapping"
                 . " WHERE entity = ".$entity
-                . " AND (fk_agreement = ".(int) $agreementId
-                . " OR fk_bank_account = ".(int) $bankAccountId.")";
-            if (!$this->db->query($delete)) {
+                . " AND fk_agreement = ".(int) $agreementId;
+            if (!$this->db->query($deleteAgreement)) {
+                throw new RuntimeException('BankConnect: mapping cleanup failed: '.$this->db->lasterror());
+            }
+
+            $deleteBankAccount = "DELETE FROM llx_bankconnect_account_mapping"
+                . " WHERE entity = ".$entity
+                . " AND fk_bank_account = ".(int) $bankAccountId;
+            if (!$this->db->query($deleteBankAccount)) {
                 throw new RuntimeException('BankConnect: mapping cleanup failed: '.$this->db->lasterror());
             }
 
