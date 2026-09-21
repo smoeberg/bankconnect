@@ -124,15 +124,15 @@ final class BankConnectSoapHeadersTest extends TestCase
         };
 
         $activate = $this->securityClient('BANKDATA', $security);
-        $activated = $activate->secure(BankConnectClient::OP_ACTIVATE_SERVICE_AGREEMENT, 'payload');
+        $activated = $activate->secureOperation(BankConnectClient::OP_ACTIVATE_SERVICE_AGREEMENT, 'payload');
         $this->assertSame('ENCRYPT('.BankConnectXmlSecurity::RSA_OAEP_MGF1P.')(payload)', $activated);
 
         $renew = $this->securityClient('BANKDATA', $security);
-        $renewed = $renew->secure(BankConnectClient::OP_RENEW_CUSTOMER_CERTIFICATE, 'payload');
+        $renewed = $renew->secureOperation(BankConnectClient::OP_RENEW_CUSTOMER_CERTIFICATE, 'payload');
         $this->assertSame('SIGN(ENCRYPT('.BankConnectXmlSecurity::RSA_OAEP_MGF1P.')(payload))', $renewed);
 
         $renewBec = $this->securityClient('BEC', $security);
-        $this->assertSame('ENCRYPT('.BankConnectXmlSecurity::RSA_1_5.')(SIGN(payload))', $renewBec->secure(BankConnectClient::OP_RENEW_CUSTOMER_CERTIFICATE, 'payload'));
+        $this->assertSame('ENCRYPT('.BankConnectXmlSecurity::RSA_1_5.')(SIGN(payload))', $renewBec->secureOperation(BankConnectClient::OP_RENEW_CUSTOMER_CERTIFICATE, 'payload'));
     }
 
     private function securityClient(string $datacenter, BankConnectXmlSecurity $security): BankConnectClient
@@ -144,7 +144,7 @@ final class BankConnectSoapHeadersTest extends TestCase
             {
                 return $this->secureEnvelope(BankConnectClient::OP_TRANSFER_PAYMENTS, $xml);
             }
-            public function secure(string $operation, string $xml): string
+            public function secureOperation(string $operation, string $xml): string
             {
                 return $this->secureEnvelope($operation, $xml);
             }
