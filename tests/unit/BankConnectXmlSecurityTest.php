@@ -159,7 +159,7 @@ class BankConnectXmlSecurityTest extends TestCase
         $this->assertInstanceOf(DOMElement::class,$token);
         $tokenReference=$xp->query('./ds:KeyInfo/wsse:SecurityTokenReference/wsse:Reference',$signature)->item(0);
         $this->assertSame('#'.$token->getAttributeNS(BankConnectXmlSecurity::WSU_NS,'Id'),$tokenReference->getAttribute('URI'));
-        $signedInfo=$xp->query('./ds:SignedInfo',$signature)->item(0)->C14N(true,false);
+        $signedInfo=$xp->query('./ds:SignedInfo',$signature)->item(0)->C14N(true,false,null,['soapenv']);
         $signatureValue=base64_decode($xp->query('./ds:SignatureValue',$signature)->item(0)->textContent,true);
         $this->assertSame(1,openssl_verify($signedInfo,$signatureValue,$this->customerCert,OPENSSL_ALGO_SHA256));
         $this->assertSame(0,$xp->query('/s:Envelope/s:Header/ds:Signature')->length,'Signature must be inside wsse:Security');
