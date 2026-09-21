@@ -72,11 +72,11 @@ class BankConnectClient
 
         try {
             $response = $this->httpPost($envelope, $operation);
-            $responseSecurity = new BankConnectResponseSecurity((string) (($this->conf->global ?? [])['BANKCONNECT_BANK_CERTIFICATE'] ?? ''));
+            $responseSecurity = new BankConnectResponseSecurity($this->conf);
             if ($operation === self::OP_GET_BANK_CERTIFICATE) {
                 $responseSecurity->validateStructure($response);
             } else {
-                $responseSecurity->validateAndVerify($response, $this->expectedResponseOperation($operation));
+                $responseSecurity->verify($response, $this->expectedResponseOperation($operation));
             }
             $duration = (int) ((microtime(true) - $start) * 1000);
             $this->logger->info('soap_call', [
