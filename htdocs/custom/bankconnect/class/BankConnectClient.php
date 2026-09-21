@@ -69,6 +69,9 @@ class BankConnectClient
     {
         $start = microtime(true);
         [$bodyXml, $soapHeaderXml] = $this->extractServiceHeader($operation, $bodyXml);
+        if ($operation === self::OP_GET_BANK_CERTIFICATE && isset($context['activationHeaderXml'])) {
+            $soapHeaderXml = (string) $context['activationHeaderXml'];
+        }
         $envelope = $this->buildEnvelope($bodyXml, $soapHeaderXml);
 
         $envelope = $this->secureEnvelope($operation, $envelope);
@@ -101,12 +104,10 @@ class BankConnectClient
         }
     }
 
-    public function getBankCertificate(string $serviceHeaderXml): string
+    public function getBankCertificate(string $activationHeaderXml): string
     {
-        $body = '<getBankCertificate xmlns="http://bankconnect.dk/schema/2014">'
-              . $serviceHeaderXml
-              . '</getBankCertificate>';
-        return $this->call(self::OP_GET_BANK_CERTIFICATE, $body);
+        $body = '<getBankCertificate xmlns="http://bankconnect.dk/schema/2014"></getBankCertificate>';
+        return $this->call(self::OP_GET_BANK_CERTIFICATE, $body, ['activationHeaderXml' => $activationHeaderXml]);
     }
 
     public function activateServiceAgreement(string $payloadXml): string
@@ -180,8 +181,10 @@ class BankConnectClient
 
     private function extractServiceHeader(string $operation, string $bodyXml): array
     {
-        if ($operation === self::OP_ACTIVATE_SERVICE_AGREEMENT) {
-            return [$bodyXml, ''];
+        if (preg_match('/<activationHeader\b[^>]*>.*?<\/activationHeader>/s', $bodyXml, $m)) {
+            $header=$m[0];
+            $body=str_replace($header,'',$bodyXml);
+            return [$body,$header];
         }
 
         if (preg_match('/<serviceHeader\b[^>]*>.*?<\/serviceHeader>/s', $bodyXml, $m)) {
@@ -206,16 +209,27 @@ class BankConnectClient
         if ($this->xmlSecurity === null && ($operation === self::OP_TRANSFER_PAYMENTS || $this->mustSign($operation))) {
             throw new BankConnectException('XML security is required for signed BankConnect operations');
         }
+        if ($operation === self::OP_ACTIVATE_SERVICE_AGREEMENT) {
+            return $this->xmlSecurity->encryptSoapBody($envelope, BankConnectXmlSecurity::RSA_OAEP_MGF1P);
+        }
+        if ($operation === self::OP_RENEW_CUSTOMER_CERTIFICATE) {
+            return $this->secureEncryptedSignedOperation($envelope);
+        }
         if ($operation !== self::OP_TRANSFER_PAYMENTS) {
             return $this->mustSign($operation) ? $this->xmlSecurity->signRequest($envelope) : $envelope;
         }
         if (!in_array($this->datacenter, ['BANKDATA', 'NBS', 'BEC'], true)) {
             throw new BankConnectException('BANKCONNECT_DATACENTER must be BANKDATA, NBS or BEC for TransferPayment');
         }
+        return $this->secureEncryptedSignedOperation($envelope);
+    }
+
+    private function secureEncryptedSignedOperation(string $envelope): string
+    {
         if ($this->datacenter === 'BEC') {
-            return $this->xmlSecurity->encryptSoapBody($this->xmlSecurity->signRequest($envelope));
+            return $this->xmlSecurity->encryptSoapBody($this->xmlSecurity->signRequest($envelope), BankConnectXmlSecurity::RSA_1_5);
         }
-        return $this->xmlSecurity->signRequest($this->xmlSecurity->encryptSoapBody($envelope));
+        return $this->xmlSecurity->signRequest($this->xmlSecurity->encryptSoapBody($envelope, BankConnectXmlSecurity::RSA_OAEP_MGF1P));
     }
 
     /**
