@@ -38,7 +38,7 @@ class ReconciliationServiceTest extends TestCase
         $result = $this->service->propose(
             7,
             42,
-            bcMakeTx(),
+            bcMakeTx(['reference' => 'FA240891']),
             bcMakeCandidates()
         );
 
