@@ -27,7 +27,17 @@ class BankConnectResponseSecurity
 
     public function validateStructure(string $responseXml): string
     {
-        $this->loadDocument($responseXml);
+        $doc = $this->loadDocument($responseXml);
+        $xp = new DOMXPath($doc);
+        $xp->registerNamespace('s', 'http://schemas.xmlsoap.org/soap/envelope/');
+        if ($xp->query('/s:Envelope')->length !== 1
+            || $xp->query('/s:Envelope/s:Header')->length !== 1
+            || $xp->query('/s:Envelope/s:Body')->length !== 1) {
+            throw new BankConnectException('BankConnect response must contain exactly one SOAP Envelope, Header and Body');
+        }
+        if ($xp->query('/s:Envelope/s:Body/s:Fault')->length !== 0) {
+            throw new BankConnectException('BankConnect returned a SOAP Fault');
+        }
         return $responseXml;
     }
 
