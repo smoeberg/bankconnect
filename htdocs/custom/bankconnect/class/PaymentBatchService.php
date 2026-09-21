@@ -81,19 +81,10 @@ class PaymentBatchService
     public function sendBatch(int $batchId): array
     {
         $batch = $this->fetchBatch($batchId);
-<<<<<<< HEAD
         if (!$batch) {
             throw new BankConnectException("Batch {$batchId} not found");
         }
         $status = (string) ($batch['status'] ?? '');
-=======
-        if (!$batch) throw new BankConnectException("Batch {$batchId} not found");
-
-        $status = (string)($batch['status'] ?? '');
-        if (!in_array($status, ['draft', 'prepared'], true)) {
-            throw new BankConnectException("Batch {$batchId} cannot be submitted from status {$status}");
-        }
->>>>>>> origin/feature/pr38-status-camt-lifecycle
         if ($this->client === null) {
             throw new BankConnectException('BankConnectClient is required for payment submission');
         }
@@ -141,11 +132,14 @@ class PaymentBatchService
         try {
             require_once __DIR__.'/BankConnectXmlSecurity.php';
             $security = new BankConnectXmlSecurity($this->conf);
-            $built = $security->buildTransferPayment($batch['pain001_xml'], $batch['end_to_end_message_id']);
+            $built = $security->buildTransferPayment(
+                $batch['pain001_xml'],
+                $batch['end_to_end_message_id']
+            );
             $paymentMessage = $built['xml'];
             $serviceHeader = $this->buildServiceHeaderForBatch($batch);
             $paymentMessage = preg_replace(
-                '/^(<transferPayment\b[^>]*>)/',
+                '/^(<transferPayment\\b[^>]*>)/',
                 '$1'.$serviceHeader,
                 $paymentMessage,
                 1,
@@ -162,24 +156,22 @@ class PaymentBatchService
         try {
             $response = $this->client->transferPayments($paymentMessage, $batch['end_to_end_message_id']);
         } catch (Throwable $e) {
-<<<<<<< HEAD
             // The transport outcome is unknown. Never claim rejection or success.
             $this->transitionBatchStatus($batchId, PaymentStateMachine::SUBMITTING, PaymentStateMachine::UNKNOWN, [
                 'message' => 'BankConnect transport outcome is unknown: '.$e->getMessage(),
-=======
-            $this->updateBatchStatus($batchId, 'unknown', [
-                'message' => 'BankConnect transport outcome is unknown',
->>>>>>> origin/feature/pr38-status-camt-lifecycle
                 'date_status' => date('Y-m-d H:i:s'),
             ]);
-            $this->logger->error('payment_unknown', ['batch_id' => $batchId, 'error_class' => get_class($e)]);
-            throw new BankConnectException('BankConnect submission outcome is unknown; reconcile status before retry', 0, $e);
+            throw new BankConnectException('BankConnect submission outcome is unknown; status must be reconciled before retry', 0, $e);
         }
 
         $correlationId = null;
         $responseCode = 'OK';
-        if (preg_match('/<correlationId>([^<]+)<\/correlationId>/', $response, $m)) $correlationId = $m[1];
-        if (preg_match('/<responseCode>([^<]+)<\/responseCode>/', $response, $m)) $responseCode = $m[1];
+        if (preg_match('/<correlationId>([^<]+)<\/correlationId>/', $response, $m)) {
+            $correlationId = $m[1];
+        }
+        if (preg_match('/<responseCode>([^<]+)<\/responseCode>/', $response, $m)) {
+            $responseCode = $m[1];
+        }
 
         $this->transitionBatchStatus($batchId, PaymentStateMachine::SUBMITTING, PaymentStateMachine::SUBMITTED, [
             'response_code' => $responseCode,
@@ -192,67 +184,29 @@ class PaymentBatchService
         return ['status' => 'submitted', 'response_code' => $responseCode, 'correlation_id' => $correlationId];
     }
 
-    /**
-     * Fetch and apply a verified pain.002 status report.
-     *
-     * A supplied XML string is test-only input; live getStatus() already passes
-     * through BankConnectResponseSecurity in BankConnectClient.
-     */
+    /** @return array{group_status:?string,updated_lines:int,transactions:array} */
     public function refreshStatus(int $batchId, ?string $serviceHeaderXml = null, ?string $pain002Xml = null): array
     {
         $batch = $this->fetchBatch($batchId);
         if (!$batch) throw new BankConnectException("Batch {$batchId} not found");
-
         if ($pain002Xml === null) {
             if ($this->client === null) throw new BankConnectException('No BankConnectClient and no pain.002 XML provided');
             if (!$serviceHeaderXml) throw new BankConnectException('ServiceHeader XML is required for getStatus');
             $pain002Xml = $this->client->getStatus($serviceHeaderXml);
         }
-
         $parsed = (new Pain002Parser())->parse($pain002Xml);
-
-        $originalMessageId = trim((string)($parsed['original_msg_id'] ?? ''));
-        $batchMsgId = trim((string)($batch['msg_id'] ?? ''));
-        if ($originalMessageId !== '' && $batchMsgId !== '' && !hash_equals($batchMsgId, $originalMessageId)) {
-            throw new BankConnectException('pain.002 does not belong to the requested payment batch');
-        }
-
         $updated = 0;
-        $unknown = 0;
         foreach ($parsed['transactions'] as $tx) {
-            $internal = $tx['semantic_status'];
-            if ($internal === Pain002Parser::INTERNAL_UNKNOWN) {
-                $unknown++;
-            }
-            if ($tx['end_to_end_id'] === '') {
-                continue;
-            }
-
-            if ($this->updateBatchLineByEndToEnd(
-                $batchId,
-                $tx['end_to_end_id'],
-                $internal,
-                $tx['status'],
-                trim(($tx['reason_code'] ?? '').' '.($tx['reason_text'] ?? '')),
-                $internal === Pain002Parser::INTERNAL_UNKNOWN
-            )) {
-                $updated++;
-            }
+            $internal = Pain002Parser::mapToInternalStatus($tx['status']);
+            $reason = trim(($tx['reason_code'] ?? '').' '.($tx['reason_text'] ?? ''));
+            if ($this->updateBatchLineByEndToEnd($batchId, $tx['end_to_end_id'], $internal, $tx['status'], $reason !== '' ? $reason : null)) $updated++;
         }
-
         $batchStatus = $this->deriveBatchStatus($parsed['group_status'], $parsed['transactions']);
-        $this->updateBatchStatus($batchId, $batchStatus, [
-            'date_status' => date('Y-m-d H:i:s'),
-            'message' => 'Status refreshed from verified pain.002',
-        ]);
-        $this->logger->info('status_refreshed', [
-            'batch_id' => $batchId,
-            'group_status' => $parsed['group_status'],
-            'updated' => $updated,
-            'unknown' => $unknown,
-        ]);
+        $this->updateBatchStatus($batchId, $batchStatus, ['date_status' => date('Y-m-d H:i:s'), 'message' => 'Status refreshed from pain.002']);
+        $this->logger->info('status_refreshed', ['batch_id' => $batchId, 'group_status' => $parsed['group_status'], 'updated' => $updated]);
+        return ['group_status' => $parsed['group_status'], 'updated_lines' => $updated, 'transactions' => $parsed['transactions']];
+    }
 
-<<<<<<< HEAD
     /**
      * Reconcile a batch whose submission outcome is unknown.
      *
@@ -382,14 +336,174 @@ class PaymentBatchService
             ->setFunctionIdentification($functionId)
             ->setEndToEndMessageId((string) $batch['end_to_end_message_id'])
             ->build();
-=======
+    }
+
+    private function deriveBatchStatus(?string $groupStatus, array $transactions): string
+    {
+        if ($groupStatus === 'ACCP' || $groupStatus === 'ACSC') return 'accepted';
+        if ($groupStatus === 'RJCT') return 'rejected';
+        if ($groupStatus === 'PART') return 'partial';
+        $statuses = array_unique(array_map(fn($t) => Pain002Parser::mapToInternalStatus($t['status']), $transactions));
+        if (count($statuses) === 1) return $statuses[0];
+        if (in_array('rejected', $statuses, true) && in_array('accepted', $statuses, true)) return 'partial';
+        if (in_array('pending', $statuses, true)) return 'pending';
+        return 'submitted';
+    }
+
+    private function updateBatchLineByEndToEnd(int $batchId, string $endToEndId, string $status, string $pain002Status, ?string $reason): bool
+    {
+        $sets = ["status = '".$this->db->escape($status)."'", "pain002_status = '".$this->db->escape($pain002Status)."'"];
+        if ($reason !== null) $sets[] = "status_reason = '".$this->db->escape(substr($reason, 0, 255))."'";
+        return (bool) $this->db->query("UPDATE llx_bankconnect_batch_line SET ".implode(', ', $sets)." WHERE fk_batch = ".(int)$batchId." AND end_to_end_id = '".$this->db->escape($endToEndId)."'");
+    }
+    private function begin(): void { if (method_exists($this->db, 'begin')) $this->db->begin(); }
+    private function commit(): void { if (method_exists($this->db, 'commit')) $this->db->commit(); }
+    private function rollback(): void { if (method_exists($this->db, 'rollback')) $this->db->rollback(); }
+    private function insertBatch(array $d): int
+    {
+        $sql = "INSERT INTO llx_bankconnect_batch (entity,fk_agreement,end_to_end_message_id,msg_id,status,pain001_xml,control_sum,nb_of_txs,date_sent) VALUES (".(int)$d['entity'].",".(int)$d['fk_agreement'].",'".$this->db->escape($d['end_to_end_message_id'])."','".$this->db->escape($d['msg_id'])."','".$this->db->escape($d['status'])."','".$this->db->escape($d['pain001_xml'])."',".(float)$d['control_sum'].",".(int)$d['nb_of_txs'].",NULL)";
+        if (!$this->db->query($sql)) throw new BankConnectException('INSERT batch failed: '.$this->db->lasterror());
+        return (int)$this->db->last_insert_id('llx_bankconnect_batch');
+    }
+    private function insertBatchLine(int $batchId, array $tx): void
+    {
+        $sql = "INSERT INTO llx_bankconnect_batch_line (fk_batch,end_to_end_id,amount,currency,fk_facture_fourn,fk_facture,status) VALUES (".$batchId.",'".$this->db->escape($tx['endToEndId'])."',".(float)$tx['amount'].",'".$this->db->escape($tx['currency'] ?? 'DKK')."',".(isset($tx['fk_facture_fourn'])?(int)$tx['fk_facture_fourn']:'NULL').",".(isset($tx['fk_facture'])?(int)$tx['fk_facture']:'NULL').",'draft')";
+        if (!$this->db->query($sql)) throw new BankConnectException('INSERT batch_line failed: '.$this->db->lasterror());
+    }
+    private function fetchBatch(int $batchId): ?array
+    {
+        $res = $this->db->query('SELECT * FROM llx_bankconnect_batch WHERE rowid = '.(int)$batchId);
+        if (!$res) return null;
+        $obj = $this->db->fetch_object($res);
+        return $obj ? (array)$obj : null;
+    }
+    private function claimSubmission(int $batchId): bool
+    {
+        $sql = "UPDATE llx_bankconnect_batch SET status = '".PaymentStateMachine::SUBMITTING."'"
+             . " WHERE rowid = ".(int)$batchId
+             . " AND status = '".PaymentStateMachine::PREPARED."'";
+        if (!$this->db->query($sql)) {
+            throw new BankConnectException('Failed to claim payment submission: '.$this->db->lasterror());
+        }
+
+        // DoliDB exposes affected_rows() on real database drivers. The
+        // fallback SELECT keeps the unit-test DB deterministic while the
+        // conditional UPDATE remains the production concurrency boundary.
+        if (method_exists($this->db, 'affected_rows')) {
+            return (int)$this->db->affected_rows() === 1;
+        }
+
+        $current = $this->fetchBatch($batchId);
+        return (string)($current['status'] ?? '') === PaymentStateMachine::SUBMITTING;
+    }
+
+    private function transitionBatchStatus(int $batchId, string $from, string $to, array $extra = []): void
+    {
+        PaymentStateMachine::assertTransition($from, $to);
+        $sets = ["status = '".$this->db->escape($to)."'"];
+        foreach (['response_code','message','correlation_id','date_sent','date_status'] as $field) {
+            if (isset($extra[$field])) {
+                $sets[] = $field." = '".$this->db->escape($extra[$field])."'";
+            }
+        }
+        $sql = 'UPDATE llx_bankconnect_batch SET '.implode(', ', $sets)
+             .' WHERE rowid = '.(int)$batchId
+             ." AND status = '".$this->db->escape($from)."'";
+        if (!$this->db->query($sql)) {
+            throw new BankConnectException('Payment state transition failed: '.$this->db->lasterror());
+        }
+
+        if (method_exists($this->db, 'affected_rows')) {
+            if ((int)$this->db->affected_rows() !== 1) {
+                throw new BankConnectException("Payment batch {$batchId} state changed concurrently");
+            }
+            return;
+        }
+
+        $current = $this->fetchBatch($batchId);
+        if ((string)($current['status'] ?? '') !== $to) {
+            throw new BankConnectException("Payment batch {$batchId} state transition did not persist");
+        }
+    }
+
+    private function updateBatchStatus(int $batchId, string $status, array $extra = []): void
+    {
+        $sets = ["status = '".$this->db->escape($status)."'"];
+        foreach (['response_code','message','correlation_id','date_sent','date_status'] as $field) {
+            if (isset($extra[$field])) $sets[] = $field." = '".$this->db->escape($extra[$field])."'";
+        }
+        $this->db->query('UPDATE llx_bankconnect_batch SET '.implode(', ', $sets).' WHERE rowid = '.(int)$batchId);
+    }
+    private function generateEndToEndMessageId(): string
+    {
+        return bin2hex(random_bytes(16));
+    }
+}    /**
+     * Fetch and apply a verified pain.002 status report.
+     *
+     * A supplied XML string is test-only input; live getStatus() already passes
+     * through BankConnectResponseSecurity in BankConnectClient.
+     */
+    public function refreshStatus(int $batchId, ?string $serviceHeaderXml = null, ?string $pain002Xml = null): array
+    {
+        $batch = $this->fetchBatch($batchId);
+        if (!$batch) throw new BankConnectException("Batch {$batchId} not found");
+
+        if ($pain002Xml === null) {
+            if ($this->client === null) throw new BankConnectException('No BankConnectClient and no pain.002 XML provided');
+            if (!$serviceHeaderXml) throw new BankConnectException('ServiceHeader XML is required for getStatus');
+            $pain002Xml = $this->client->getStatus($serviceHeaderXml);
+        }
+
+        $parsed = (new Pain002Parser())->parse($pain002Xml);
+
+        $originalMessageId = trim((string)($parsed['original_msg_id'] ?? ''));
+        $batchMsgId = trim((string)($batch['msg_id'] ?? ''));
+        if ($originalMessageId !== '' && $batchMsgId !== '' && !hash_equals($batchMsgId, $originalMessageId)) {
+            throw new BankConnectException('pain.002 does not belong to the requested payment batch');
+        }
+
+        $updated = 0;
+        $unknown = 0;
+        foreach ($parsed['transactions'] as $tx) {
+            $internal = $tx['semantic_status'];
+            if ($internal === Pain002Parser::INTERNAL_UNKNOWN) {
+                $unknown++;
+            }
+            if ($tx['end_to_end_id'] === '') {
+                continue;
+            }
+
+            if ($this->updateBatchLineByEndToEnd(
+                $batchId,
+                $tx['end_to_end_id'],
+                $internal,
+                $tx['status'],
+                trim(($tx['reason_code'] ?? '').' '.($tx['reason_text'] ?? '')),
+                $internal === Pain002Parser::INTERNAL_UNKNOWN
+            )) {
+                $updated++;
+            }
+        }
+
+        $batchStatus = $this->deriveBatchStatus($parsed['group_status'], $parsed['transactions']);
+        $this->updateBatchStatus($batchId, $batchStatus, [
+            'date_status' => date('Y-m-d H:i:s'),
+            'message' => 'Status refreshed from verified pain.002',
+        ]);
+        $this->logger->info('status_refreshed', [
+            'batch_id' => $batchId,
+            'group_status' => $parsed['group_status'],
+            'updated' => $updated,
+            'unknown' => $unknown,
+        ]);
+
         return [
             'group_status' => $parsed['group_status'],
             'updated_lines' => $updated,
             'unknown_lines' => $unknown,
             'transactions' => $parsed['transactions'],
         ];
->>>>>>> origin/feature/pr38-status-camt-lifecycle
     }
 
     private function deriveBatchStatus(?string $groupStatus, array $transactions): string
@@ -469,57 +583,6 @@ class PaymentBatchService
         $obj = $this->db->fetch_object($res);
         return $obj ? (array)$obj : null;
     }
-<<<<<<< HEAD
-    private function claimSubmission(int $batchId): bool
-    {
-        $sql = "UPDATE llx_bankconnect_batch SET status = '".PaymentStateMachine::SUBMITTING."'"
-             . " WHERE rowid = ".(int)$batchId
-             . " AND status = '".PaymentStateMachine::PREPARED."'";
-        if (!$this->db->query($sql)) {
-            throw new BankConnectException('Failed to claim payment submission: '.$this->db->lasterror());
-        }
-
-        // DoliDB exposes affected_rows() on real database drivers. The
-        // fallback SELECT keeps the unit-test DB deterministic while the
-        // conditional UPDATE remains the production concurrency boundary.
-        if (method_exists($this->db, 'affected_rows')) {
-            return (int)$this->db->affected_rows() === 1;
-        }
-
-        $current = $this->fetchBatch($batchId);
-        return (string)($current['status'] ?? '') === PaymentStateMachine::SUBMITTING;
-    }
-
-    private function transitionBatchStatus(int $batchId, string $from, string $to, array $extra = []): void
-    {
-        PaymentStateMachine::assertTransition($from, $to);
-        $sets = ["status = '".$this->db->escape($to)."'"];
-        foreach (['response_code','message','correlation_id','date_sent','date_status'] as $field) {
-            if (isset($extra[$field])) {
-                $sets[] = $field." = '".$this->db->escape($extra[$field])."'";
-            }
-        }
-        $sql = 'UPDATE llx_bankconnect_batch SET '.implode(', ', $sets)
-             .' WHERE rowid = '.(int)$batchId
-             ." AND status = '".$this->db->escape($from)."'";
-        if (!$this->db->query($sql)) {
-            throw new BankConnectException('Payment state transition failed: '.$this->db->lasterror());
-        }
-
-        if (method_exists($this->db, 'affected_rows')) {
-            if ((int)$this->db->affected_rows() !== 1) {
-                throw new BankConnectException("Payment batch {$batchId} state changed concurrently");
-            }
-            return;
-        }
-
-        $current = $this->fetchBatch($batchId);
-        if ((string)($current['status'] ?? '') !== $to) {
-            throw new BankConnectException("Payment batch {$batchId} state transition did not persist");
-        }
-    }
-=======
->>>>>>> origin/feature/pr38-status-camt-lifecycle
 
     private function updateBatchStatus(int $batchId, string $status, array $extra = []): void
     {
