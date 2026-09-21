@@ -135,6 +135,34 @@ class PaymentBatchServiceTest extends TestCase
         $this->assertSame($root, $paymentMessages->item(0)->parentNode);
     }
 
+    public function testUnknownPain002StatusBecomesUnknownAndManualReview(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $pain002 = <<<XML
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03">
+  <CstmrPmtStsRpt><GrpHdr><MsgId>ST2</MsgId></GrpHdr>
+    <OrgnlGrpInfAndSts><OrgnlMsgId>{$created['msg_id']}</OrgnlMsgId><GrpSts>WTF1</GrpSts></OrgnlGrpInfAndSts>
+    <OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>WTF1</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>
+  </CstmrPmtStsRpt>
+</Document>
+XML;
+        $result = $this->svc->refreshStatus($created['batch_id'], null, $pain002);
+        $this->assertSame('unknown', $result['transactions'][0]['semantic_status']);
+        $this->assertSame(1, $result['unknown_lines']);
+        $res = $this->db->query('SELECT status, requires_manual_review FROM llx_bankconnect_batch_line WHERE fk_batch = '.$created['batch_id']);
+        $line = $this->db->fetch_object($res);
+        $this->assertSame('unknown', $line->status);
+        $this->assertSame(1, (int)$line->requires_manual_review);
+    }
+
+    public function testPain002ForAnotherBatchIsRejected(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03"><CstmrPmtStsRpt><GrpHdr><MsgId>ST3</MsgId></GrpHdr><OrgnlGrpInfAndSts><OrgnlMsgId>OTHER</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts></CstmrPmtStsRpt></Document>';
+        $this->expectException(BankConnectException::class);
+        $this->svc->refreshStatus($created['batch_id'], null, $pain002);
+    }
+
     public function testSendUnknownBatchThrows(): void
     {
         $this->expectException(BankConnectException::class);
