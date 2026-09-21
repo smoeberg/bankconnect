@@ -6,7 +6,7 @@ require_once __DIR__.'/../../htdocs/custom/bankconnect/class/MatchResult.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankTransaction.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/Candidate.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/MistralMatcher.php';
-require_once __DIR__.'/../../htdocs/bankconnect/class/ReconciliationEngine.php';
+require_once __DIR__.'/../../htdocs/custom/bankconnect/class/ReconciliationEngine.php';
 
 final class PerformanceQualificationTest extends TestCase
 {
