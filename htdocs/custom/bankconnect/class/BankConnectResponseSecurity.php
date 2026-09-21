@@ -133,6 +133,10 @@ class BankConnectResponseSecurity
         if ($references->length < 1) {
             throw new BankConnectException('BankConnect response signature contains no references');
         }
+        $bodyId = $body instanceof DOMElement ? $body->getAttributeNS($wsuNs, 'Id') : '';
+        if ($bodyId === '') {
+            throw new BankConnectException('BankConnect response SOAP Body must have a WS-Security identifier');
+        }
 
         $seenReferences = [];
         foreach ($references as $reference) {
@@ -173,6 +177,10 @@ class BankConnectResponseSecurity
             if (!hash_equals(trim($digestValue->item(0)->textContent), $actualDigest)) {
                 throw new BankConnectException('BankConnect response reference digest verification failed');
             }
+        }
+
+        if (!isset($seenReferences[$bodyId])) {
+            throw new BankConnectException('BankConnect response SOAP Body is not covered by the XML signature');
         }
 
         $canonicalSignedInfo = $signedInfo->item(0)->C14N(true, false);
