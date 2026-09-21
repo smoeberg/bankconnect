@@ -125,9 +125,9 @@ XML;
     {
         $txs = (new CamtParser())->parse(self::CAMT_BATCH);
         $this->assertSame('STMT-2026-09-14', $txs[0]->statementId);
-        $this->assertSame('BATCH-001:0', $txs[0]->transactionId);
+        $this->assertSame('INV-1', $txs[0]->transactionId);
         $this->assertSame('STMT-2026-09-14', $txs[1]->statementId);
-        $this->assertSame('BATCH-001:1', $txs[1]->transactionId);
+        $this->assertSame('INV-2', $txs[1]->transactionId);
     }
 
     public function testRejectsDtd(): void
