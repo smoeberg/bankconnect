@@ -75,7 +75,11 @@ class ReconciliationEngine
             return $ruleResult;
         }
         if ($this->ai !== null) {
-            return $this->ai->match($tx, $candidates);
+            $result = $this->ai->match($tx, $candidates);
+        if ($result->ruleName === '') {
+            $result->ruleName = 'ai_fallback';
+        }
+        return $result;
         }
         return MatchResult::none('Ingen regel matchede, AI deaktiveret');
     }
@@ -148,6 +152,7 @@ class ReconciliationEngine
                 $r = new MatchResult();
                 $r->matchType = 'exact';
                 $r->confidence = self::CONF_REFERENCE;
+                $r->ruleName = 'reference_amount';
                 $r->suggested = [['id' => $c->id, 'type' => $c->type, 'amount' => $amt]];
                 $r->reason = 'Prcis struktureret reference (FI71/OCR/EndToEndId) og belb matcher';
                 $r->source = 'rule';
@@ -160,12 +165,14 @@ class ReconciliationEngine
             $r = new MatchResult();
             $r->matchType = 'multiple';
             $r->confidence = 0.60;
+            $r->ruleName = 'reference_ambiguous';
             $r->suggested = [];
             foreach ($refMatches as $c) {
                 $r->suggested[] = ['id' => $c->id, 'type' => $c->type, 'amount' => $c->remaining];
             }
             $r->reason = 'Flere fakturaer matcher samme reference';
             $r->source = 'rule';
+            if ($r->ruleName === '') { $r->ruleName = 'rule'; }
             return $r;
         }
 
@@ -220,6 +227,7 @@ class ReconciliationEngine
                 $r = new MatchResult();
                 $r->matchType = 'exact';
                 $r->confidence = $confidence;
+                $r->ruleName = $requireThirdparty ? 'amount_thirdparty_1d' : ($days === 1 ? 'amount_1d' : 'amount_3d');
                 $r->suggested = [['id' => $c->id, 'type' => $c->type, 'amount' => $amt]];
                 $r->reason = $requireThirdparty
                     ? 'Belb, modpart og dato (1 dg) matcher'
@@ -233,6 +241,7 @@ class ReconciliationEngine
                 $r = new MatchResult();
                 $r->matchType = 'multiple';
                 $r->confidence = 0.50;
+                $r->ruleName = $requireThirdparty ? 'amount_ambiguous_thirdparty' : 'amount_ambiguous';
                 $r->suggested = [];
                 foreach ($matches as $c) {
                     $r->suggested[] = ['id' => $c->id, 'type' => $c->type, 'amount' => $c->remaining];
@@ -269,6 +278,7 @@ class ReconciliationEngine
                 $r = new MatchResult();
                 $r->matchType = 'multiple';
                 $r->confidence = self::CONF_MULTI_SUM;
+                $r->ruleName = 'multi_sum';
                 $r->suggested = [];
                 foreach ($found as $c) {
                     $r->suggested[] = ['id' => $c->id, 'type' => $c->type, 'amount' => $c->remaining];
@@ -316,6 +326,7 @@ class ReconciliationEngine
         $r = new MatchResult();
         $r->matchType = 'partial';
         $r->confidence = self::CONF_PARTIAL;
+        $r->ruleName = 'reference_partial';
         $r->suggested = [['id' => $c->id, 'type' => $c->type, 'amount' => $amt]];
         $r->reason = 'Reference matcher, belb afviger';
         $r->source = 'rule';
@@ -361,6 +372,7 @@ class ReconciliationEngine
             $r = new MatchResult();
             $r->matchType = 'partial';
             $r->confidence = self::CONF_TEXT;
+            $r->ruleName = 'text_similarity';
             $r->suggested = [['id' => $best->id, 'type' => $best->type, 'amount' => $best->remaining]];
             $r->reason = 'Tekstlighed (svag indikator - krver manuel bekraftelse)';
             $r->source = 'rule';
