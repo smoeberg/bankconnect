@@ -306,6 +306,111 @@ class CertificateManagerTest extends TestCase
 }
 
 
+    public function testCertificateStateDistinguishesValidExpiringExpiredAndImported(): void
+    {
+        $mgr = new BankConnectCertificateManager($this->conf);
+        $key = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        $this->assertNotFalse($key);
+        $csr = openssl_csr_new(['commonName' => 'state-test'], $key, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($csr);
+        $cert = openssl_csr_sign($csr, null, $key, 365, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($cert);
+        openssl_x509_export($cert, $pem);
+        $meta = $mgr->validateCertificatePem($pem);
+
+        $this->assertSame(BankConnectCertificateManager::STATE_VALID, $mgr->certificateState(
+            ['certificate_pem' => $pem],
+            strtotime($meta['valid_from']) + 86400,
+            30
+        ));
+        $this->assertSame(BankConnectCertificateManager::STATE_EXPIRING, $mgr->certificateState(
+            ['certificate_pem' => $pem],
+            strtotime($meta['valid_to']) - (5 * 86400),
+            30
+        ));
+        $this->assertSame(BankConnectCertificateManager::STATE_EXPIRED, $mgr->certificateState(
+            ['certificate_pem' => $pem],
+            strtotime($meta['valid_to']) + 1,
+            30
+        ));
+        $this->assertSame(BankConnectCertificateManager::STATE_IMPORTED, $mgr->certificateState(
+            ['certificate_pem' => $pem],
+            strtotime($meta['valid_from']) - 1,
+            30
+        ));
+    }
+
+    public function testCertificateStateIsFailClosedForInvalidAndRevoked(): void
+    {
+        $mgr = new BankConnectCertificateManager($this->conf);
+        $this->assertSame(BankConnectCertificateManager::STATE_MISSING, $mgr->certificateState([]));
+        $this->assertSame(BankConnectCertificateManager::STATE_INVALID, $mgr->certificateState(['certificate_pem' => 'not-a-certificate']));
+        $this->assertSame(BankConnectCertificateManager::STATE_REVOKED, $mgr->certificateState([
+            'certificate_pem' => 'not-a-certificate',
+            'revoked_at' => '2026-09-21 00:00:00',
+        ]));
+    }
+
+    public function testCertificateFingerprintIsStableAndValidationRejectsWeakRsa(): void
+    {
+        $mgr = new BankConnectCertificateManager($this->conf);
+        $key = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        $this->assertNotFalse($key);
+        $csr = openssl_csr_new(['commonName' => 'fingerprint-test'], $key, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($csr);
+        $cert = openssl_csr_sign($csr, null, $key, 365, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($cert);
+        openssl_x509_export($cert, $pem);
+        $fp = $mgr->certificateFingerprint($pem);
+        $this->assertMatchesRegularExpression('/^[0-9A-F]{64}$/', $fp);
+        $this->assertSame($fp, $mgr->certificateFingerprint($pem));
+    }
+
+    public function testMultipleReturnedCertificatesRequirePrivateKeyBinding(): void
+    {
+        $mgr = new BankConnectCertificateManager($this->conf);
+        $key = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        $other = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        $this->assertNotFalse($key);
+        $this->assertNotFalse($other);
+        openssl_pkey_export($key, $private);
+        openssl_csr_new(['commonName' => 'customer'], $key, ['digest_alg' => 'sha256'], $csr);
+        $cert = openssl_csr_sign($csr, null, $key, 365, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($cert);
+        openssl_x509_export($cert, $pem);
+        $csr2 = openssl_csr_new(['commonName' => 'other'], $other, ['digest_alg' => 'sha256']);
+        $cert2 = openssl_csr_sign($csr2, null, $other, 365, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($cert2);
+        openssl_x509_export($cert2, $pem2);
+        $raw = $pem.$pem2;
+        $this->expectException(BankConnectException::class);
+        $mgr->extractCustomerCertificatePem($raw);
+    }
+
+    public function testMatchingCertificateIsSelectedFromMultipleReturnedCertificates(): void
+    {
+        $mgr = new BankConnectCertificateManager($this->conf);
+        $key = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        $other = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        $this->assertNotFalse($key);
+        $this->assertNotFalse($other);
+        openssl_pkey_export($key, $private);
+        $csr = openssl_csr_new(['commonName' => 'customer'], $key, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($csr);
+        $cert = openssl_csr_sign($csr, null, $key, 365, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($cert);
+        openssl_x509_export($cert, $pem);
+        $csr2 = openssl_csr_new(['commonName' => 'other'], $other, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($csr2);
+        $cert2 = openssl_csr_sign($csr2, null, $other, 365, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($cert2);
+        openssl_x509_export($cert2, $pem2);
+
+        $this->assertSame($pem, $mgr->extractCustomerCertificatePem($pem2.$pem, $private));
+    }
+
+
+
 class RenewalMismatchClient extends BankConnectClient
 {
     private string $response;
