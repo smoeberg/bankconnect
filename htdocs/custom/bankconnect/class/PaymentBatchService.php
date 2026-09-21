@@ -206,6 +206,105 @@ class PaymentBatchService
         return ['group_status' => $parsed['group_status'], 'updated_lines' => $updated, 'transactions' => $parsed['transactions']];
     }
 
+    /**
+     * Reconcile a batch whose submission outcome is unknown.
+     *
+     * This is the only supported recovery path for an unknown submission:
+     * query the bank status and require the returned pain.002 to identify
+     * this exact batch before changing its persisted state. No resubmission
+     * is attempted by this method.
+     *
+     * @return array{status:string,reconciled:bool,group_status:?string,updated_lines:int,transactions:array}
+     */
+    public function resolveUnknownBatch(int $batchId, ?string $serviceHeaderXml = null, ?string $pain002Xml = null): array
+    {
+        $batch = $this->fetchBatch($batchId);
+        if (!$batch) {
+            throw new BankConnectException("Batch {$batchId} not found");
+        }
+        if ((string) ($batch['status'] ?? '') !== 'unknown') {
+            throw new BankConnectException("Batch {$batchId} is not in unknown status");
+        }
+
+        if ($pain002Xml === null) {
+            if ($this->client === null) {
+                throw new BankConnectException('BankConnectClient is required to reconcile an unknown batch');
+            }
+            if (!$serviceHeaderXml) {
+                throw new BankConnectException('ServiceHeader XML is required to reconcile an unknown batch');
+            }
+            try {
+                $pain002Xml = $this->client->getStatus($serviceHeaderXml);
+            } catch (Throwable $e) {
+                // Keep UNKNOWN: a failed status lookup provides no evidence about the remote payment.
+                $this->logger->error('unknown_batch_reconciliation_failed', [
+                    'batch_id' => $batchId,
+                    'error' => $e->getMessage(),
+                ]);
+                throw new BankConnectException('Unable to reconcile unknown batch; remote outcome remains unknown', 0, $e);
+            }
+        }
+
+        $parsed = (new Pain002Parser())->parse($pain002Xml);
+        $expectedMsgId = trim((string) ($batch['msg_id'] ?? ''));
+        $reportedMsgId = trim((string) ($parsed['original_msg_id'] ?? ''));
+
+        // Never mutate UNKNOWN unless the bank response is explicitly tied to this batch.
+        if ($expectedMsgId === '' || $reportedMsgId === '' || !hash_equals($expectedMsgId, $reportedMsgId)) {
+            $this->logger->error('unknown_batch_reconciliation_unmatched', [
+                'batch_id' => $batchId,
+                'expected_msg_id' => $expectedMsgId,
+                'reported_msg_id' => $reportedMsgId,
+            ]);
+            throw new BankConnectException('Bank status response does not identify the unknown batch; status remains unknown');
+        }
+
+        $updated = 0;
+        foreach ($parsed['transactions'] as $tx) {
+            $endToEndId = trim((string) ($tx['end_to_end_id'] ?? ''));
+            if ($endToEndId === '') {
+                continue;
+            }
+            $internal = Pain002Parser::mapToInternalStatus($tx['status']);
+            $reason = trim(($tx['reason_code'] ?? '').' '.($tx['reason_text'] ?? ''));
+            if ($this->updateBatchLineByEndToEnd($batchId, $endToEndId, $internal, $tx['status'], $reason !== '' ? $reason : null)) {
+                $updated++;
+            }
+        }
+
+        // A matching original message id is necessary, but transaction evidence is also
+        // required when the bank supplies transaction-level records. Do not manufacture
+        // a successful state from an empty/unrelated transaction list.
+        if ($updated === 0 && empty($parsed['transactions'])) {
+            $this->logger->error('unknown_batch_reconciliation_no_transactions', ['batch_id' => $batchId]);
+            throw new BankConnectException('Bank status response identifies the batch but contains no transaction status; status remains unknown');
+        }
+
+        $batchStatus = $this->deriveBatchStatus($parsed['group_status'], $parsed['transactions']);
+        if ($batchStatus === 'unknown') {
+            throw new BankConnectException('Bank status response contains no resolvable payment status; status remains unknown');
+        }
+
+        $this->updateBatchStatus($batchId, $batchStatus, [
+            'date_status' => date('Y-m-d H:i:s'),
+            'message' => 'Unknown submission reconciled from matching pain.002 status',
+        ]);
+        $this->logger->info('unknown_batch_reconciled', [
+            'batch_id' => $batchId,
+            'group_status' => $parsed['group_status'],
+            'updated' => $updated,
+            'status' => $batchStatus,
+        ]);
+
+        return [
+            'status' => $batchStatus,
+            'reconciled' => true,
+            'group_status' => $parsed['group_status'],
+            'updated_lines' => $updated,
+            'transactions' => $parsed['transactions'],
+        ];
+    }
+
     private function buildServiceHeaderForBatch(array $batch): string
     {
         $agreementId = (int) ($batch['fk_agreement'] ?? 0);

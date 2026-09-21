@@ -239,6 +239,110 @@ class PaymentBatchServiceTest extends TestCase
         $this->svc->sendBatch(99999);
     }
 
+    public function testResolveUnknownBatchRequiresMatchingOriginalMessageId(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->db->query("UPDATE llx_bankconnect_batch SET status = 'unknown' WHERE rowid = ".(int) $created['batch_id']);
+
+        $pain002 = <<<XML
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03">
+  <CstmrPmtStsRpt>
+    <GrpHdr><MsgId>ST2</MsgId></GrpHdr>
+    <OrgnlGrpInfAndSts><OrgnlMsgId>OTHER-MSG</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>
+    <OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>
+  </CstmrPmtStsRpt>
+</Document>
+XML;
+
+        $this->expectException(BankConnectException::class);
+        $this->expectExceptionMessage('does not identify the unknown batch');
+        $this->svc->resolveUnknownBatch($created['batch_id'], null, $pain002);
+
+        $row = $this->db->fetch_object($this->db->query('SELECT status FROM llx_bankconnect_batch WHERE rowid = '.(int) $created['batch_id']));
+        $this->assertSame('unknown', $row->status);
+    }
+
+    public function testResolveUnknownBatchReconcilesMatchingStatusWithoutResubmission(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->db->query("UPDATE llx_bankconnect_batch SET status = 'unknown' WHERE rowid = ".(int) $created['batch_id']);
+
+        $pain002 = <<<XML
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03">
+  <CstmrPmtStsRpt>
+    <GrpHdr><MsgId>ST3</MsgId></GrpHdr>
+    <OrgnlGrpInfAndSts><OrgnlMsgId>{$created['msg_id']}</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>
+    <OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>
+  </CstmrPmtStsRpt>
+</Document>
+XML;
+
+        $client = new class($this->conf) extends BankConnectClient {
+            public int $statusCalls = 0;
+
+            public function getStatus(string $serviceHeaderXml): string
+            {
+                $this->statusCalls++;
+                return '';
+            }
+        };
+        $svc = new PaymentBatchService($this->db, $this->conf, $client);
+        $result = $svc->resolveUnknownBatch($created['batch_id'], '<serviceHeader/>', $pain002);
+
+        $this->assertTrue($result['reconciled']);
+        $this->assertSame('accepted', $result['status']);
+        $this->assertSame(1, $result['updated_lines']);
+        $this->assertSame(0, $client->statusCalls, 'Injected pain.002 must not trigger a network call');
+
+        $row = $this->db->fetch_object($this->db->query('SELECT status FROM llx_bankconnect_batch WHERE rowid = '.(int) $created['batch_id']));
+        $this->assertSame('accepted', $row->status);
+        $line = $this->db->fetch_object($this->db->query('SELECT status FROM llx_bankconnect_batch_line WHERE fk_batch = '.(int) $created['batch_id']));
+        $this->assertSame('accepted', $line->status);
+    }
+
+    public function testResolveUnknownBatchUsesGetStatusWhenNoFixtureProvided(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->db->query("UPDATE llx_bankconnect_batch SET status = 'unknown' WHERE rowid = ".(int) $created['batch_id']);
+
+        $pain002 = <<<XML
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03">
+  <CstmrPmtStsRpt>
+    <GrpHdr><MsgId>ST4</MsgId></GrpHdr>
+    <OrgnlGrpInfAndSts><OrgnlMsgId>{$created['msg_id']}</OrgnlMsgId><GrpSts>RJCT</GrpSts></OrgnlGrpInfAndSts>
+    <OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>RJCT</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>
+  </CstmrPmtStsRpt>
+</Document>
+XML;
+
+        $client = new class($this->conf, $pain002) extends BankConnectClient {
+            private string $pain002;
+            public int $statusCalls = 0;
+
+            public function __construct(Conf $conf, string $pain002)
+            {
+                parent::__construct($conf);
+                $this->pain002 = $pain002;
+            }
+
+            public function getStatus(string $serviceHeaderXml): string
+            {
+                $this->statusCalls++;
+                return $this->pain002;
+            }
+        };
+        $svc = new PaymentBatchService($this->db, $this->conf, $client);
+        $result = $svc->resolveUnknownBatch($created['batch_id'], '<serviceHeader/>');
+
+        $this->assertSame('rejected', $result['status']);
+        $this->assertSame(1, $client->statusCalls);
+        $row = $this->db->fetch_object($this->db->query('SELECT status FROM llx_bankconnect_batch WHERE rowid = '.(int) $created['batch_id']));
+        $this->assertSame('rejected', $row->status);
+    }
+
     public function testRefreshStatusUpdatesLines(): void
     {
         $created = $this->svc->createBatch($this->sampleBuilder(), 1);
