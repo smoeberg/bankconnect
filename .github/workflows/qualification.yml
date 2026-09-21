@@ -1,0 +1,21 @@
+name: qualification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  qualification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+      - name: Install PHPUnit
+        run: |
+          wget -q https://phar.phpunit.de/phpunit-10.phar -O phpunit.phar
+          php phpunit.phar --version
+      - name: Run qualification suite
+        run: php phpunit.phar --bootstrap tests/unit/bootstrap.php tests/qualification
