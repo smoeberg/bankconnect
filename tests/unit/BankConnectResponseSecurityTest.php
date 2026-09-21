@@ -1,6 +1,6 @@
 <?php
 
-use PHPUnit\\Framework\\TestCase;
+use PHPUnit\Framework\TestCase;
 
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectException.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectResponseSecurity.php';
