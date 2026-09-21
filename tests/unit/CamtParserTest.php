@@ -28,7 +28,7 @@ XML;
 
     private const CAMT_BATCH = <<<'XML'
 <Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02">
-  <BkToCstmrStmt><Stmt><Ntry>
+  <BkToCstmrStmt><Stmt><Id>STMT-2026-09-14</Id><Ntry>
     <Amt Ccy="DKK">3000.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><BookgDt><Dt>2026-09-14</Dt></BookgDt><AcctSvcrRef>BATCH-001</AcctSvcrRef>
     <NtryDtls>
       <TxDtls><Amt Ccy="DKK">1000.00</Amt><Refs><EndToEndId>INV-1</EndToEndId></Refs><RltdPties><Dbtr><Nm>Kunde A</Nm></Dbtr></RltdPties></TxDtls>
