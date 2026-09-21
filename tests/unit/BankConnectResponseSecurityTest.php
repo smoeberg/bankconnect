@@ -131,6 +131,6 @@ final class BankConnectResponseSecurityTest extends TestCase
         $this->assertStringContainsString($needle,$xml);
         $xml=str_replace($needle,$replacement,$xml);
         $this->expectException(BankConnectException::class);
-        (new BankConnectResponseSecurity($this->cert))->validateAndVerify($xml,'getStatusResponse');
+        $this->security()->verify($xml,'getStatusResponse');
     }
 }
