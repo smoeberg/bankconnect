@@ -76,7 +76,9 @@ class BankConnectClient
             if ($operation === self::OP_GET_BANK_CERTIFICATE) {
                 $responseSecurity->validateStructure($response);
             } else {
-                $responseSecurity->verify($response, $this->expectedResponseOperation($operation));
+                $expectedResponse = $this->expectedResponseOperation($operation);
+                $verifiedResponse = $responseSecurity->verify($response);
+                $response = $responseSecurity->decrypt($verifiedResponse, $expectedResponse);
             }
             $duration = (int) ((microtime(true) - $start) * 1000);
             $this->logger->info('soap_call', [

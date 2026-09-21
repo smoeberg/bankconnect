@@ -133,6 +133,10 @@ class BankConnectResponseSecurity
         if ($references->length < 1) {
             throw new BankConnectException('BankConnect response signature contains no references');
         }
+        $bodyId = $body instanceof DOMElement ? $body->getAttributeNS($wsuNs, 'Id') : '';
+        if ($bodyId === '') {
+            throw new BankConnectException('BankConnect response SOAP Body must have a WS-Security identifier');
+        }
 
         $seenReferences = [];
         foreach ($references as $reference) {
@@ -175,6 +179,10 @@ class BankConnectResponseSecurity
             }
         }
 
+        if (!isset($seenReferences[$bodyId])) {
+            throw new BankConnectException('BankConnect response SOAP Body is not covered by the XML signature');
+        }
+
         $canonicalSignedInfo = $signedInfo->item(0)->C14N(true, false);
         $signatureBytes = base64_decode(trim($signatureValue->item(0)->textContent), true);
         if ($canonicalSignedInfo === false || $signatureBytes === false || $signatureBytes === '') {
@@ -185,6 +193,183 @@ class BankConnectResponseSecurity
         }
 
         return $responseXml;
+    }
+
+    /**
+     * Decrypt an already verified SOAP response when the body uses XML Encryption.
+     *
+     * The response MUST have passed verify() first. Decryption never establishes
+     * trust; it only unwraps the already authenticated encrypted body. Plaintext
+     * responses are accepted unchanged after structural/operation validation.
+     */
+    public function decrypt(string $verifiedXml, ?string $expectedOperation = null): string
+    {
+        $doc = $this->loadDocument($verifiedXml);
+        $soapNs = 'http://schemas.xmlsoap.org/soap/envelope/';
+        $xencNs = 'http://www.w3.org/2001/04/xmlenc#';
+        $wsseNs = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd';
+        $wsse11Ns = 'http://docs.oasis-open.org/wss/oasis-wss/oasis-wss-soap-message-security-1.1#';
+        $dsNs = 'http://www.w3.org/2000/09/xmldsig#';
+        $bcNs = 'http://bankconnect.dk/schema/2014';
+
+        $xp = new DOMXPath($doc);
+        $xp->registerNamespace('s', $soapNs);
+        $xp->registerNamespace('xenc', $xencNs);
+        $xp->registerNamespace('wsse', $wsseNs);
+        $xp->registerNamespace('ds', $dsNs);
+
+        $body = $xp->query('/s:Envelope/s:Body')->item(0);
+        if (!$body instanceof DOMElement) {
+            throw new BankConnectException('BankConnect response SOAP Body is required for decryption');
+        }
+
+        $children = [];
+        foreach ($body->childNodes as $child) {
+            if ($child instanceof DOMElement) {
+                $children[] = $child;
+            }
+        }
+        if (count($children) !== 1) {
+            throw new BankConnectException('BankConnect encrypted response must contain exactly one SOAP Body child');
+        }
+
+        if ($children[0]->namespaceURI !== $xencNs || $children[0]->localName !== 'EncryptedData') {
+            $this->validateDecryptedOperation($body, $bcNs, $expectedOperation);
+            return $verifiedXml;
+        }
+
+        $encryptedData = $children[0];
+        if ($encryptedData->getAttribute('Type') !== $xencNs . 'Content') {
+            throw new BankConnectException('Unsupported BankConnect EncryptedData type');
+        }
+        $edId = $encryptedData->getAttribute('Id');
+        if (!preg_match('/^ED-[A-Za-z0-9]+$/', $edId)) {
+            throw new BankConnectException('Invalid BankConnect EncryptedData identifier');
+        }
+
+        $dataMethod = $xp->query('./xenc:EncryptionMethod', $encryptedData);
+        if ($dataMethod->length !== 1
+            || $dataMethod->item(0)->getAttribute('Algorithm') !== 'http://www.w3.org/2001/04/xmlenc#aes256-cbc') {
+            throw new BankConnectException('Unsupported BankConnect response data encryption algorithm');
+        }
+        $cipherValues = $xp->query('./xenc:CipherData/xenc:CipherValue', $encryptedData);
+        if ($cipherValues->length !== 1) {
+            throw new BankConnectException('BankConnect encrypted response data is incomplete');
+        }
+        $cipher = base64_decode(preg_replace('/\\s+/', '', trim($cipherValues->item(0)->textContent)), true);
+        if ($cipher === false || strlen($cipher) <= 16) {
+            throw new BankConnectException('Invalid BankConnect response ciphertext');
+        }
+        $iv = substr($cipher, 0, 16);
+        $ciphertext = substr($cipher, 16);
+
+        $encryptedKeyRefs = $xp->query('./ds:KeyInfo/wsse:SecurityTokenReference/wsse:Reference', $encryptedData);
+        if ($encryptedKeyRefs->length !== 1) {
+            throw new BankConnectException('BankConnect encrypted response must reference exactly one EncryptedKey');
+        }
+        $ekRef = $encryptedKeyRefs->item(0)->getAttribute('URI');
+        if (!preg_match('/^#[A-Za-z0-9_.:-]+$/', $ekRef)) {
+            throw new BankConnectException('Invalid BankConnect EncryptedKey reference');
+        }
+        $ekId = substr($ekRef, 1);
+        $encryptedKeys = $xp->query('/s:Envelope/s:Header/wsse:Security/xenc:EncryptedKey');
+        if ($encryptedKeys->length !== 1 || !$encryptedKeys->item(0) instanceof DOMElement) {
+            throw new BankConnectException('BankConnect encrypted response must contain exactly one EncryptedKey');
+        }
+        $encryptedKey = $encryptedKeys->item(0);
+        if ($encryptedKey->getAttribute('Id') !== $ekId) {
+            throw new BankConnectException('BankConnect EncryptedKey reference does not resolve');
+        }
+
+        $keyMethod = $xp->query('./xenc:EncryptionMethod', $encryptedKey);
+        if ($keyMethod->length !== 1
+            || $keyMethod->item(0)->getAttribute('Algorithm') !== 'http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p') {
+            throw new BankConnectException('Unsupported BankConnect response key encryption algorithm');
+        }
+        $dataRefs = $xp->query('./xenc:ReferenceList/xenc:DataReference', $encryptedKey);
+        if ($dataRefs->length !== 1 || $dataRefs->item(0)->getAttribute('URI') !== '#'.$edId) {
+            throw new BankConnectException('BankConnect EncryptedKey DataReference does not resolve');
+        }
+        $keyValues = $xp->query('./xenc:CipherData/xenc:CipherValue', $encryptedKey);
+        if ($keyValues->length !== 1) {
+            throw new BankConnectException('BankConnect encrypted response key is incomplete');
+        }
+        $wrappedKey = base64_decode(preg_replace('/\\s+/', '', trim($keyValues->item(0)->textContent)), true);
+        if ($wrappedKey === false || $wrappedKey === '') {
+            throw new BankConnectException('Invalid BankConnect wrapped response key');
+        }
+
+        $privateKey = $this->configuredCustomerPrivateKey();
+        $aesKey = '';
+        if (!openssl_private_decrypt($wrappedKey, $aesKey, $privateKey, OPENSSL_PKCS1_OAEP_PADDING)) {
+            throw new BankConnectException('BankConnect response key decryption failed');
+        }
+        if (strlen($aesKey) !== 32) {
+            throw new BankConnectException('BankConnect response AES key has invalid length');
+        }
+
+        $plaintext = openssl_decrypt($ciphertext, 'aes-256-cbc', $aesKey, OPENSSL_RAW_DATA, $iv);
+        if ($plaintext === false || $plaintext === '') {
+            throw new BankConnectException('BankConnect response AES decryption failed');
+        }
+
+        $plainDoc = $this->loadDocument('<root>'.$plaintext.'</root>');
+        $plainRoot = $plainDoc->documentElement;
+        $decryptedChildren = [];
+        foreach ($plainRoot->childNodes as $child) {
+            if ($child instanceof DOMElement) {
+                $decryptedChildren[] = $child;
+            }
+        }
+        if (count($decryptedChildren) !== 1) {
+            throw new BankConnectException('Decrypted BankConnect response must contain exactly one SOAP Body payload');
+        }
+
+        $decryptedPayload = $decryptedChildren[0];
+        if ($decryptedPayload->namespaceURI !== $bcNs) {
+            throw new BankConnectException('Decrypted BankConnect response payload has an unexpected namespace');
+        }
+        while ($body->firstChild) {
+            $body->removeChild($body->firstChild);
+        }
+        $body->appendChild($doc->importNode($decryptedPayload, true));
+
+        $this->validateDecryptedOperation($body, $bcNs, $expectedOperation);
+        $result = $doc->saveXML();
+        if ($result === false || $result === '') {
+            throw new BankConnectException('Failed to serialize decrypted BankConnect response');
+        }
+        return $result;
+    }
+
+    private function validateDecryptedOperation(DOMElement $body, string $bcNs, ?string $expectedOperation): void
+    {
+        if ($expectedOperation === null) {
+            return;
+        }
+        $children = [];
+        foreach ($body->childNodes as $child) {
+            if ($child instanceof DOMElement) {
+                $children[] = $child;
+            }
+        }
+        if (count($children) !== 1
+            || $children[0]->namespaceURI !== $bcNs
+            || $children[0]->localName !== $expectedOperation) {
+            throw new BankConnectException('Unexpected BankConnect response operation after decryption');
+        }
+    }
+
+    private function configuredCustomerPrivateKey(): string
+    {
+        $key = $this->conf->global['BANKCONNECT_CUSTOMER_PRIVATE_KEY'] ?? null;
+        if (!is_string($key) || trim($key) === '') {
+            throw new BankConnectException('Customer private key is not configured for BankConnect response decryption');
+        }
+        if (openssl_pkey_get_private($key) === false) {
+            throw new BankConnectException('Invalid customer private key for BankConnect response decryption');
+        }
+        return $key;
     }
 
     private function loadDocument(string $responseXml): DOMDocument
