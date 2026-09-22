@@ -53,7 +53,7 @@ class BankConnectClient
         $this->logger = $logger ?? new BankConnectLogger();
         $this->xmlSecurity = new BankConnectXmlSecurity($conf);
 
-        $g = $conf->global ?? [];
+        $g = (array) ($conf->global ?? []);
         $this->endpoint = (string) ($g['BANKCONNECT_ENDPOINT']
             ?? 'https://stest.bankconnect.dk/2019/04/04/services/CorporateService');
         $environment = (string) ($g['BANKCONNECT_ENVIRONMENT'] ?? 'test');

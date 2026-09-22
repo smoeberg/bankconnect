@@ -1,6 +1,8 @@
 ModuleBankConnectName=BankConnect
 ModuleBankConnectDesc=Automatic import and reconciliation of bank transactions through BankConnect
 ModuleBankConnectDescLong=Connects Dolibarr to BankConnect, imports bank transactions and helps users match them with existing Dolibarr documents and payments.
+BankConnectAutomaticImport=Fetch BankConnect statements
+BankConnectAutomaticImportDesc=Fetches CAMT statements for active mapped BankConnect agreements and imports them as Dolibarr bank entries.
 BankConnectPermRead=View BankConnect transactions and reconciliation
 BankConnectPermWrite=Import BankConnect transactions and approve matches
 BankConnectReconcile=Reconciliation

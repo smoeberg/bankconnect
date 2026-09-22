@@ -27,7 +27,7 @@ class modBankConnect extends DolibarrModules
 		$this->descriptionlong = 'ModuleBankConnectDescLong';
 		$this->editor_name = 'WM Group / Eira';
 		$this->editor_url = 'https://github.com/smoeberg/bankconnect';
-		$this->version = '0.5.0';
+		$this->version = '0.6.0';
 		$this->const_name = 'MAIN_MODULE_BANKCONNECT';
 		$this->picto = 'bank';
 
@@ -61,6 +61,22 @@ class modBankConnect extends DolibarrModules
 		$this->warnings_activation_ext = array();
 		$this->const = array();
 		$this->tabs = array();
+		$this->cronjobs = array(
+			array(
+				'label' => 'BankConnectAutomaticImport',
+				'jobtype' => 'method',
+				'class' => '/bankconnect/class/BankConnectCron.php',
+				'objectname' => 'BankConnectCron',
+				'method' => 'importStatements',
+				'parameters' => '',
+				'comment' => 'BankConnectAutomaticImportDesc',
+				'frequency' => 1,
+				'unitfrequency' => 3600,
+				'status' => 0,
+				'test' => 'isModEnabled("bankconnect")',
+				'priority' => 50,
+			),
+		);
 
 		if (!isModEnabled('bankconnect')) {
 			$conf->bankconnect = new stdClass();

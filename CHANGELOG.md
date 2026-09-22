@@ -1,3 +1,18 @@
+## 0.6.0 (unreleased)
+
+### Added
+- Hourly, opt-in Dolibarr scheduled job for automatic BankConnect statement
+  retrieval.
+- Agreement-scoped client factory loading the active customer certificate and
+  decrypted private key.
+- Strict SOAP response parser for direct, base64 and gzip CAMT payloads.
+- Automatic imports reuse the same `ImportService` and `Account::addline()`
+  path as manual CAMT uploads.
+
+### Fixed
+- Support Dolibarr's object-shaped `$conf->global` in the BankConnect client
+  and XML security boundary.
+
 ## 0.5.0 (unreleased)
 
 ### Added

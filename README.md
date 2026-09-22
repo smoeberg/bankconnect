@@ -88,6 +88,12 @@ Upload derefter `dist/module_bankconnect-<version>.zip` via Dolibarrs side til
 installation af eksterne moduler, og aktivér **BankConnect** under
 **Moduler/Applikationer**. Se [INSTALL.md](INSTALL.md) for krav og detaljer.
 
+Automatisk import installeres som et deaktiveret Dolibarr-schedulerjob med
+interval på én time. Når BankConnect-aftale, aktivt certifikat og bankkonto-
+mapping er konfigureret, aktiveres jobbet **Hent BankConnect-kontoudtog** under
+Dolibarrs planlagte jobs. Det automatiske flow bruger samme importservice som
+manuel CAMT-upload og er derfor underlagt samme dubletbeskyttelse.
+
 ## Opsætning
 
 ```php
