@@ -1,21 +1,104 @@
 <?php
-/* Dolibarr module descriptor — Bank afstemning via BankConnect. */
-/* Copyright (C) 2026 WM Group / Eira. */
+/* Copyright (C) 2026 WM Group / Eira */
 
-require_once DOL_DOCUMENT_ROOT.'/core/modules/DolibarrModules.php';
+/**
+ * \file       htdocs/custom/bankconnect/core/modules/modBankConnect.class.php
+ * \ingroup    bankconnect
+ * \brief      BankConnect module descriptor.
+ */
 
+include_once DOL_DOCUMENT_ROOT.'/core/modules/DolibarrModules.class.php';
+
+/** Description and activation class for the BankConnect module. */
 class modBankConnect extends DolibarrModules
 {
-	public $id = 500010;
-	public $name = 'BankAfstemning';
-	public $family = 'financial';
-	public $version = '0.3.0';
-	public $description = 'Automatisk bankafstemning via BankConnect: henter banktransaktioner til Dolibarr og understøtter manuel udligning før bogføring.';
-	public $editor_name = 'WM Group / Eira';
-	public $editor_url = 'https://github.com/smoeberg/bankconnect';
+	/** @param DoliDB $db Database handler */
+	public function __construct($db)
+	{
+		global $conf;
 
-	/**
-	 * Create BankConnect tables and apply additive schema upgrades.
+		$this->db = $db;
+		$this->numero = 500010;
+		$this->rights_class = 'bankconnect';
+		$this->family = 'financial';
+		$this->module_position = '80';
+		$this->name = preg_replace('/^mod/i', '', get_class($this));
+		$this->description = 'ModuleBankConnectDesc';
+		$this->descriptionlong = 'ModuleBankConnectDescLong';
+		$this->editor_name = 'WM Group / Eira';
+		$this->editor_url = 'https://github.com/smoeberg/bankconnect';
+		$this->version = '0.4.0';
+		$this->const_name = 'MAIN_MODULE_BANKCONNECT';
+		$this->picto = 'bank';
+
+		$this->module_parts = array(
+			'triggers' => 0,
+			'login' => 0,
+			'substitutions' => 0,
+			'menus' => 0,
+			'tpl' => 0,
+			'barcode' => 0,
+			'models' => 0,
+			'printing' => 0,
+			'theme' => 0,
+			'css' => array(),
+			'js' => array(),
+			'hooks' => array(),
+			'moduleforexternal' => 0,
+		);
+
+		$this->dirs = array('/bankconnect/temp');
+		$this->config_page_url = array('bankconnect.php@bankconnect');
+		$this->hidden = false;
+		$this->depends = array('modBanque');
+		$this->requiredby = array();
+		$this->conflictwith = array();
+		$this->langfiles = array('bankconnect@bankconnect');
+		$this->phpmin = array(8, 1);
+		$this->need_dolibarr_version = array(24, 0);
+		$this->need_javascript_ajax = 0;
+		$this->warnings_activation = array();
+		$this->warnings_activation_ext = array();
+		$this->const = array();
+		$this->tabs = array();
+
+		if (!isModEnabled('bankconnect')) {
+			$conf->bankconnect = new stdClass();
+			$conf->bankconnect->enabled = 0;
+		}
+
+		$this->rights = array();
+		$r = 0;
+		$this->rights[$r][0] = 500011;
+		$this->rights[$r][1] = 'BankConnectPermRead';
+		$this->rights[$r][3] = 1;
+		$this->rights[$r][4] = 'read';
+		$r++;
+		$this->rights[$r][0] = 500012;
+		$this->rights[$r][1] = 'BankConnectPermWrite';
+		$this->rights[$r][3] = 0;
+		$this->rights[$r][4] = 'write';
+
+		$this->menu = array();
+		$this->menu[0] = array(
+			'fk_mainmenu' => 'bank',
+			'fk_leftmenu' => '',
+			'type' => 'left',
+			'titre' => 'BankConnectReconcile',
+			'mainmenu' => 'bank',
+			'leftmenu' => 'bankconnect_reconcile',
+			'url' => '/bankconnect/pages/reconcile.php',
+			'langs' => 'bankconnect@bankconnect',
+			'position' => 500,
+			'enabled' => 'isModEnabled("bankconnect")',
+			'perms' => '$user->hasRight("bankconnect", "read")',
+			'target' => '',
+			'user' => 0,
+		);
+	}
+
+	/** @param string $options Options when enabling module
+	 * @return int 1 on success, -1 on error
 	 */
 	public function init($options = '')
 	{
@@ -24,75 +107,14 @@ class modBankConnect extends DolibarrModules
 			return -1;
 		}
 
-		$table = MAIN_DB_PREFIX.'bankconnect_transaction';
-		$columns = [
-			'acct_svcr_ref' => "VARCHAR(255) NULL",
-			'is_reversal' => "INTEGER NOT NULL DEFAULT 0",
-			'requires_manual_review' => "INTEGER NOT NULL DEFAULT 0",
-			'statement_id' => "VARCHAR(255) NOT NULL DEFAULT ''",
-			'transaction_id' => "VARCHAR(255) NOT NULL DEFAULT ''",
-		];
-		foreach ($columns as $column => $definition) {
-			$sql = "SHOW COLUMNS FROM ".$table." LIKE '".$this->db->escape($column)."'";
-			$res = $this->db->query($sql);
-			if (!$res) {
-				return -1;
-			}
-			if (!$this->db->fetch_object($res)) {
-				if (!$this->db->query("ALTER TABLE ".$table." ADD COLUMN ".$column." ".$definition)) {
-					return -1;
-				}
-			}
-		}
-
-		$batchLineTable = MAIN_DB_PREFIX.'bankconnect_batch_line';
-		$checkManual = $this->db->query("SHOW COLUMNS FROM ".$batchLineTable." LIKE 'requires_manual_review'");
-		if ($checkManual && !$this->db->fetch_object($checkManual)) {
-			if (!$this->db->query("ALTER TABLE ".$batchLineTable." ADD COLUMN requires_manual_review TINYINT NOT NULL DEFAULT 0")) {
-				return -1;
-			}
-		}
-
-		// Existing installations need the same database-level idempotency boundary
-		// as fresh installs. A non-unique statement/transaction pair is retained for
-		// legacy rows with empty identity values.
-		$uniqueName = 'uk_bc_statement_transaction';
-		$check = $this->db->query("SHOW INDEX FROM ".$table." WHERE Key_name = '".$this->db->escape($uniqueName)."'");
-		if ($check && !$this->db->fetch_object($check)) {
-			$this->db->query("ALTER TABLE ".$table." ADD UNIQUE KEY ".$uniqueName." (fk_bank_account, statement_id, transaction_id)");
-		}
-
-		return $this->_init([], $options);
+		return $this->_init(array(), $options);
 	}
 
-	public function __construct($db)
+	/** @param string $options Options when disabling module
+	 * @return int 1 on success, -1 on error
+	 */
+	public function remove($options = '')
 	{
-		parent::__construct($db);
-
-		$this->const_name = 'MAIN_MODULE_BANKCONNECT';
-		$this->config_page_url = ['bankconnect.php@bankconnect'];
-		$this->dirs = ['/bankconnect'];
-
-		// Permissions: 1 = read, 2 = import/approve
-		$this->rights_class = 'bankconnect';
-		$this->rights[1][0] = 500011;
-		$this->rights[1][1] = 'Read bank reconciliations';
-		$this->rights[1][4] = 'read';
-		$this->rights[2][0] = 500012;
-		$this->rights[2][1] = 'Import bank transactions and approve reconciliation';
-		$this->rights[2][4] = 'write';
-
-		// Menu entry under bank module
-		$this->menu[0] = [
-			'fk_mainmenu' => 'bank',
-			'type' => 'left',
-			'titre' => 'Bank afstemning',
-			'url' => '/custom/bankconnect/pages/reconcile.php',
-			'langs' => 'bankconnect@bankconnect',
-			'position' => 500,
-			'perms' => '$user->rights->bankconnect->read',
-			'enabled' => 'isModEnabled("bankconnect")',
-			'user' => 0,
-		];
+		return $this->_remove(array(), $options);
 	}
 }
