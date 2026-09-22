@@ -4,11 +4,11 @@
  */
 
 require '../../../main.inc.php';
-require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/Pain001Builder.php';
-require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/PaymentBatchService.php';
-require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/BankConnectException.php';
+require_once dol_buildpath('/bankconnect/class/Pain001Builder.php', 0);
+require_once dol_buildpath('/bankconnect/class/PaymentBatchService.php', 0);
+require_once dol_buildpath('/bankconnect/class/BankConnectException.php', 0);
 
-if (empty($user->rights->bankconnect->write) && empty($user->admin)) {
+if (!$user->hasRight('bankconnect', 'write') && empty($user->admin)) {
     accessforbidden();
 }
 
@@ -20,6 +20,9 @@ $fkAgreement = GETPOSTINT('fk_agreement') ?: 1;
  * Actions
  */
 if ($action === 'create_batch' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!checkToken()) {
+        accessforbidden();
+    }
     $selected = GETPOST('invoice', 'array');
     if (empty($selected) || !is_array($selected)) {
         setEventMessages($langs->trans('BankConnectNoInvoicesSelected'), null, 'warnings');
