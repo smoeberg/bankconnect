@@ -1,3 +1,14 @@
+## 0.8.0 (unreleased)
+
+### Added
+- Guided, bank-account-scoped reconciliation workspace using Dolibarr bank
+  entries, open invoices and unlinked payments.
+- Confidence bands, match reasons, alternative candidate selection and split
+  selection for up to five candidates.
+- Explicit defer and reject actions with CSRF and bank-account ownership checks.
+- Approval-time revalidation prevents stale or forged candidates from being
+  accepted.
+
 ## 0.7.0 (unreleased)
 
 ### Added

@@ -10,6 +10,7 @@ require_once dol_buildpath('/bankconnect/class/ImportService.php', 0);
 require_once dol_buildpath('/bankconnect/class/DolibarrBankEntryService.php', 0);
 require_once dol_buildpath('/bankconnect/class/DolibarrCandidateProvider.php', 0);
 require_once dol_buildpath('/bankconnect/class/ReconciliationService.php', 0);
+require_once dol_buildpath('/bankconnect/class/ReconciliationWorkflowService.php', 0);
 
 if (!$user->hasRight('bankconnect', 'read')) {
 	accessforbidden();
@@ -20,9 +21,18 @@ $store = new BankConnectStore($db);
 $accountid = GETPOST('account', 'int') ?: 0;
 $action = GETPOST('action', 'alpha');
 $requestMethod = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
-$writeAction = in_array($action, ['import', 'match', 'approve', 'reject'], true);
+$writeAction = in_array($action, ['import', 'match', 'approve', 'reject', 'defer'], true);
 if ($writeAction) {
 	if ($requestMethod !== 'POST' || !checkToken()) {
+		accessforbidden();
+	}
+	if (!$user->hasRight('bankconnect', 'write')) {
+		accessforbidden();
+	}
+}
+if ($accountid > 0) {
+	$accountAccess = $db->query('SELECT rowid FROM '.MAIN_DB_PREFIX.'bank_account WHERE rowid='.(int)$accountid.' AND clos=0 AND entity IN ('.getEntity('bank_account').')');
+	if (!$accountAccess || !$db->fetch_object($accountAccess)) {
 		accessforbidden();
 	}
 }
@@ -75,118 +85,120 @@ if ($action === 'import' && $user->hasRight('bankconnect', 'write')) {
 		$reconciliation->propose((int)$tx['rowid'], (int)$user->id, $transaction, $candidates);
 	}
 } elseif ($action === 'approve' && $user->hasRight('bankconnect', 'write')) {
-	$store->approveMatch((int)GETPOST('matchid', 'int'), $user->id);
-	setEventMessages($langs->trans('BankConnectApproved'), null);
+	try {
+		$workflow = new ReconciliationWorkflowService($store, new DolibarrCandidateProvider($db, (string)($conf->currency ?? 'DKK')));
+		$workflow->approve(GETPOSTINT('matchid'), $accountid, (int)$conf->entity, (array)GETPOST('candidate', 'array'), (int)$user->id);
+		setEventMessages($langs->trans('BankConnectApproved'), null);
+	} catch (Throwable $e) {
+		setEventMessages($e->getMessage(), null, 'errors');
+	}
 } elseif ($action === 'reject' && $user->hasRight('bankconnect', 'write')) {
-	$store->rejectMatch((int)GETPOST('matchid', 'int'), $user->id);
-	setEventMessages($langs->trans('BankConnectRejected'), null);
+	try {
+		$workflow = new ReconciliationWorkflowService($store, new DolibarrCandidateProvider($db, (string)($conf->currency ?? 'DKK')));
+		$workflow->reject(GETPOSTINT('matchid'), $accountid, (int)$user->id);
+		setEventMessages($langs->trans('BankConnectRejected'), null);
+	} catch (Throwable $e) {
+		setEventMessages($e->getMessage(), null, 'errors');
+	}
+} elseif ($action === 'defer' && $user->hasRight('bankconnect', 'write')) {
+	try {
+		$workflow = new ReconciliationWorkflowService($store, new DolibarrCandidateProvider($db, (string)($conf->currency ?? 'DKK')));
+		$workflow->defer(GETPOSTINT('transactionid'), $accountid, (int)$user->id);
+		setEventMessages($langs->trans('BankConnectDeferred'), null);
+	} catch (Throwable $e) {
+		setEventMessages($e->getMessage(), null, 'errors');
+	}
 }
 
-llxHeader('', 'BankConnect');
-
+llxHeader('', 'BankConnect', '', '', 0, 0, '', ['/bankconnect/css/reconcile.css']);
 print load_fiche_titre('BankConnect — '.$langs->trans('BankConnectReconcile'), '', 'bank');
 
-print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" enctype="multipart/form-data">';
-print '<input type="hidden" name="token" value="'.newToken().'">';
-print '<input type="hidden" name="action" value="import">';
-print '<select name="account">';
-$sql = 'SELECT rowid, label FROM '.MAIN_DB_PREFIX.'bank_account ORDER BY label';
-$res = $db->query($sql);
-while ($res && $o = $db->fetch_object($res)) {
-	print '<option value="'.$o->rowid.'"'.($accountid == $o->rowid ? ' selected' : '').'>'.dol_escape_htmltag($o->label).'</option>';
+$accounts = [];
+$res = $db->query('SELECT rowid, label FROM '.MAIN_DB_PREFIX.'bank_account WHERE clos=0 AND entity IN ('.getEntity('bank_account').') ORDER BY label');
+while ($res && ($account = $db->fetch_object($res))) {
+	$accounts[] = $account;
 }
-print '</select> ';
-print '<input type="file" name="camtfile" accept=".xml"> ';
-print '<input type="submit" class="button" value="'.$langs->trans('BankConnectImport').'">';
-print '</form>';
-
-$unmatched = $accountid ? $store->unmatchedTransactions($accountid) : [];
-print '<p>'.dol_escape_htmltag($langs->trans('BankConnectUnmatchedCount', count($unmatched))).'</p>';
-
-if (count($unmatched)) {
-	print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
-	print '<input type="hidden" name="token" value="'.newToken().'">';
-	print '<input type="hidden" name="account" value="'.$accountid.'">';
-	print '<input type="hidden" name="action" value="match">';
-	print '<input type="submit" class="button" value="'.$langs->trans('BankConnectRunMatching').'">';
-	print '</form>';
+if (!$accountid && count($accounts) === 1) {
+	$accountid = (int)$accounts[0]->rowid;
 }
 
-print '<table class="noborder centpercent">';
-print '<tr class="liste_titre"><th>Date</th><th>Amount</th><th>Ref</th><th>Counterparty</th><th>'.$langs->trans('BankConnectBankEntry').'</th><th>Status</th><th>Proposal</th><th></th></tr>';
-foreach ($unmatched as $tx) {
-	print '<tr>';
-	print '<td>'.dol_print_date($tx['tx_date'], 'day').'</td>';
-	print '<td>'.price($tx['amount']).' '.$tx['currency'].'</td>';
-	print '<td>'.dol_escape_htmltag($tx['reference'] ?? '').'</td>';
-	print '<td>'.dol_escape_htmltag($tx['counterparty'] ?? '').'</td>';
-	print '<td>';
-	if (!empty($tx['fk_bankentry'])) {
-		print '<a href="'.DOL_URL_ROOT.'/compta/bank/line.php?rowid='.(int)$tx['fk_bankentry'].'">#'.(int)$tx['fk_bankentry'].'</a>';
-	} elseif (($tx['bank_entry_state'] ?? '') === 'error') {
-		print '<span class="badge badge-danger" title="'.dol_escape_htmltag($tx['bank_entry_error'] ?? '').'">'.$langs->trans('Error').'</span>';
-	} else {
-		print '—';
-	}
-	print '</td>';
-	print '<td>';
-	if (!empty($tx['requires_manual_review'])) {
-		print '<span class="badge badge-warning">Manuel gennemgang</span>';
-	}
-	if (!empty($tx['is_reversal'])) {
-		print ' <span class="badge badge-danger">Reversal</span>';
-	}
-	if (empty($tx['requires_manual_review']) && empty($tx['is_reversal'])) {
-		print '—';
-	}
-	print '</td>';
-	print '<td>—</td><td></td>';
-	print '</tr>';
+print '<div class="bc-toolbar">';
+print '<form method="GET" action="'.$_SERVER['PHP_SELF'].'"><label>'.$langs->trans('BankConnectAccount').' ';
+print '<select name="account" onchange="this.form.submit()"><option value="">'.$langs->trans('BankConnectChooseAccount').'</option>';
+foreach ($accounts as $account) {
+	print '<option value="'.(int)$account->rowid.'"'.($accountid === (int)$account->rowid ? ' selected' : '').'>'.dol_escape_htmltag($account->label).'</option>';
 }
-print '</table>';
-
+print '</select></label></form>';
 if ($accountid) {
-	$sql = "SELECT m.rowid AS mid, m.match_type, m.rule_name, m.score, m.reason, t.tx_date, t.amount, t.currency, t.reference, t.counterparty
-			FROM ".MAIN_DB_PREFIX."bankconnect_match m
-			JOIN ".MAIN_DB_PREFIX."bankconnect_transaction t ON t.rowid = m.fk_transaction
-			WHERE t.fk_bank_account = ".(int)$accountid." AND t.state = 'proposed' AND m.approved_by IS NULL
-			ORDER BY t.tx_date DESC";
-	$res = $db->query($sql);
-	$any = false;
-	print '<h3>'.$langs->trans('BankConnectAwaitingApproval').'</h3>';
-	print '<table class="noborder centpercent">';
-	print '<tr class="liste_titre"><th>Date</th><th>Amount</th><th>Ref</th><th>Match</th><th>Score</th><th>Reason</th><th></th></tr>';
-	while ($res && $o = $db->fetch_object($res)) {
-		$any = true;
-		print '<tr>';
-		print '<td>'.dol_print_date($o->tx_date, 'day').'</td>';
-		print '<td>'.price($o->amount).' '.$o->currency.'</td>';
-		print '<td>'.dol_escape_htmltag($o->reference ?? '').'</td>';
-		print '<td>'.dol_escape_htmltag($o->match_type.($o->rule_name ? ' ('.$o->rule_name.')' : '')).'</td>';
-		print '<td>'.round(100 * (float)$o->score).'%</td>';
-		print '<td>'.dol_escape_htmltag($o->reason ?? '').'</td>';
-		print '<td>';
-		print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" style="display:inline">';
-		print '<input type="hidden" name="token" value="'.newToken().'">';
-		print '<input type="hidden" name="account" value="'.$accountid.'">';
-		print '<input type="hidden" name="action" value="approve">';
-		print '<input type="hidden" name="matchid" value="'.$o->mid.'">';
-		print '<input type="submit" class="button button-success" value="'.$langs->trans('BankConnectApprove').'">';
-		print '</form> ';
-		print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" style="display:inline">';
-		print '<input type="hidden" name="token" value="'.newToken().'">';
-		print '<input type="hidden" name="account" value="'.$accountid.'">';
-		print '<input type="hidden" name="action" value="reject">';
-		print '<input type="hidden" name="matchid" value="'.$o->mid.'">';
-		print '<input type="submit" class="button" value="'.$langs->trans('BankConnectReject').'">';
-		print '</form>';
-		print '</td>';
-		print '</tr>';
-	}
-	if (!$any) {
-		print '<tr><td colspan="7">'.$langs->trans('BankConnectNothingPending').'</td></tr>';
-	}
-	print '</table>';
+	print '<details class="bc-import"><summary>'.$langs->trans('BankConnectManualImport').'</summary>';
+	print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" enctype="multipart/form-data">';
+	print '<input type="hidden" name="token" value="'.newToken().'"><input type="hidden" name="action" value="import"><input type="hidden" name="account" value="'.$accountid.'">';
+	print '<input type="file" name="camtfile" accept=".xml"> <input type="submit" class="button" value="'.$langs->trans('BankConnectImport').'">';
+	print '</form></details>';
+}
+print '</div>';
+
+if (!$accountid) {
+	print '<div class="info">'.$langs->trans('BankConnectChooseAccountHelp').'</div>';
+	llxFooter();
+	exit;
 }
 
+$unmatched = $store->unmatchedTransactions($accountid);
+$proposals = $store->proposedMatchesForAccount($accountid);
+$provider = new DolibarrCandidateProvider($db, (string)($conf->currency ?? 'DKK'));
+$workflow = new ReconciliationWorkflowService($store, $provider);
+
+print '<div class="bc-summary">';
+print '<div><strong>'.count($unmatched).'</strong><span>'.$langs->trans('BankConnectUnmatched').'</span></div>';
+print '<div><strong>'.count($proposals).'</strong><span>'.$langs->trans('BankConnectAwaitingApproval').'</span></div>';
+print '</div>';
+
+if ($unmatched) {
+	print '<section class="bc-section"><div class="bc-section-head"><div><h2>'.$langs->trans('BankConnectUnmatched').'</h2><p>'.$langs->trans('BankConnectUnmatchedHelp').'</p></div>';
+	print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'"><input type="hidden" name="token" value="'.newToken().'"><input type="hidden" name="account" value="'.$accountid.'"><input type="hidden" name="action" value="match"><button class="button button-save">'.$langs->trans('BankConnectRunMatching').'</button></form></div>';
+	print '<div class="bc-grid">';
+	foreach ($unmatched as $tx) {
+		print '<article class="bc-card"><div class="bc-card-top"><span>'.dol_print_date($tx['tx_date'], 'day').'</span><strong class="'.((float)$tx['amount'] < 0 ? 'bc-debit' : 'bc-credit').'">'.price($tx['amount']).' '.dol_escape_htmltag($tx['currency']).'</strong></div>';
+		print '<h3>'.dol_escape_htmltag($tx['counterparty'] ?: $langs->trans('BankConnectUnknownCounterparty')).'</h3><p>'.dol_escape_htmltag($tx['reference'] ?: '—').'</p>';
+		print '<div class="bc-card-meta">';
+		if (!empty($tx['fk_bankentry'])) {
+			print '<a href="'.DOL_URL_ROOT.'/compta/bank/line.php?rowid='.(int)$tx['fk_bankentry'].'">'.$langs->trans('BankConnectBankEntry').' #'.(int)$tx['fk_bankentry'].'</a>';
+		} elseif (($tx['bank_entry_state'] ?? '') === 'error') {
+			print '<span class="bc-pill bc-danger" title="'.dol_escape_htmltag($tx['bank_entry_error'] ?? '').'">'.$langs->trans('Error').'</span>';
+		}
+		if (!empty($tx['requires_manual_review'])) print '<span class="bc-pill bc-warn">'.$langs->trans('BankConnectManualReview').'</span>';
+		if (!empty($tx['is_reversal'])) print '<span class="bc-pill bc-danger">Reversal</span>';
+		print '</div><form method="POST" action="'.$_SERVER['PHP_SELF'].'"><input type="hidden" name="token" value="'.newToken().'"><input type="hidden" name="account" value="'.$accountid.'"><input type="hidden" name="action" value="defer"><input type="hidden" name="transactionid" value="'.(int)$tx['rowid'].'"><button class="button">'.$langs->trans('BankConnectDefer').'</button></form></article>';
+	}
+	print '</div></section>';
+}
+
+print '<section class="bc-section"><div class="bc-section-head"><div><h2>'.$langs->trans('BankConnectAwaitingApproval').'</h2><p>'.$langs->trans('BankConnectApprovalHelp').'</p></div></div>';
+if (!$proposals) {
+	print '<div class="bc-empty">'.$langs->trans('BankConnectNothingPending').'</div>';
+}
+foreach ($proposals as $proposal) {
+	$transaction = BankTransaction::fromArray($proposal);
+	$available = $provider->forTransaction($transaction, (int)$conf->entity);
+	$suggested = [];
+	foreach ($proposal['candidates'] as $candidate) $suggested[$candidate['candidate_type'].':'.$candidate['candidate_id']] = true;
+	usort($available, static function (Candidate $a, Candidate $b) use ($suggested, $workflow): int {
+		return (int)isset($suggested[$workflow->key($b->type, $b->id)]) <=> (int)isset($suggested[$workflow->key($a->type, $a->id)]);
+	});
+	$score = (float)$proposal['score'];
+	$band = $score >= .9 ? 'bc-strong' : ($score >= .7 ? 'bc-medium' : 'bc-weak');
+	print '<article class="bc-proposal"><header><div><span>'.dol_print_date($proposal['tx_date'], 'day').'</span><h3>'.dol_escape_htmltag($proposal['counterparty'] ?: $langs->trans('BankConnectUnknownCounterparty')).'</h3><p>'.dol_escape_htmltag($proposal['reference'] ?: '—').'</p></div><div class="bc-amount"><strong>'.price($proposal['amount']).' '.dol_escape_htmltag($proposal['currency']).'</strong><span class="bc-confidence '.$band.'">'.round($score * 100).'%</span></div></header>';
+	print '<div class="bc-reason"><strong>'.dol_escape_htmltag($proposal['rule_name']).'</strong> — '.dol_escape_htmltag($proposal['reason']).'</div>';
+	print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" class="bc-candidate-form"><input type="hidden" name="token" value="'.newToken().'"><input type="hidden" name="account" value="'.$accountid.'"><input type="hidden" name="action" value="approve"><input type="hidden" name="matchid" value="'.(int)$proposal['match_rowid'].'">';
+	print '<div class="bc-candidates">';
+	foreach (array_slice($available, 0, 20) as $candidate) {
+		$key = $workflow->key($candidate->type, $candidate->id);
+		$isSuggested = isset($suggested[$key]);
+		print '<label class="bc-candidate'.($isSuggested ? ' bc-suggested' : '').'"><input type="checkbox" name="candidate[]" value="'.dol_escape_htmltag($key).'"'.($isSuggested ? ' checked' : '').'><span><strong>'.dol_escape_htmltag($candidate->ref ?: '#'.$candidate->id).'</strong><small>'.dol_escape_htmltag($candidate->thirdparty).' · '.dol_print_date($candidate->date, 'day').'</small></span><b>'.price($candidate->remaining).' '.dol_escape_htmltag($candidate->currency).'</b>'.($isSuggested ? '<em>'.$langs->trans('BankConnectSuggested').'</em>' : '').'</label>';
+	}
+	print '</div><div class="bc-actions"><button class="button button-save">'.$langs->trans('BankConnectApproveSelection').'</button></div></form>';
+	print '<div class="bc-actions bc-secondary"><form method="POST" action="'.$_SERVER['PHP_SELF'].'"><input type="hidden" name="token" value="'.newToken().'"><input type="hidden" name="account" value="'.$accountid.'"><input type="hidden" name="action" value="reject"><input type="hidden" name="matchid" value="'.(int)$proposal['match_rowid'].'"><button class="button">'.$langs->trans('BankConnectReject').'</button></form></div></article>';
+}
+print '</section>';
 llxFooter();

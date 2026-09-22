@@ -32,6 +32,9 @@ standardflow.
   data (CPR/regex-fjernet), returnerer altid gyldigt JSON eller `none` -
   aldrig exceptions til kalderen.
 - **MatchResult**: `exact | partial | multiple | none` + confidence + forslag.
+- **Afstemningsflade**: bankkontoopdelte kort med beløb, modpart,
+  matchforklaring, confidence, alternative åbne Dolibarr-poster og eksplicit
+  godkendelse. Kandidater genvalideres ved godkendelse; siden bogfører ikke.
 - **Payment state machine**: batch livscyklus med idempotens-nøgle,
   ukendte betalinger recoveres sikkert, NONE kan aldrig blive et forslag.
 - **Fail-closed**: ukendt datacenter, manglende secrets og ugyldige
@@ -48,6 +51,7 @@ standardflow.
 | `ApprovalPosting` | Legacy-prototype; ikke eksponeret eller medtaget i installations-ZIP |
 | `ImportService` | Fælles camt-import-flow med dedup-tælling |
 | `ReconciliationService` | Orchestrering + confidence-audit |
+| `ReconciliationWorkflowService` | Validering af GUI-valg, ejerskab og godkendelsesflow |
 | `DolibarrCandidateProvider` | Åbne fakturaer og ulinkede betalinger fra Dolibarr-standardtabeller |
 | `PaymentBatchService` | Batch-livscyklus, idempotens, recover |
 | `PaymentStateMachine` | Eksplicit batch-status-livscyklus |
@@ -155,8 +159,6 @@ CI (`.github/workflows/test.yml`): syntax check + unit tests på push/PR.
 
 ## Videre udvikling
 
-- Opret eller genbrug `llx_bank`-poster ved BankConnect-import gennem Dolibarrs
-  `Account`-domænelogik.
 - Knyt godkendte match til Dolibarr-betalinger uden at oprette en dubletpost.
 - Verificér hele flowet frem til Dolibarrs standard bankfinanskladde.
 - Live XML crypto (kræver officiel BankConnect developer package).

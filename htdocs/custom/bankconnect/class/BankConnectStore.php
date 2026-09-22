@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__.'/Candidate.php';
 /**
  * BankConnectStore – persistence boundary for imported bank transactions.
  *
@@ -188,6 +189,76 @@ class BankConnectStore
         }
         return $out;
     }
+
+	/** @return list<array<string,mixed>> */
+	public function proposedMatchesForAccount(int $bankAccountId): array
+	{
+		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$sql = 'SELECT m.rowid AS match_rowid, m.match_type, m.rule_name, m.score, m.reason,'
+			.' t.rowid, t.tx_date, t.amount, t.currency, t.reference, t.counterparty, t.acct_svcr_ref,'
+			.' t.is_reversal, t.requires_manual_review, t.fk_bankentry, t.hash, t.statement_id, t.transaction_id'
+			.' FROM '.$prefix.'bankconnect_match m'
+			.' JOIN '.$prefix.'bankconnect_transaction t ON t.rowid=m.fk_transaction'
+			.' WHERE t.fk_bank_account='.(int)$bankAccountId." AND t.state='proposed' AND m.approved_by IS NULL"
+			.' ORDER BY t.tx_date DESC, m.rowid DESC';
+		$res = $this->db->query($sql);
+		$out = [];
+		while ($res && ($row = $this->db->fetch_object($res))) {
+			$item = (array)$row;
+			$item['candidates'] = $this->matchCandidates((int)$row->match_rowid);
+			$out[] = $item;
+		}
+		return $out;
+	}
+
+	/** @return array<string,mixed> */
+	public function transactionForMatch(int $matchRowid, int $bankAccountId): array
+	{
+		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$sql = 'SELECT t.* FROM '.$prefix.'bankconnect_match m'
+			.' JOIN '.$prefix.'bankconnect_transaction t ON t.rowid=m.fk_transaction'
+			.' WHERE m.rowid='.(int)$matchRowid.' AND t.fk_bank_account='.(int)$bankAccountId
+			." AND t.state='proposed' AND m.approved_by IS NULL LIMIT 1";
+		$res = $this->db->query($sql);
+		$row = $res ? $this->db->fetch_object($res) : false;
+		if (!$row) {
+			throw new RuntimeException('BankConnect: proposed match does not belong to this bank account');
+		}
+		return (array)$row;
+	}
+
+	/** @return array<string,mixed> */
+	public function transactionForAccount(int $transactionId, int $bankAccountId): array
+	{
+		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$res = $this->db->query('SELECT * FROM '.$prefix.'bankconnect_transaction WHERE rowid='.(int)$transactionId.' AND fk_bank_account='.(int)$bankAccountId.' LIMIT 1');
+		$row = $res ? $this->db->fetch_object($res) : false;
+		if (!$row) {
+			throw new RuntimeException('BankConnect: transaction does not belong to this bank account');
+		}
+		return (array)$row;
+	}
+
+	public function ensureMatchCandidate(int $matchRowid, Candidate $candidate): int
+	{
+		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$sql = 'INSERT INTO '.$prefix.'bankconnect_match_candidate'
+			.' (fk_match,candidate_id,candidate_type,candidate_ref,amount,selected,created_at) VALUES ('
+			.(int)$matchRowid.",'".$this->db->escape((string)$candidate->id)."','".$this->db->escape($candidate->type)."','"
+			.$this->db->escape($candidate->ref)."',".(float)$candidate->remaining.',0,NOW())'
+			.' ON DUPLICATE KEY UPDATE candidate_ref=VALUES(candidate_ref), amount=VALUES(amount)';
+		if (!$this->db->query($sql)) {
+			throw new RuntimeException('BankConnect: candidate could not be attached to match: '.$this->db->lasterror());
+		}
+		$res = $this->db->query('SELECT rowid FROM '.$prefix.'bankconnect_match_candidate'
+			.' WHERE fk_match='.(int)$matchRowid." AND candidate_id='".$this->db->escape((string)$candidate->id)."'"
+			." AND candidate_type='".$this->db->escape($candidate->type)."' LIMIT 1");
+		$row = $res ? $this->db->fetch_object($res) : false;
+		if (!$row) {
+			throw new RuntimeException('BankConnect: candidate attachment cannot be reloaded');
+		}
+		return (int)$row->rowid;
+	}
 
     /**
      * Select the concrete candidate(s) to use for a proposed match.

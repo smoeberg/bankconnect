@@ -1,0 +1,20 @@
+.bc-toolbar,.bc-section-head,.bc-card-top,.bc-proposal header,.bc-actions{display:flex;align-items:center;justify-content:space-between;gap:1rem}
+.bc-toolbar{background:var(--colorbacklineimp,#f5f7fa);border:1px solid var(--colortextbackhmenu,#d8dde5);border-radius:8px;padding:1rem;margin-bottom:1rem;flex-wrap:wrap}
+.bc-import summary{cursor:pointer;color:var(--colortextlink,#2361a0)}
+.bc-import form{margin-top:.75rem}
+.bc-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1rem;margin:1rem 0}
+.bc-summary>div{background:#fff;border:1px solid #dfe3e8;border-radius:10px;padding:1rem;display:flex;flex-direction:column}
+.bc-summary strong{font-size:1.7rem}.bc-summary span{color:#59636e}
+.bc-section{margin:1.5rem 0}.bc-section-head h2{margin-bottom:.2rem}.bc-section-head p{margin-top:0;color:#66717d}
+.bc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:1rem}
+.bc-card,.bc-proposal{background:#fff;border:1px solid #dfe3e8;border-radius:10px;padding:1rem;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.bc-card h3,.bc-proposal h3{margin:.6rem 0 .2rem}.bc-card p,.bc-proposal p{margin:.2rem 0;color:#66717d}
+.bc-credit{color:#18794e}.bc-debit{color:#b42318}.bc-card-meta{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin:1rem 0}
+.bc-pill,.bc-confidence{display:inline-block;border-radius:99px;padding:.2rem .55rem;font-size:.85rem;font-weight:600}
+.bc-warn,.bc-medium{background:#fff4ce;color:#7a4d00}.bc-danger,.bc-weak{background:#fee4e2;color:#912018}.bc-strong{background:#dcfae6;color:#087443}
+.bc-proposal{margin-bottom:1rem}.bc-amount{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:.35rem}.bc-amount strong{font-size:1.25rem}
+.bc-reason{background:#f7f8fa;border-radius:7px;padding:.75rem;margin:1rem 0}
+.bc-candidates{display:grid;gap:.55rem}.bc-candidate{position:relative;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:.75rem;border:1px solid #dfe3e8;border-radius:8px;padding:.75rem;cursor:pointer}
+.bc-candidate:hover{border-color:#7aa7d6}.bc-candidate.bc-suggested{border-color:#4b8bc8;background:#f2f8ff}.bc-candidate span{display:flex;flex-direction:column}.bc-candidate small{color:#66717d;margin-top:.15rem}.bc-candidate em{position:absolute;right:.5rem;top:-.55rem;background:#4b8bc8;color:#fff;border-radius:99px;padding:.1rem .45rem;font-size:.72rem;font-style:normal}
+.bc-actions{justify-content:flex-end;margin-top:1rem}.bc-secondary{margin-top:.4rem}.bc-empty{padding:2rem;text-align:center;background:#f7f8fa;border-radius:8px;color:#66717d}
+@media(max-width:700px){.bc-section-head,.bc-proposal header{align-items:flex-start;flex-direction:column}.bc-amount{text-align:left;align-items:flex-start}.bc-candidate{grid-template-columns:auto 1fr}.bc-candidate b{grid-column:2}}
