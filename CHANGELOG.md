@@ -1,3 +1,13 @@
+## 0.5.0 (unreleased)
+
+### Added
+- `DolibarrBankEntryService` creates imported movements through Dolibarr's
+  `Account::addline()` domain API.
+- Sidecar-to-`llx_bank` linkage with explicit pending/creating/linked/error
+  states and an idempotency marker for crash-safe retries.
+- Direct link from the reconciliation screen to the standard Dolibarr bank
+  entry.
+
 ## 0.4.0 (2026-09-21)
 
 ### Added

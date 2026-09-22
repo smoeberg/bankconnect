@@ -27,7 +27,7 @@ class modBankConnect extends DolibarrModules
 		$this->descriptionlong = 'ModuleBankConnectDescLong';
 		$this->editor_name = 'WM Group / Eira';
 		$this->editor_url = 'https://github.com/smoeberg/bankconnect';
-		$this->version = '0.4.0';
+		$this->version = '0.5.0';
 		$this->const_name = 'MAIN_MODULE_BANKCONNECT';
 		$this->picto = 'bank';
 
@@ -105,6 +105,20 @@ class modBankConnect extends DolibarrModules
 		$result = $this->_load_tables('/bankconnect/sql/');
 		if ($result < 0) {
 			return -1;
+		}
+
+		$table = MAIN_DB_PREFIX.'bankconnect_transaction';
+		$columns = array(
+			'fk_bankentry' => 'BIGINT DEFAULT NULL',
+			'bank_entry_state' => "VARCHAR(16) NOT NULL DEFAULT 'pending'",
+			'bank_entry_error' => 'VARCHAR(255) DEFAULT NULL',
+		);
+		foreach ($columns as $column => $definition) {
+			$description = $this->db->DDLDescTable($table, $column);
+			$exists = $description && $this->db->fetch_object($description);
+			if (!$exists && !$this->db->query('ALTER TABLE '.$table.' ADD COLUMN '.$column.' '.$definition)) {
+				return -1;
+			}
 		}
 
 		return $this->_init(array(), $options);

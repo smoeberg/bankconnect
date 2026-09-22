@@ -13,11 +13,16 @@ CREATE TABLE IF NOT EXISTS llx_bankconnect_transaction (
 	acct_svcr_ref varchar(255),
 	is_reversal integer NOT NULL DEFAULT 0,
 	requires_manual_review integer NOT NULL DEFAULT 0,
+	fk_bankentry bigint DEFAULT NULL,
+	bank_entry_state varchar(16) NOT NULL DEFAULT 'pending',
+	bank_entry_error varchar(255) DEFAULT NULL,
 	cam_file varchar(255),
 	state varchar(16) NOT NULL DEFAULT 'unmatched',
 	created_at datetime DEFAULT NULL,
 	KEY idx_bc_state (state),
 	KEY idx_bc_account (fk_bank_account),
+	KEY idx_bc_bankentry_state (bank_entry_state),
+	UNIQUE KEY uk_bc_transaction_bankentry (fk_bankentry),
 	UNIQUE KEY uk_bc_statement_transaction (fk_bank_account, statement_id, transaction_id),
 	KEY idx_bc_manual_review (requires_manual_review)
 ) ENGINE=innodb;

@@ -4,6 +4,7 @@ ModuleBankConnectDescLong=Forbinder Dolibarr med BankConnect, importerer banktra
 BankConnectPermRead=Se BankConnect-transaktioner og afstemning
 BankConnectPermWrite=Importér BankConnect-transaktioner og godkend match
 BankConnectReconcile=Bank afstemning
+BankConnectBankEntry=Bankpost
 BankConnectImport=Importér
 BankConnectImportOk=Importerede %s transaktioner (%s dubletter)
 BankConnectImportFailed=Import fejlede

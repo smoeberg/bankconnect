@@ -3,6 +3,7 @@
 
 require_once __DIR__.'/CamtParser.php';
 require_once __DIR__.'/BankTransaction.php';
+require_once __DIR__.'/DolibarrBankEntryService.php';
 
 class ImportService
 {
@@ -13,18 +14,20 @@ class ImportService
 
 	/** @var CamtParser */
 	private $parser;
+	private $bankEntryService;
 
-	public function __construct(BankConnectStore $store, ?CamtParser $parser = null)
+	public function __construct(BankConnectStore $store, ?CamtParser $parser = null, ?DolibarrBankEntryService $bankEntryService = null)
 	{
 		$this->store = $store;
 		$this->parser = $parser ?? new CamtParser();
+		$this->bankEntryService = $bankEntryService;
 	}
 
 	/**
 	 * Parse camt XML and upsert each transaction. Dedup counts are exact.
 	 * @return array{imported:int, duplicates:int, total:int}
 	 */
-	public function import(string $xml, int $fkBankAccount = 0, string $sourceFile = 'import'): array
+	public function import(string $xml, int $fkBankAccount = 0, string $sourceFile = 'import', $user = null): array
 	{
 		$txs = $this->parser->parse($xml);
 		$imported = 0;
@@ -45,6 +48,15 @@ class ImportService
 				'hash' => $t->hash,
 			] : (array)$t;
 			$r = $this->store->upsertTransactionDetailed($arr, $fkBankAccount, $sourceFile);
+			if ($this->bankEntryService !== null && empty($r['fk_bankentry']) && $this->store->claimBankEntry((int)$r['rowid'])) {
+				try {
+					$bankEntryId = $this->bankEntryService->create($arr, $fkBankAccount, $user);
+					$this->store->linkBankEntry((int)$r['rowid'], $bankEntryId);
+				} catch (Throwable $e) {
+					$this->store->failBankEntry((int)$r['rowid'], $e->getMessage());
+					throw $e;
+				}
+			}
 			if ($r['duplicate']) {
 				$duplicates++;
 			} else {
@@ -58,7 +70,7 @@ class ImportService
 	 * Import from a file path.
 	 * @return array{imported:int, duplicates:int, total:int}
 	 */
-	public function importFile(string $path, int $fkBankAccount = 0, string $sourceFile = 'import'): array
+	public function importFile(string $path, int $fkBankAccount = 0, string $sourceFile = 'import', $user = null): array
 	{
 		if ($path === '' || !is_file($path) || !is_readable($path)) {
 			throw new RuntimeException('Import file is not readable');
@@ -76,6 +88,6 @@ class ImportService
 		if ($xml === false) {
 			throw new RuntimeException('Unable to read import file');
 		}
-		return $this->import($xml, $fkBankAccount, $sourceFile);
+		return $this->import($xml, $fkBankAccount, $sourceFile, $user);
 	}
 }
