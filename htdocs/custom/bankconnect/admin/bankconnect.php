@@ -13,7 +13,10 @@ $langs->load('bankconnect@bankconnect');
 
 $action = GETPOST('action', 'alpha');
 
-if ($action === 'save') {
+if ($action === 'save' && strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+	if (!checkToken()) {
+		accessforbidden();
+	}
 	dolibarr_set_const($db, 'BANKCONNECT_MISTRAL_KEY', GETPOST('mistralkey', 'alpha'), 'chaine', 0, '', $conf->entity);
 	dolibarr_set_const($db, 'BANKCONNECT_AI_THRESHOLD', (float)GETPOST('threshold', 'alpha'), 'chaine', 0, '', $conf->entity);
 	setEventMessages($langs->trans('Saved'), null);
