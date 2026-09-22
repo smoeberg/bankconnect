@@ -13,6 +13,7 @@ require_once dol_buildpath('/bankconnect/class/ReconciliationService.php', 0);
 require_once dol_buildpath('/bankconnect/class/ReconciliationWorkflowService.php', 0);
 require_once dol_buildpath('/bankconnect/class/DolibarrPaymentLinkGateway.php', 0);
 require_once dol_buildpath('/bankconnect/class/ApprovedMatchLinkService.php', 0);
+require_once dol_buildpath('/bankconnect/class/BankJournalHandoffService.php', 0);
 
 if (!$user->hasRight('bankconnect', 'read')) {
 	accessforbidden();
@@ -159,6 +160,8 @@ if (!$accountid) {
 $unmatched = $store->unmatchedTransactions($accountid);
 $proposals = $store->proposedMatchesForAccount($accountid);
 $linkPending = $store->approvedMatchesAwaitingLink($accountid);
+$linked = $store->linkedMatchesForAccount($accountid);
+$journalHandoff = new BankJournalHandoffService($db);
 $provider = new DolibarrCandidateProvider($db, (string)($conf->currency ?? 'DKK'));
 $workflow = new ReconciliationWorkflowService($store, $provider);
 
@@ -166,6 +169,7 @@ print '<div class="bc-summary">';
 print '<div><strong>'.count($unmatched).'</strong><span>'.$langs->trans('BankConnectUnmatched').'</span></div>';
 print '<div><strong>'.count($proposals).'</strong><span>'.$langs->trans('BankConnectAwaitingApproval').'</span></div>';
 print '<div><strong>'.count($linkPending).'</strong><span>'.$langs->trans('BankConnectAwaitingLink').'</span></div>';
+print '<div><strong>'.count($linked).'</strong><span>'.$langs->trans('BankConnectLinkedEntries').'</span></div>';
 print '</div>';
 
 if ($unmatched) {
@@ -223,6 +227,32 @@ if ($linkPending) {
 		print '<h3>'.dol_escape_htmltag($pending['counterparty'] ?: $langs->trans('BankConnectUnknownCounterparty')).'</h3><p>'.dol_escape_htmltag($pending['reference'] ?: '—').'</p>';
 		if (!empty($pending['link_error'])) print '<p class="bc-link-error">'.dol_escape_htmltag($pending['link_error']).'</p>';
 		print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'"><input type="hidden" name="token" value="'.newToken().'"><input type="hidden" name="account" value="'.$accountid.'"><input type="hidden" name="action" value="link"><input type="hidden" name="matchid" value="'.(int)$pending['match_rowid'].'"><button class="button button-save">'.$langs->trans('BankConnectRetryLink').'</button></form></article>';
+	}
+	print '</div></section>';
+}
+
+if ($linked) {
+	print '<section class="bc-section"><div class="bc-section-head"><div><h2>'.$langs->trans('BankConnectAccountingHandoff').'</h2><p>'.$langs->trans('BankConnectAccountingHandoffHelp').'</p></div></div><div class="bc-grid">';
+	foreach ($linked as $entry) {
+		$status = $journalHandoff->status((int)$entry['fk_bankentry'], $accountid, (int)$conf->entity);
+		$stateLabels = [
+			'ready' => 'BankConnectJournalReady', 'transferred' => 'BankConnectJournalTransferred',
+			'missing_journal' => 'BankConnectJournalMissing', 'accounting_disabled' => 'BankConnectAccountingDisabled',
+			'missing_payment_link' => 'BankConnectPaymentLinkMissing', 'broken_payment_link' => 'BankConnectPaymentLinkBroken',
+			'missing_bank_entry' => 'BankConnectBankEntryMissing',
+		];
+		$isOk = in_array($status['state'], ['ready', 'transferred'], true);
+		print '<article class="bc-card"><div class="bc-card-top"><span>'.dol_print_date($entry['tx_date'], 'day').'</span><strong>'.price($entry['amount']).' '.dol_escape_htmltag($entry['currency']).'</strong></div>';
+		print '<h3>'.dol_escape_htmltag($entry['counterparty'] ?: $langs->trans('BankConnectUnknownCounterparty')).'</h3><p>'.dol_escape_htmltag($entry['reference'] ?: '—').'</p>';
+		print '<div class="bc-card-meta"><a href="'.DOL_URL_ROOT.'/compta/bank/line.php?rowid='.(int)$entry['fk_bankentry'].'">'.$langs->trans('BankConnectBankEntry').' #'.(int)$entry['fk_bankentry'].'</a>';
+		print '<span class="bc-pill '.($isOk ? 'bc-strong' : 'bc-danger').'">'.$langs->trans($stateLabels[$status['state']] ?? 'BankConnectPaymentLinkBroken').'</span></div>';
+		if ($status['journal_id'] > 0) {
+			$url = DOL_URL_ROOT.'/accountancy/journal/bankjournal.php?mainmenu=accountancy&leftmenu=accountancy_transfer_journal&id_journal='.(int)$status['journal_id'];
+			print '<a class="button button-save" href="'.$url.'">'.$langs->trans($status['transferred'] ? 'BankConnectOpenJournal' : 'BankConnectTransferInJournal').'</a>';
+		} elseif ($status['state'] === 'missing_journal') {
+			print '<a class="button" href="'.DOL_URL_ROOT.'/compta/bank/card.php?id='.$accountid.'">'.$langs->trans('BankConnectConfigureJournal').'</a>';
+		}
+		print '</article>';
 	}
 	print '</div></section>';
 }

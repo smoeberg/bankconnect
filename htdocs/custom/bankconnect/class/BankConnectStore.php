@@ -295,6 +295,21 @@ class BankConnectStore
 		return $out;
 	}
 
+	/** @return list<array<string,mixed>> */
+	public function linkedMatchesForAccount(int $bankAccountId): array
+	{
+		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$sql = 'SELECT m.rowid AS match_rowid, m.linked_at, t.rowid, t.tx_date, t.amount, t.currency,'
+			.' t.reference, t.counterparty, t.fk_bankentry FROM '.$prefix.'bankconnect_match m'
+			.' JOIN '.$prefix.'bankconnect_transaction t ON t.rowid=m.fk_transaction'
+			.' WHERE m.approved_by IS NOT NULL AND m.link_state=\'linked\' AND t.fk_bank_account='.(int)$bankAccountId
+			." AND t.state='linked' ORDER BY t.tx_date DESC, m.rowid DESC LIMIT 100";
+		$res = $this->db->query($sql);
+		$out = [];
+		while ($res && ($row = $this->db->fetch_object($res))) $out[] = (array)$row;
+		return $out;
+	}
+
 	public function claimMatchLink(int $matchRowid): string
 	{
 		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';

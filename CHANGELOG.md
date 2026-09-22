@@ -1,3 +1,14 @@
+## 1.0.0 (unreleased)
+
+### Added
+- Bank-journal readiness check based on the exact Dolibarr 24 relations:
+  bank account journal assignment, `bank_url` payment source, payment `fk_bank`
+  and `accounting_bookkeeping(doc_type='bank', fk_doc=<bank rowid>)`.
+- Reconciliation workspace shows whether linked entries are ready, already
+  transferred, or need bank-journal/accounting configuration.
+- Direct handoff to Dolibarr's standard Bank Financial Journal. The module does
+  not create bookkeeping rows itself.
+
 ## 0.9.0 (unreleased)
 
 ### Added

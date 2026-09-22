@@ -54,6 +54,7 @@ standardflow.
 | `ReconciliationWorkflowService` | Validering af GUI-valg, ejerskab og godkendelsesflow |
 | `ApprovedMatchLinkService` | Idempotent kobling af godkendte match til standardbetalinger |
 | `DolibarrPaymentLinkGateway` | Adapter til `Paiement`, `PaiementFourn`, `update_fk_bank()` og `Account::add_url_line()` |
+| `BankJournalHandoffService` | Verificerer standardrelationer og status før handoff til bankfinanskladden |
 | `DolibarrCandidateProvider` | Åbne fakturaer og ulinkede betalinger fra Dolibarr-standardtabeller |
 | `PaymentBatchService` | Batch-livscyklus, idempotens, recover |
 | `PaymentStateMachine` | Eksplicit batch-status-livscyklus |
@@ -159,9 +160,17 @@ php phpunit.phar --bootstrap tests/unit/bootstrap.php tests/unit
 
 CI (`.github/workflows/test.yml`): syntax check + unit tests på push/PR.
 
+## Bankfinanskladde
+
+Når et match er forbundet, kontrollerer modulet, at bankkontoen har en
+finanskladde, at betalingens `fk_bank` og `bank_url` peger på den importerede
+bankpost, og om Dolibarr allerede har oprettet `accounting_bookkeeping`-linjer
+med `doc_type='bank'` og bankpostens id som `fk_doc`. Brugeren sendes derefter
+til Dolibarrs standard **Bank Financial Journal**, som alene udfører overførslen
+til finans. BankConnect-modulet skriver ikke direkte i bogføringen.
+
 ## Videre udvikling
 
-- Verificér hele flowet frem til Dolibarrs standard bankfinanskladde.
 - Live XML crypto (kræver officiel BankConnect developer package).
 - Issue #43: qualification/performance/failure-injection gate.
 - OIOUBL/EAN-fakturering (dkmodul-dolibarr-repoet).
