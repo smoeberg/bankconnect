@@ -53,7 +53,7 @@ class ReconciliationEngine
         $this->conf = $conf;
         $this->ai = $ai;
 
-        $g = $conf->global ?? [];
+        $g = (array) ($conf->global ?? []);
         if (isset($g['BANKCONNECT_RULE_WINDOW_1D'])) {
             $this->window1Day = max(1, (int) $g['BANKCONNECT_RULE_WINDOW_1D']);
         }

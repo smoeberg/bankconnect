@@ -25,6 +25,9 @@ er Dolibarrs bankpost, og `llx_accounting_bookkeeping` opdateres af Dolibarrs
 standardflow.
 
 - **Rule layer**: payment reference -> beløb -> datovindue. Confidence 0.5-0.98.
+- **Dolibarr candidates**: indbetalinger læser åbne kundefakturaer og ulinkede
+  kundebetalinger; udbetalinger læser leverandørfakturaer og ulinkede
+  leverandørbetalinger. Entity, retning og valuta filtreres før matching.
 - **AI fallback**: Mistral (cloud eller self-hosted) modtager kun saniterede
   data (CPR/regex-fjernet), returnerer altid gyldigt JSON eller `none` -
   aldrig exceptions til kalderen.
@@ -45,6 +48,7 @@ standardflow.
 | `ApprovalPosting` | Legacy-prototype; ikke eksponeret eller medtaget i installations-ZIP |
 | `ImportService` | Fælles camt-import-flow med dedup-tælling |
 | `ReconciliationService` | Orchestrering + confidence-audit |
+| `DolibarrCandidateProvider` | Åbne fakturaer og ulinkede betalinger fra Dolibarr-standardtabeller |
 | `PaymentBatchService` | Batch-livscyklus, idempotens, recover |
 | `PaymentStateMachine` | Eksplicit batch-status-livscyklus |
 | `Pain001Builder` | pain.001.001.03 (DK + SEPA) |

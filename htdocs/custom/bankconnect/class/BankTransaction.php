@@ -24,4 +24,23 @@ class BankTransaction
 
     /** Stable transaction identity from bank references. */
     public string $transactionId = '';
+
+	/** @param array<string,mixed> $row */
+	public static function fromArray(array $row): self
+	{
+		$transaction = new self();
+		$transaction->date = (string)($row['date'] ?? $row['tx_date'] ?? '');
+		$transaction->amount = (float)($row['amount'] ?? 0);
+		$transaction->currency = (string)($row['currency'] ?? 'DKK');
+		$transaction->text = (string)($row['text'] ?? $row['label'] ?? '');
+		$transaction->reference = (string)($row['reference'] ?? '');
+		$transaction->counterparty = (string)($row['counterparty'] ?? '');
+		$transaction->hash = (string)($row['hash'] ?? '');
+		$transaction->acctSvcrRef = (string)($row['acct_svcr_ref'] ?? $row['acctSvcrRef'] ?? '');
+		$transaction->isReversal = !empty($row['is_reversal']) || !empty($row['isReversal']);
+		$transaction->requiresManualReview = !empty($row['requires_manual_review']) || !empty($row['requiresManualReview']);
+		$transaction->statementId = (string)($row['statement_id'] ?? '');
+		$transaction->transactionId = (string)($row['transaction_id'] ?? '');
+		return $transaction;
+	}
 }

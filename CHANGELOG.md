@@ -1,3 +1,19 @@
+## 0.7.0 (unreleased)
+
+### Added
+- Direction-aware `DolibarrCandidateProvider` backed by Dolibarr's native
+  customer invoices, supplier invoices, unlinked invoice payments and various
+  payments.
+- Remaining invoice amounts are calculated from Dolibarr payment-relation
+  tables in company or invoice currency.
+- Currency and entity boundaries are enforced before candidates reach the
+  matching engine.
+
+### Fixed
+- The reconciliation action now constructs `BankTransaction` objects from
+  stored rows and invokes `ReconciliationService` with real Dolibarr
+  candidates instead of calling the engine without candidates.
+
 ## 0.6.0 (unreleased)
 
 ### Added
