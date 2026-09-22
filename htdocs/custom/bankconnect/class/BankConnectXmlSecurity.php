@@ -46,7 +46,7 @@ class BankConnectXmlSecurity
     public function __construct(Conf $conf)
     {
         $this->conf = $conf;
-        $g = $conf->global ?? [];
+        $g = (array) ($conf->global ?? []);
 
         if (!empty($g['BANKCONNECT_CUSTOMER_PRIVATE_KEY'])) {
             $this->customerPrivateKeyPem = (string) $g['BANKCONNECT_CUSTOMER_PRIVATE_KEY'];

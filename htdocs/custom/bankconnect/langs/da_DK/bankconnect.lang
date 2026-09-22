@@ -1,6 +1,8 @@
 ModuleBankConnectName=BankConnect
 ModuleBankConnectDesc=Automatisk import og afstemning af banktransaktioner via BankConnect
 ModuleBankConnectDescLong=Forbinder Dolibarr med BankConnect, importerer banktransaktioner og hjælper brugeren med at matche dem mod Dolibarrs eksisterende bilag og betalinger.
+BankConnectAutomaticImport=Hent BankConnect-kontoudtog
+BankConnectAutomaticImportDesc=Henter CAMT-kontoudtog for aktive, mappede BankConnect-aftaler og importerer dem som Dolibarr-bankposter.
 BankConnectPermRead=Se BankConnect-transaktioner og afstemning
 BankConnectPermWrite=Importér BankConnect-transaktioner og godkend match
 BankConnectReconcile=Bank afstemning
