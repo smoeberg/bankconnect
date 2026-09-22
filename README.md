@@ -52,6 +52,8 @@ standardflow.
 | `ImportService` | Fælles camt-import-flow med dedup-tælling |
 | `ReconciliationService` | Orchestrering + confidence-audit |
 | `ReconciliationWorkflowService` | Validering af GUI-valg, ejerskab og godkendelsesflow |
+| `ApprovedMatchLinkService` | Idempotent kobling af godkendte match til standardbetalinger |
+| `DolibarrPaymentLinkGateway` | Adapter til `Paiement`, `PaiementFourn`, `update_fk_bank()` og `Account::add_url_line()` |
 | `DolibarrCandidateProvider` | Åbne fakturaer og ulinkede betalinger fra Dolibarr-standardtabeller |
 | `PaymentBatchService` | Batch-livscyklus, idempotens, recover |
 | `PaymentStateMachine` | Eksplicit batch-status-livscyklus |
@@ -159,7 +161,6 @@ CI (`.github/workflows/test.yml`): syntax check + unit tests på push/PR.
 
 ## Videre udvikling
 
-- Knyt godkendte match til Dolibarr-betalinger uden at oprette en dubletpost.
 - Verificér hele flowet frem til Dolibarrs standard bankfinanskladde.
 - Live XML crypto (kræver officiel BankConnect developer package).
 - Issue #43: qualification/performance/failure-injection gate.

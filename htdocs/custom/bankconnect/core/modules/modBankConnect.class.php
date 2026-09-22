@@ -27,7 +27,7 @@ class modBankConnect extends DolibarrModules
 		$this->descriptionlong = 'ModuleBankConnectDescLong';
 		$this->editor_name = 'WM Group / Eira';
 		$this->editor_url = 'https://github.com/smoeberg/bankconnect';
-		$this->version = '0.8.0';
+		$this->version = '0.9.0';
 		$this->const_name = 'MAIN_MODULE_BANKCONNECT';
 		$this->picto = 'bank';
 
@@ -133,6 +133,21 @@ class modBankConnect extends DolibarrModules
 			$description = $this->db->DDLDescTable($table, $column);
 			$exists = $description && $this->db->fetch_object($description);
 			if (!$exists && !$this->db->query('ALTER TABLE '.$table.' ADD COLUMN '.$column.' '.$definition)) {
+				return -1;
+			}
+		}
+
+		$matchTable = MAIN_DB_PREFIX.'bankconnect_match';
+		$matchColumns = array(
+			'link_state' => "VARCHAR(16) NOT NULL DEFAULT 'pending'",
+			'link_token' => 'VARCHAR(64) DEFAULT NULL',
+			'link_error' => 'VARCHAR(255) DEFAULT NULL',
+			'linked_at' => 'DATETIME DEFAULT NULL',
+		);
+		foreach ($matchColumns as $column => $definition) {
+			$description = $this->db->DDLDescTable($matchTable, $column);
+			$exists = $description && $this->db->fetch_object($description);
+			if (!$exists && !$this->db->query('ALTER TABLE '.$matchTable.' ADD COLUMN '.$column.' '.$definition)) {
 				return -1;
 			}
 		}
