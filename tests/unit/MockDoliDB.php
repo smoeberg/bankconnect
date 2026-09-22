@@ -272,6 +272,7 @@ class MockDoliDB
 				$changed++;
 			}
 		}
+		$this->lastRowCount = $changed;
 		return true;
 	}
 

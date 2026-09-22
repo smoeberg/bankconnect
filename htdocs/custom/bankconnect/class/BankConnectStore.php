@@ -15,7 +15,7 @@ class BankConnectStore
         return $this->upsertTransactionDetailed($t, $fkBankAccount, $sourceFile)['rowid'];
     }
 
-    /** @return array{rowid:int,duplicate:bool} */
+    /** @return array{rowid:int,duplicate:bool,fk_bankentry:int,bank_entry_state:string} */
     public function upsertTransactionDetailed(array $t, int $fkBankAccount, string $sourceFile): array
     {
         if ($fkBankAccount <= 0) {
@@ -67,11 +67,73 @@ class BankConnectStore
         $affected = $affectedRes ? $this->db->fetch_object($affectedRes) : false;
         $duplicate = $affected && (int)$affected->affected === 0;
 
-        $res = $this->db->query("SELECT rowid FROM llx_bankconnect_transaction WHERE hash='".$this->db->escape($hash)."'");
+        $res = $this->db->query("SELECT rowid, fk_bankentry, bank_entry_state FROM llx_bankconnect_transaction WHERE hash='".$this->db->escape($hash)."'");
         if (!$res || !($obj=$this->db->fetch_object($res))) {
             throw new RuntimeException('BankConnect: transaction upsert succeeded but row cannot be reloaded');
         }
-        return ['rowid'=>(int)$obj->rowid,'duplicate'=>$duplicate];
+        return [
+            'rowid' => (int)$obj->rowid,
+            'duplicate' => $duplicate,
+            'fk_bankentry' => (int)($obj->fk_bankentry ?? 0),
+            'bank_entry_state' => (string)($obj->bank_entry_state ?? 'pending'),
+        ];
+    }
+
+    /**
+     * Atomically reserve creation of the Dolibarr bank entry.
+     *
+     * @return bool True only for the importer that owns the reservation.
+     */
+    public function claimBankEntry(int $transactionId): bool
+    {
+        $res = $this->db->query('SELECT fk_bankentry, bank_entry_state FROM llx_bankconnect_transaction WHERE rowid='.(int)$transactionId);
+        $row = $res ? $this->db->fetch_object($res) : false;
+        if (!$row || !empty($row->fk_bankentry) || !in_array((string)$row->bank_entry_state, ['pending', 'error'], true)) {
+            return false;
+        }
+
+        $previousState = (string)($row->bank_entry_state ?? '');
+		if ($previousState === '') {
+			$previousState = 'pending';
+		}
+        $sql = "UPDATE llx_bankconnect_transaction SET bank_entry_state='creating', bank_entry_error=NULL"
+            ." WHERE rowid=".(int)$transactionId
+            ." AND fk_bankentry IS NULL AND bank_entry_state='".$this->db->escape($previousState)."'";
+        if (!$this->db->query($sql)) {
+            throw new RuntimeException('BankConnect: bank entry reservation failed: '.$this->db->lasterror());
+        }
+
+        $affectedRes = $this->db->query('SELECT ROW_COUNT() AS affected');
+        $affected = $affectedRes ? $this->db->fetch_object($affectedRes) : false;
+        return $affected && (int)$affected->affected === 1;
+    }
+
+    public function linkBankEntry(int $transactionId, int $bankEntryId): void
+    {
+        if ($bankEntryId <= 0) {
+            throw new RuntimeException('BankConnect: invalid Dolibarr bank entry id');
+        }
+        $sql = "UPDATE llx_bankconnect_transaction SET fk_bankentry=".(int)$bankEntryId
+            .", bank_entry_state='linked', bank_entry_error=NULL"
+            ." WHERE rowid=".(int)$transactionId." AND bank_entry_state='creating' AND fk_bankentry IS NULL";
+        if (!$this->db->query($sql)) {
+            throw new RuntimeException('BankConnect: bank entry link failed: '.$this->db->lasterror());
+        }
+		$affectedRes = $this->db->query('SELECT ROW_COUNT() AS affected');
+		$affected = $affectedRes ? $this->db->fetch_object($affectedRes) : false;
+		if (!$affected || (int)$affected->affected !== 1) {
+			throw new RuntimeException('BankConnect: bank entry link lost its reservation');
+		}
+    }
+
+    public function failBankEntry(int $transactionId, string $error): void
+    {
+        $error = substr($error, 0, 255);
+        $sql = "UPDATE llx_bankconnect_transaction SET bank_entry_state='error', bank_entry_error='"
+            .$this->db->escape($error)."' WHERE rowid=".(int)$transactionId." AND fk_bankentry IS NULL";
+        if (!$this->db->query($sql)) {
+            throw new RuntimeException('BankConnect: bank entry failure state could not be saved: '.$this->db->lasterror());
+        }
     }
 
     public function saveMatch(
@@ -217,7 +279,7 @@ class BankConnectStore
 
     public function unmatchedTransactions(int $fkBankAccount): array
     {
-        $sql="SELECT rowid,tx_date,amount,currency,reference,counterparty,acct_svcr_ref,is_reversal,requires_manual_review,cam_file
+        $sql="SELECT rowid,tx_date,amount,currency,reference,counterparty,acct_svcr_ref,is_reversal,requires_manual_review,cam_file,fk_bankentry,bank_entry_state,bank_entry_error
               FROM llx_bankconnect_transaction WHERE fk_bank_account=".(int)$fkBankAccount." AND state='unmatched' ORDER BY tx_date DESC";
         $res=$this->db->query($sql); $out=[];
         while($res && $o=$this->db->fetch_object($res)) $out[]=(array)$o;

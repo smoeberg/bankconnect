@@ -6,6 +6,7 @@ require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectStore.ph
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/ImportService.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankTransaction.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/CamtParser.php';
+require_once __DIR__.'/../../htdocs/custom/bankconnect/class/DolibarrBankEntryService.php';
 
 class ImportServiceTest extends TestCase
 {
@@ -85,6 +86,53 @@ class ImportServiceTest extends TestCase
         $this->assertTrue($captured[0]['isReversal']);
         $this->assertSame('BANK-123', $captured[0]['acctSvcrRef']);
     }
+
+	public function testImportCreatesAndLinksDolibarrBankEntryOnce(): void
+	{
+		$store = new class extends BankConnectStore {
+			public array $linked = [];
+			public int $claims = 0;
+			private bool $duplicate = false;
+
+			public function __construct() {}
+			public function upsertTransactionDetailed(array $t, int $fkBankAccount, string $sourceFile): array
+			{
+				$result = ['rowid' => 12, 'duplicate' => $this->duplicate, 'fk_bankentry' => $this->duplicate ? 7631 : 0, 'bank_entry_state' => $this->duplicate ? 'linked' : 'pending'];
+				$this->duplicate = true;
+				return $result;
+			}
+			public function claimBankEntry(int $transactionId): bool
+			{
+				$this->claims++;
+				return true;
+			}
+			public function linkBankEntry(int $transactionId, int $bankEntryId): void
+			{
+				$this->linked[] = [$transactionId, $bankEntryId];
+			}
+			public function failBankEntry(int $transactionId, string $error): void {}
+		};
+		$bankEntries = new class extends DolibarrBankEntryService {
+			public int $creates = 0;
+			public function __construct() {}
+			public function create(array $transaction, int $bankAccountId, $user): int
+			{
+				$this->creates++;
+				return 7631;
+			}
+		};
+		$service = new ImportService($store, null, $bankEntries);
+		$xml = $this->camt([[550, '2026-09-17']]);
+
+		$first = $service->import($xml, 1004, 'statement.xml', (object)['id' => 42]);
+		$second = $service->import($xml, 1004, 'statement.xml', (object)['id' => 42]);
+
+		$this->assertSame(1, $first['imported']);
+		$this->assertSame(1, $second['duplicates']);
+		$this->assertSame(1, $bankEntries->creates);
+		$this->assertSame(1, $store->claims);
+		$this->assertSame([[12, 7631]], $store->linked);
+	}
 
     public function testImportFileRejectsOversizedFile(): void
     {

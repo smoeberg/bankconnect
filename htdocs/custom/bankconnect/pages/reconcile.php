@@ -7,6 +7,7 @@ require_once dol_buildpath('/bankconnect/class/CamtParser.php', 0);
 require_once dol_buildpath('/bankconnect/class/ReconciliationEngine.php', 0);
 require_once dol_buildpath('/bankconnect/class/BankConnectStore.php', 0);
 require_once dol_buildpath('/bankconnect/class/ImportService.php', 0);
+require_once dol_buildpath('/bankconnect/class/DolibarrBankEntryService.php', 0);
 
 if (!$user->hasRight('bankconnect', 'read')) {
 	accessforbidden();
@@ -51,8 +52,8 @@ if ($action === 'import' && $user->hasRight('bankconnect', 'write')) {
 				setEventMessages('BankConnect import requires a valid XML CAMT upload', null, 'errors');
 			} else {
 				try {
-					$service = new ImportService($store);
-					$result = $service->importFile($upload['tmp_name'], $accountid, $originalName);
+					$service = new ImportService($store, null, new DolibarrBankEntryService($db));
+					$result = $service->importFile($upload['tmp_name'], $accountid, $originalName, $user);
 					$store->audit($user->id, 'import', $result['total'].' tx from '.$originalName.' ('.$result['imported'].' new, '.$result['duplicates'].' duplicates)');
 					setEventMessages($langs->trans('BankConnectImportOk', $result['imported'], $result['duplicates']), null);
 				} catch (RuntimeException $e) {
@@ -110,13 +111,22 @@ if (count($unmatched)) {
 }
 
 print '<table class="noborder centpercent">';
-print '<tr class="liste_titre"><th>Date</th><th>Amount</th><th>Ref</th><th>Counterparty</th><th>Status</th><th>Proposal</th><th></th></tr>';
+print '<tr class="liste_titre"><th>Date</th><th>Amount</th><th>Ref</th><th>Counterparty</th><th>'.$langs->trans('BankConnectBankEntry').'</th><th>Status</th><th>Proposal</th><th></th></tr>';
 foreach ($unmatched as $tx) {
 	print '<tr>';
 	print '<td>'.dol_print_date($tx['tx_date'], 'day').'</td>';
 	print '<td>'.price($tx['amount']).' '.$tx['currency'].'</td>';
 	print '<td>'.dol_escape_htmltag($tx['reference'] ?? '').'</td>';
 	print '<td>'.dol_escape_htmltag($tx['counterparty'] ?? '').'</td>';
+	print '<td>';
+	if (!empty($tx['fk_bankentry'])) {
+		print '<a href="'.DOL_URL_ROOT.'/compta/bank/line.php?rowid='.(int)$tx['fk_bankentry'].'">#'.(int)$tx['fk_bankentry'].'</a>';
+	} elseif (($tx['bank_entry_state'] ?? '') === 'error') {
+		print '<span class="badge badge-danger" title="'.dol_escape_htmltag($tx['bank_entry_error'] ?? '').'">'.$langs->trans('Error').'</span>';
+	} else {
+		print '—';
+	}
+	print '</td>';
 	print '<td>';
 	if (!empty($tx['requires_manual_review'])) {
 		print '<span class="badge badge-warning">Manuel gennemgang</span>';
