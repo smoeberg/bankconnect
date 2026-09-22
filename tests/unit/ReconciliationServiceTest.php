@@ -24,6 +24,7 @@ class ReconciliationServiceTest extends TestCase
             'state' => 'unmatched',
         ]];
         $this->db->tables['llx_bankconnect_match'] = [];
+        $this->db->tables['llx_bankconnect_match_candidate'] = [];
         $this->db->tables['llx_bankconnect_audit'] = [];
 
         $conf = bcMatcherConf();
@@ -53,6 +54,13 @@ class ReconciliationServiceTest extends TestCase
         $this->assertSame('reference_amount', $match['rule_name']);
         $this->assertSame(1.0, (float) $match['score']);
         $this->assertSame('proposed', $this->db->tables['llx_bankconnect_transaction'][0]['state']);
+        $this->assertCount(1, $this->db->tables['llx_bankconnect_match_candidate']);
+        $candidate = $this->db->tables['llx_bankconnect_match_candidate'][0];
+        $this->assertSame('1842', $candidate['candidate_id']);
+        $this->assertSame('supplier_invoice', $candidate['candidate_type']);
+        $this->assertSame('FA240891', $candidate['candidate_ref']);
+        $this->assertSame(12450.0, (float) $candidate['amount']);
+        $this->assertSame(0, (int) $candidate['selected']);
 
         $this->assertCount(1, $this->db->tables['llx_bankconnect_audit']);
         $detail = json_decode($this->db->tables['llx_bankconnect_audit'][0]['detail'], true);

@@ -64,7 +64,8 @@ class ReconciliationService
             $result->ruleName !== '' ? $result->ruleName : null,
             null,
             $result->confidence,
-            $result->reason
+            $result->reason,
+            $result->suggested
         );
         $this->store->audit($userId, 'match_proposed', $this->encodeAudit($audit));
 

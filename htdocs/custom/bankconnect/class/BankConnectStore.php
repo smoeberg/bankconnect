@@ -74,13 +74,109 @@ class BankConnectStore
         return ['rowid'=>(int)$obj->rowid,'duplicate'=>$duplicate];
     }
 
-    public function saveMatch(int $txRowid,string $matchType,?string $ruleName,?int $fkBankentry,float $score,string $reason): void
-    {
+    public function saveMatch(
+        int $txRowid,
+        string $matchType,
+        ?string $ruleName,
+        ?int $fkBankentry,
+        float $score,
+        string $reason,
+        array $suggested = []
+    ): int {
         $sql="INSERT INTO llx_bankconnect_match (fk_transaction,match_type,rule_name,fk_bankentry,score,reason)
               VALUES (".$txRowid.",'".$this->db->escape($matchType)."',".$this->nullable($ruleName).",
               ".$this->nullableInt($fkBankentry).",".(float)$score.",'".$this->db->escape($reason)."')";
         if(!$this->db->query($sql)) throw new RuntimeException('BankConnect: save match failed: '.$this->db->lasterror());
+
+        $matchId = (int)$this->db->last_insert_id('llx_bankconnect_match');
+        foreach ($suggested as $candidate) {
+            $id = (string)($candidate['id'] ?? '');
+            $type = (string)($candidate['type'] ?? '');
+            if ($id === '' || $type === '') {
+                continue;
+            }
+            $ref = array_key_exists('ref', $candidate) ? (string)$candidate['ref'] : null;
+            $refSql = $ref === null ? 'NULL' : "'".$this->db->escape($ref)."'";
+            $amount = (float)($candidate['amount'] ?? 0);
+            $candidateSql = "INSERT INTO llx_bankconnect_match_candidate
+                (fk_match,candidate_id,candidate_type,candidate_ref,amount,selected,created_at)
+                VALUES (".$matchId.",'".$this->db->escape($id)."','".$this->db->escape($type)."',"
+                .$refSql.",".$amount.",0,NOW())
+                ON DUPLICATE KEY UPDATE candidate_ref=VALUES(candidate_ref), amount=VALUES(amount)";
+            if (!$this->db->query($candidateSql)) {
+                throw new RuntimeException('BankConnect: save match candidate failed: '.$this->db->lasterror());
+            }
+        }
+
         $this->setTransactionState($txRowid,'proposed');
+        return $matchId;
+    }
+
+    /** @return list<array<string,mixed>> */
+    public function matchCandidates(int $matchRowid): array
+    {
+        $sql = "SELECT rowid, candidate_id, candidate_type, candidate_ref, amount, selected
+                FROM llx_bankconnect_match_candidate
+                WHERE fk_match = ".(int)$matchRowid."
+                ORDER BY rowid ASC";
+        $res = $this->db->query($sql);
+        $out = [];
+        while ($res && ($o = $this->db->fetch_object($res))) {
+            $out[] = (array)$o;
+        }
+        return $out;
+    }
+
+    /**
+     * Select the concrete candidate(s) to use for a proposed match.
+     * Empty selection is rejected for deterministic safety.
+     */
+    public function selectMatchCandidates(int $matchRowid, array $candidateRowIds, int $userId): void
+    {
+        $candidateRowIds = array_values(array_unique(array_map('intval', $candidateRowIds)));
+        if (empty($candidateRowIds)) {
+            throw new RuntimeException('BankConnect: at least one match candidate must be selected');
+        }
+
+        $this->db->begin();
+        try {
+            $matchRes = $this->db->query("SELECT fk_transaction FROM llx_bankconnect_match WHERE rowid=".(int)$matchRowid." LIMIT 1");
+            if (!$matchRes || !($match = $this->db->fetch_object($matchRes))) {
+                throw new RuntimeException('BankConnect: match not found: '.$matchRowid);
+            }
+
+            if (!$this->db->query("UPDATE llx_bankconnect_match_candidate SET selected=0 WHERE fk_match=".(int)$matchRowid)) {
+                throw new RuntimeException('BankConnect: candidate reset failed: '.$this->db->lasterror());
+            }
+
+            foreach ($candidateRowIds as $candidateRowId) {
+                $sql = "UPDATE llx_bankconnect_match_candidate
+                        SET selected=1
+                        WHERE rowid=".(int)$candidateRowId." AND fk_match=".(int)$matchRowid;
+                if (!$this->db->query($sql)) {
+                    throw new RuntimeException('BankConnect: candidate selection failed: '.$this->db->lasterror());
+                }
+                $verify = $this->db->query("SELECT rowid FROM llx_bankconnect_match_candidate WHERE rowid=".(int)$candidateRowId." AND fk_match=".(int)$matchRowid." AND selected=1");
+                if (!$verify || !$this->db->fetch_object($verify)) {
+                    throw new RuntimeException('BankConnect: invalid match candidate '.$candidateRowId);
+                }
+            }
+
+            if (!$this->db->commit()) {
+                throw new RuntimeException('BankConnect: candidate selection commit failed: '.$this->db->lasterror());
+            }
+        } catch (Throwable $e) {
+            $this->db->rollback();
+            throw $e;
+        }
+
+        $this->audit($userId, 'match_candidates_selected', 'match '.$matchRowid.' candidates '.implode(',', $candidateRowIds));
+    }
+
+    public function deferTransaction(int $txRowid, int $userId): void
+    {
+        $this->setTransactionState($txRowid, 'deferred');
+        $this->audit($userId, 'match_deferred', 'transaction '.$txRowid);
     }
 
     public function approveMatch(int $matchRowid,int $userId): void

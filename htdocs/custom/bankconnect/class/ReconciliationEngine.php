@@ -153,7 +153,7 @@ class ReconciliationEngine
                 $r->matchType = 'exact';
                 $r->confidence = self::CONF_REFERENCE;
                 $r->ruleName = 'reference_amount';
-                $r->suggested = [['id' => $c->id, 'type' => $c->type, 'amount' => $amt]];
+                $r->suggested = [['id' => $c->id, 'type' => $c->type, 'ref' => $c->ref, 'amount' => $amt]];
                 $r->reason = 'Prcis struktureret reference (FI71/OCR/EndToEndId) og belb matcher';
                 $r->source = 'rule';
                 return $r;
@@ -168,7 +168,7 @@ class ReconciliationEngine
             $r->ruleName = 'reference_ambiguous';
             $r->suggested = [];
             foreach ($refMatches as $c) {
-                $r->suggested[] = ['id' => $c->id, 'type' => $c->type, 'amount' => $c->remaining];
+                $r->suggested[] = ['id' => $c->id, 'type' => $c->type, 'ref' => $c->ref, 'amount' => $c->remaining];
             }
             $r->reason = 'Flere fakturaer matcher samme reference';
             $r->source = 'rule';
@@ -228,7 +228,7 @@ class ReconciliationEngine
                 $r->matchType = 'exact';
                 $r->confidence = $confidence;
                 $r->ruleName = $requireThirdparty ? 'amount_thirdparty_1d' : ($days === 1 ? 'amount_1d' : 'amount_3d');
-                $r->suggested = [['id' => $c->id, 'type' => $c->type, 'amount' => $amt]];
+                $r->suggested = [['id' => $c->id, 'type' => $c->type, 'ref' => $c->ref, 'amount' => $amt]];
                 $r->reason = $requireThirdparty
                     ? 'Belb, modpart og dato (1 dg) matcher'
                     : ($days === 1
@@ -244,7 +244,7 @@ class ReconciliationEngine
                 $r->ruleName = $requireThirdparty ? 'amount_ambiguous_thirdparty' : 'amount_ambiguous';
                 $r->suggested = [];
                 foreach ($matches as $c) {
-                    $r->suggested[] = ['id' => $c->id, 'type' => $c->type, 'amount' => $c->remaining];
+                    $r->suggested[] = ['id' => $c->id, 'type' => $c->type, 'ref' => $c->ref, 'amount' => $c->remaining];
                 }
                 $r->reason = 'Flere kandidater med samme belb i datovinduet';
                 $r->source = 'rule';
@@ -281,7 +281,7 @@ class ReconciliationEngine
                 $r->ruleName = 'multi_sum';
                 $r->suggested = [];
                 foreach ($found as $c) {
-                    $r->suggested[] = ['id' => $c->id, 'type' => $c->type, 'amount' => $c->remaining];
+                    $r->suggested[] = ['id' => $c->id, 'type' => $c->type, 'ref' => $c->ref, 'amount' => $c->remaining];
                 }
                 $r->reason = $sameThirdpartyOnly
                     ? 'Belb er summen af flere fakturaer fra samme modpart'
@@ -327,7 +327,7 @@ class ReconciliationEngine
         $r->matchType = 'partial';
         $r->confidence = self::CONF_PARTIAL;
         $r->ruleName = 'reference_partial';
-        $r->suggested = [['id' => $c->id, 'type' => $c->type, 'amount' => $amt]];
+        $r->suggested = [['id' => $c->id, 'type' => $c->type, 'ref' => $c->ref, 'amount' => $amt]];
         $r->reason = 'Reference matcher, belb afviger';
         $r->source = 'rule';
         return $r;
