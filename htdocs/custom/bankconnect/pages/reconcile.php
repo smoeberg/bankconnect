@@ -3,12 +3,12 @@
 /* No auto-posting: every approval is explicit. */
 
 require '../../../main.inc.php';
-require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/CamtParser.php';
-require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/ReconciliationEngine.php';
-require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/BankConnectStore.php';
-require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/ImportService.php';
+require_once dol_buildpath('/bankconnect/class/CamtParser.php', 0);
+require_once dol_buildpath('/bankconnect/class/ReconciliationEngine.php', 0);
+require_once dol_buildpath('/bankconnect/class/BankConnectStore.php', 0);
+require_once dol_buildpath('/bankconnect/class/ImportService.php', 0);
 
-if (!$user->rights->bankconnect->read) {
+if (!$user->hasRight('bankconnect', 'read')) {
 	accessforbidden();
 }
 
@@ -17,14 +17,14 @@ $store = new BankConnectStore($db);
 $accountid = GETPOST('account', 'int') ?: 0;
 $action = GETPOST('action', 'alpha');
 $requestMethod = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
-$writeAction = in_array($action, ['import', 'match', 'approve', 'reject', 'post'], true);
+$writeAction = in_array($action, ['import', 'match', 'approve', 'reject'], true);
 if ($writeAction) {
 	if ($requestMethod !== 'POST' || !checkToken()) {
 		accessforbidden();
 	}
 }
 
-if ($action === 'import' && $user->rights->bankconnect->write) {
+if ($action === 'import' && $user->hasRight('bankconnect', 'write')) {
 	$upload = $_FILES['camtfile'] ?? null;
 	if ($upload !== null) {
 		$uploadError = (int) ($upload['error'] ?? UPLOAD_ERR_NO_FILE);
@@ -62,7 +62,7 @@ if ($action === 'import' && $user->rights->bankconnect->write) {
 			}
 		}
 	}
-} elseif ($action === 'match' && $user->rights->bankconnect->write) {
+} elseif ($action === 'match' && $user->hasRight('bankconnect', 'write')) {
 	$engine = new ReconciliationEngine();
 	$engine->setLogger(function ($m) { dol_syslog('BankConnect: '.$m); });
 	foreach ($store->unmatchedTransactions($accountid) as $tx) {
@@ -71,18 +71,12 @@ if ($action === 'import' && $user->rights->bankconnect->write) {
 			$store->saveMatch($tx['rowid'], $r->matchType, $r->ruleName ?? null, $r->bankEntryId ?? null, $r->score, $r->reason);
 		}
 	}
-} elseif ($action === 'approve' && $user->rights->bankconnect->write) {
+} elseif ($action === 'approve' && $user->hasRight('bankconnect', 'write')) {
 	$store->approveMatch((int)GETPOST('matchid', 'int'), $user->id);
 	setEventMessages($langs->trans('BankConnectApproved'), null);
-} elseif ($action === 'reject' && $user->rights->bankconnect->write) {
+} elseif ($action === 'reject' && $user->hasRight('bankconnect', 'write')) {
 	$store->rejectMatch((int)GETPOST('matchid', 'int'), $user->id);
 	setEventMessages($langs->trans('BankConnectRejected'), null);
-} elseif ($action === 'post' && $user->rights->bankconnect->write) {
-	require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/ApprovalPosting.php';
-	$poster = new ApprovalPosting($db, $store);
-	$poster->setLogger(function ($m) { dol_syslog('BankConnect: '.$m); });
-	$n = $poster->postAllApproved($user->id, $accountid);
-	setEventMessages($langs->trans('BankConnectPosted', $n), null);
 }
 
 llxHeader('', 'BankConnect');
@@ -93,7 +87,7 @@ print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" enctype="multipart/
 print '<input type="hidden" name="token" value="'.newToken().'">';
 print '<input type="hidden" name="action" value="import">';
 print '<select name="account">';
-$sql = 'SELECT rowid, label FROM llx_bank_account ORDER BY label';
+$sql = 'SELECT rowid, label FROM '.MAIN_DB_PREFIX.'bank_account ORDER BY label';
 $res = $db->query($sql);
 while ($res && $o = $db->fetch_object($res)) {
 	print '<option value="'.$o->rowid.'"'.($accountid == $o->rowid ? ' selected' : '').'>'.dol_escape_htmltag($o->label).'</option>';
@@ -140,24 +134,9 @@ foreach ($unmatched as $tx) {
 print '</table>';
 
 if ($accountid) {
-	$approvedCount = 0;
-	$sqlc = "SELECT COUNT(*) AS c FROM llx_bankconnect_transaction WHERE fk_bank_account = ".(int)$accountid." AND state = 'approved'";
-	$resc = $db->query($sqlc);
-	$approvedCount = $resc ? (int)$db->fetch_object($resc)->c : 0;
-	if ($approvedCount > 0) {
-		print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
-		print '<input type="hidden" name="token" value="'.newToken().'">';
-		print '<input type="hidden" name="account" value="'.$accountid.'">';
-		print '<input type="hidden" name="action" value="post">';
-		print '<input type="submit" class="button button-save" value="'.$langs->trans('BankConnectPostApproved', $approvedCount).'">';
-		print '</form>';
-	}
-}
-
-if ($accountid) {
 	$sql = "SELECT m.rowid AS mid, m.match_type, m.rule_name, m.score, m.reason, t.tx_date, t.amount, t.currency, t.reference, t.counterparty
-			FROM llx_bankconnect_match m
-			JOIN llx_bankconnect_transaction t ON t.rowid = m.fk_transaction
+			FROM ".MAIN_DB_PREFIX."bankconnect_match m
+			JOIN ".MAIN_DB_PREFIX."bankconnect_transaction t ON t.rowid = m.fk_transaction
 			WHERE t.fk_bank_account = ".(int)$accountid." AND t.state = 'proposed' AND m.approved_by IS NULL
 			ORDER BY t.tx_date DESC";
 	$res = $db->query($sql);

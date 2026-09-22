@@ -4,37 +4,31 @@ AI-understøttet bankafstemning for Dolibarr: automatisk match af bankposter
 mod åbne fakturaer og lønposter, med Mistral AI som fallback, når
 regelbaseret matching ikke er sikker nok. Plus pain.001-betalingsbatches
 via BankConnect SOAP (v3.7), camt-import, certifikat-håndtering og
-godkendt bokføring.
+en brugerflade til godkendelse. Den endelige overførsel til finans følger
+Dolibarrs normale bank- og finanskladdeflow.
 
 ## Arkitektur
 
+```text
+BankConnect -> import/dedup -> Dolibarr-bankkonto og bankpost
+                                      |
+                                      v
+                          matchforslag og godkendelse
+                                      |
+                                      v
+                 Dolibarr standard bankfinanskladde -> finans
 ```
-                        ┌──────────────────────────────┐
- Bank (PSD2/camt.053) -> CamtParser -> ReconciliationEngine
-                                       |- Rule layer (ref, beløb, dato)
-                                       '- AI fallback -> MistralMatcher
-                                                            '- Mistral API
-                                       v
-                                  MatchResult -> godkendelse i UI
-                                  v
-                                  ApprovalPosting -> Dolibarr-bogføring
 
- Dolibarr-fakturaer   ->  PaymentBatchService  ->  Pain001Builder
-                              (state machine,      (pain.001.001.03)
-                               idempotens)             v
-                                                 XmlSecurity (sign/krypt)
-                                                       v
-                                                 BankConnectClient (SOAP)
-                                                       v
-                                                 Finansdanmarkdk / BEC
-```
+Modulets egne tabeller er sidecar-data til BankConnect-identitet, importstatus,
+matchforslag og audit. De må ikke fungere som en parallel bankbog. `llx_bank`
+er Dolibarrs bankpost, og `llx_accounting_bookkeeping` opdateres af Dolibarrs
+standardflow.
 
 - **Rule layer**: payment reference -> beløb -> datovindue. Confidence 0.5-0.98.
 - **AI fallback**: Mistral (cloud eller self-hosted) modtager kun saniterede
   data (CPR/regex-fjernet), returnerer altid gyldigt JSON eller `none` -
   aldrig exceptions til kalderen.
-- **MatchResult**: `exact | partial | multiple | none` + confidence +
-  forslag. Ingen automatisk bokføring uden godkendelse.
+- **MatchResult**: `exact | partial | multiple | none` + confidence + forslag.
 - **Payment state machine**: batch livscyklus med idempotens-nøgle,
   ukendte betalinger recoveres sikkert, NONE kan aldrig blive et forslag.
 - **Fail-closed**: ukendt datacenter, manglende secrets og ugyldige
@@ -48,7 +42,7 @@ godkendt bokføring.
 | `ReconciliationEngine` | Regler + AI-koordinering, batch |
 | `MistralMatcher` | AI-matching, PII-sanitering, logging |
 | `MatchResult` | DTO: match_type, confidence, suggested, reason, source |
-| `ApprovalPosting` | Bogfører kun godkendte matches (guard-rækkefølge) |
+| `ApprovalPosting` | Legacy-prototype; ikke eksponeret eller medtaget i installations-ZIP |
 | `ImportService` | Fælles camt-import-flow med dedup-tælling |
 | `ReconciliationService` | Orchestrering + confidence-audit |
 | `PaymentBatchService` | Batch-livscyklus, idempotens, recover |
@@ -81,7 +75,18 @@ htdocs/custom/bankconnect/
 
 tests/unit/         PHPUnit-tests + MockDoliDB
 .github/workflows/  CI: php -l + unit tests
+scripts/            byg installerbar Dolibarr-ZIP
 ```
+
+## Installation
+
+```bash
+./scripts/build-module-package.sh
+```
+
+Upload derefter `dist/module_bankconnect-<version>.zip` via Dolibarrs side til
+installation af eksterne moduler, og aktivér **BankConnect** under
+**Moduler/Applikationer**. Se [INSTALL.md](INSTALL.md) for krav og detaljer.
 
 ## Opsætning
 
@@ -140,6 +145,10 @@ CI (`.github/workflows/test.yml`): syntax check + unit tests på push/PR.
 
 ## Videre udvikling
 
+- Opret eller genbrug `llx_bank`-poster ved BankConnect-import gennem Dolibarrs
+  `Account`-domænelogik.
+- Knyt godkendte match til Dolibarr-betalinger uden at oprette en dubletpost.
+- Verificér hele flowet frem til Dolibarrs standard bankfinanskladde.
 - Live XML crypto (kræver officiel BankConnect developer package).
 - Issue #43: qualification/performance/failure-injection gate.
 - OIOUBL/EAN-fakturering (dkmodul-dolibarr-repoet).

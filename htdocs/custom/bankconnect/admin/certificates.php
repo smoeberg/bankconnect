@@ -4,10 +4,10 @@
  */
 
 require '../../../main.inc.php';
-require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/BankConnectCertificateManager.php';
-require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/AgreementStore.php';
-require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/BankAccountMappingStore.php';
-require_once DOL_DOCUMENT_ROOT.'/custom/bankconnect/class/BankConnectException.php';
+require_once dol_buildpath('/bankconnect/class/BankConnectCertificateManager.php', 0);
+require_once dol_buildpath('/bankconnect/class/AgreementStore.php', 0);
+require_once dol_buildpath('/bankconnect/class/BankAccountMappingStore.php', 0);
+require_once dol_buildpath('/bankconnect/class/BankConnectException.php', 0);
 
 if (!$user->admin) {
     accessforbidden();
