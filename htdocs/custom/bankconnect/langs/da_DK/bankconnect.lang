@@ -1,4 +1,4 @@
-BankConnectReconcile=Afstemning
+BankConnectReconcile=Bank afstemning
 BankConnectImport=Importér
 BankConnectImportOk=Importerede %s transaktioner (%s dubletter)
 BankConnectImportFailed=Import fejlede

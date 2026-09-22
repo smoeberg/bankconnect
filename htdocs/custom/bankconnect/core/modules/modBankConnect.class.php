@@ -1,5 +1,5 @@
 <?php
-/* Dolibarr module descriptor — BankConnect (DK bank reconciliation). */
+/* Dolibarr module descriptor — Bank afstemning via BankConnect. */
 /* Copyright (C) 2026 WM Group / Eira. */
 
 require_once DOL_DOCUMENT_ROOT.'/core/modules/DolibarrModules.php';
@@ -7,10 +7,10 @@ require_once DOL_DOCUMENT_ROOT.'/core/modules/DolibarrModules.php';
 class modBankConnect extends DolibarrModules
 {
 	public $id = 500010;
-	public $name = 'BankConnect';
+	public $name = 'BankAfstemning';
 	public $family = 'financial';
-	public $version = '0.2.2';
-	public $description = 'Bankafstemning: camt-import, regelbaseret matching med AI-fallback, godkendelse før bokføring (DK).';
+	public $version = '0.3.0';
+	public $description = 'Automatisk bankafstemning via BankConnect: henter banktransaktioner til Dolibarr og understøtter manuel udligning før bogføring.';
 	public $editor_name = 'WM Group / Eira';
 	public $editor_url = 'https://github.com/smoeberg/bankconnect';
 
@@ -84,9 +84,9 @@ class modBankConnect extends DolibarrModules
 
 		// Menu entry under bank module
 		$this->menu[0] = [
-			'fk_menu' => 'fk_menu=mod_bank;type=left',
+			'fk_mainmenu' => 'bank',
 			'type' => 'left',
-			'titre' => 'BankConnect',
+			'titre' => 'Bank afstemning',
 			'url' => '/custom/bankconnect/pages/reconcile.php',
 			'langs' => 'bankconnect@bankconnect',
 			'position' => 500,
