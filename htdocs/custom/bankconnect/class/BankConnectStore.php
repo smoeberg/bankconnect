@@ -279,7 +279,7 @@ class BankConnectStore
 
     public function unmatchedTransactions(int $fkBankAccount): array
     {
-        $sql="SELECT rowid,tx_date,amount,currency,reference,counterparty,acct_svcr_ref,is_reversal,requires_manual_review,cam_file,fk_bankentry,bank_entry_state,bank_entry_error
+        $sql="SELECT rowid,tx_date,amount,currency,reference,counterparty,acct_svcr_ref,is_reversal,requires_manual_review,cam_file,fk_bankentry,bank_entry_state,bank_entry_error,hash,statement_id,transaction_id
               FROM llx_bankconnect_transaction WHERE fk_bank_account=".(int)$fkBankAccount." AND state='unmatched' ORDER BY tx_date DESC";
         $res=$this->db->query($sql); $out=[];
         while($res && $o=$this->db->fetch_object($res)) $out[]=(array)$o;

@@ -8,6 +8,8 @@ require_once dol_buildpath('/bankconnect/class/ReconciliationEngine.php', 0);
 require_once dol_buildpath('/bankconnect/class/BankConnectStore.php', 0);
 require_once dol_buildpath('/bankconnect/class/ImportService.php', 0);
 require_once dol_buildpath('/bankconnect/class/DolibarrBankEntryService.php', 0);
+require_once dol_buildpath('/bankconnect/class/DolibarrCandidateProvider.php', 0);
+require_once dol_buildpath('/bankconnect/class/ReconciliationService.php', 0);
 
 if (!$user->hasRight('bankconnect', 'read')) {
 	accessforbidden();
@@ -64,13 +66,13 @@ if ($action === 'import' && $user->hasRight('bankconnect', 'write')) {
 		}
 	}
 } elseif ($action === 'match' && $user->hasRight('bankconnect', 'write')) {
-	$engine = new ReconciliationEngine();
-	$engine->setLogger(function ($m) { dol_syslog('BankConnect: '.$m); });
+	$engine = new ReconciliationEngine($conf);
+	$reconciliation = new ReconciliationService($engine, $store);
+	$provider = new DolibarrCandidateProvider($db, (string)($conf->currency ?? 'DKK'));
 	foreach ($store->unmatchedTransactions($accountid) as $tx) {
-		$results = $engine->reconcile($tx);
-		foreach ($results as $r) {
-			$store->saveMatch($tx['rowid'], $r->matchType, $r->ruleName ?? null, $r->bankEntryId ?? null, $r->score, $r->reason);
-		}
+		$transaction = BankTransaction::fromArray($tx);
+		$candidates = $provider->forTransaction($transaction, (int)$conf->entity);
+		$reconciliation->propose((int)$tx['rowid'], (int)$user->id, $transaction, $candidates);
 	}
 } elseif ($action === 'approve' && $user->hasRight('bankconnect', 'write')) {
 	$store->approveMatch((int)GETPOST('matchid', 'int'), $user->id);
