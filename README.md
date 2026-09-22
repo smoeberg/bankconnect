@@ -55,6 +55,7 @@ standardflow.
 | `ApprovedMatchLinkService` | Idempotent kobling af godkendte match til standardbetalinger |
 | `DolibarrPaymentLinkGateway` | Adapter til `Paiement`, `PaiementFourn`, `update_fk_bank()` og `Account::add_url_line()` |
 | `BankJournalHandoffService` | Verificerer standardrelationer og status før handoff til bankfinanskladden |
+| `BankConnectConnectionTestService` | Signeret, read-only `getStatus`-test efter aktivering og kontomapping |
 | `DolibarrCandidateProvider` | Åbne fakturaer og ulinkede betalinger fra Dolibarr-standardtabeller |
 | `PaymentBatchService` | Batch-livscyklus, idempotens, recover |
 | `PaymentStateMachine` | Eksplicit batch-status-livscyklus |
@@ -106,6 +107,12 @@ Dolibarrs planlagte jobs. Det automatiske flow bruger samme importservice som
 manuel CAMT-upload og er derfor underlagt samme dubletbeskyttelse.
 
 ## Opsætning
+
+Under modulets certifikatopsætning gennemføres tre trin: aktivér aftalen med
+BankConnect-ID og bankens aktiveringskode, knyt aftalen til en eksisterende
+Dolibarr-bankkonto, og kør derefter **Test forbindelse**. Testen bruger et
+signeret `getStatus`-kald og gemmer kun tidspunkt, resultat og en afkortet fejl —
+aldrig certifikat, privat nøgle eller råt banksvar.
 
 ```php
 // dolibarr/conf.php

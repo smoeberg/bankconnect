@@ -27,7 +27,7 @@ class modBankConnect extends DolibarrModules
 		$this->descriptionlong = 'ModuleBankConnectDescLong';
 		$this->editor_name = 'WM Group / Eira';
 		$this->editor_url = 'https://github.com/smoeberg/bankconnect';
-		$this->version = '1.0.0';
+		$this->version = '1.1.0';
 		$this->const_name = 'MAIN_MODULE_BANKCONNECT';
 		$this->picto = 'bank';
 
@@ -48,7 +48,7 @@ class modBankConnect extends DolibarrModules
 		);
 
 		$this->dirs = array('/bankconnect/temp');
-		$this->config_page_url = array('bankconnect.php@bankconnect');
+		$this->config_page_url = array('bankconnect.php@bankconnect', 'certificates.php@bankconnect');
 		$this->hidden = false;
 		$this->depends = array('modBanque');
 		$this->requiredby = array();
@@ -150,6 +150,18 @@ class modBankConnect extends DolibarrModules
 			if (!$exists && !$this->db->query('ALTER TABLE '.$matchTable.' ADD COLUMN '.$column.' '.$definition)) {
 				return -1;
 			}
+		}
+
+		$agreementTable = MAIN_DB_PREFIX.'bankconnect_agreement';
+		$agreementColumns = array(
+			'last_connection_test' => 'DATETIME DEFAULT NULL',
+			'last_connection_status' => 'VARCHAR(16) DEFAULT NULL',
+			'last_connection_error' => 'VARCHAR(255) DEFAULT NULL',
+		);
+		foreach ($agreementColumns as $column => $definition) {
+			$description = $this->db->DDLDescTable($agreementTable, $column);
+			$exists = $description && $this->db->fetch_object($description);
+			if (!$exists && !$this->db->query('ALTER TABLE '.$agreementTable.' ADD COLUMN '.$column.' '.$definition)) return -1;
 		}
 
 		return $this->_init(array(), $options);

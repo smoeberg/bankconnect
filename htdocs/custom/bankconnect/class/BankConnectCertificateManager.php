@@ -69,6 +69,8 @@ class BankConnectCertificateManager
      *   label?:string,
      *   entity?:int,
      *   fk_user?:int,
+	 *   datacenter?:string,
+	 *   endpoint?:string,
      *   dry_run?:bool  If true, do not call SOAP – only generate + persist draft
      * } $opts
      * @return array{
@@ -146,6 +148,8 @@ class BankConnectCertificateManager
             'label'                     => $opts['label'] ?? ('BC '.$functionId),
             'bank_connect_id'           => $functionId,
             'main_registration_number'  => $mainReg,
+			'datacenter'                 => (string)($opts['datacenter'] ?? ''),
+			'endpoint'                   => (string)($opts['endpoint'] ?? ''),
             'status'                    => $status,
             'fk_user_creat'             => (int) ($opts['fk_user'] ?? 0),
         ]);

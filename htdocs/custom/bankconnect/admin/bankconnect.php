@@ -24,6 +24,7 @@ if ($action === 'save' && strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'P
 
 llxHeader('', 'BankConnect');
 print load_fiche_titre('BankConnect — '.$langs->trans('Setup'), '', 'bank');
+print '<div class="info">'.$langs->trans('BankConnectConnectIntro').' <a class="button button-save" href="'.dol_buildpath('/bankconnect/admin/certificates.php', 1).'">'.$langs->trans('BankConnectConnectTitle').'</a></div><br>';
 print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
 print '<input type="hidden" name="token" value="'.newToken().'">';
 print '<input type="hidden" name="action" value="save">';
