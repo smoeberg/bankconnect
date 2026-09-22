@@ -17,4 +17,5 @@
 .bc-candidates{display:grid;gap:.55rem}.bc-candidate{position:relative;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:.75rem;border:1px solid #dfe3e8;border-radius:8px;padding:.75rem;cursor:pointer}
 .bc-candidate:hover{border-color:#7aa7d6}.bc-candidate.bc-suggested{border-color:#4b8bc8;background:#f2f8ff}.bc-candidate span{display:flex;flex-direction:column}.bc-candidate small{color:#66717d;margin-top:.15rem}.bc-candidate em{position:absolute;right:.5rem;top:-.55rem;background:#4b8bc8;color:#fff;border-radius:99px;padding:.1rem .45rem;font-size:.72rem;font-style:normal}
 .bc-actions{justify-content:flex-end;margin-top:1rem}.bc-secondary{margin-top:.4rem}.bc-empty{padding:2rem;text-align:center;background:#f7f8fa;border-radius:8px;color:#66717d}
+.bc-link-error{background:#fee4e2;color:#912018;border-radius:7px;padding:.65rem}
 @media(max-width:700px){.bc-section-head,.bc-proposal header{align-items:flex-start;flex-direction:column}.bc-amount{text-align:left;align-items:flex-start}.bc-candidate{grid-template-columns:auto 1fr}.bc-candidate b{grid-column:2}}

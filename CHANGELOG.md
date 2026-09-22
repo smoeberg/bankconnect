@@ -1,3 +1,21 @@
+## 0.9.0 (unreleased)
+
+### Added
+- Approved invoice matches create native `Paiement`/`PaiementFourn` records and
+  connect them to the already imported bank entry.
+- Existing unlinked Dolibarr payments can be attached to that same bank entry.
+- Standard `Account::add_url_line()` payment and company links make the source
+  visible from Dolibarr's bank entry and available to the bank journal.
+- Idempotent claim/retry state prevents duplicate payments and recovers failed
+  links from the reconciliation workspace.
+
+### Safety
+- `addPaymentToBank()` is deliberately not called because it would create a
+  second `llx_bank` movement.
+- Bank account, entity, direction, amount and base currency are checked before
+  linking. Foreign-currency matches remain manual until exchange allocation is
+  explicitly implemented.
+
 ## 0.8.0 (unreleased)
 
 ### Added

@@ -260,6 +260,87 @@ class BankConnectStore
 		return (int)$row->rowid;
 	}
 
+	/** @return array<string,mixed> */
+	public function approvedMatchForLink(int $matchRowid, int $bankAccountId): array
+	{
+		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$sql = 'SELECT m.rowid AS match_rowid, m.link_state, m.link_error, t.rowid AS transaction_rowid,'
+			.' t.fk_bank_account, t.tx_date, t.amount, t.currency, t.reference, t.counterparty, t.fk_bankentry, t.state'
+			.' FROM '.$prefix.'bankconnect_match m JOIN '.$prefix.'bankconnect_transaction t ON t.rowid=m.fk_transaction'
+			.' WHERE m.rowid='.(int)$matchRowid.' AND m.approved_by IS NOT NULL'
+			.' AND t.fk_bank_account='.(int)$bankAccountId." AND t.state IN ('approved','linked') LIMIT 1";
+		$res = $this->db->query($sql);
+		$row = $res ? $this->db->fetch_object($res) : false;
+		if (!$row) throw new RuntimeException('BankConnect: approved match does not belong to this bank account');
+		$result = (array)$row;
+		$result['candidates'] = array_values(array_filter(
+			$this->matchCandidates($matchRowid),
+			static fn (array $candidate): bool => !empty($candidate['selected'])
+		));
+		return $result;
+	}
+
+	/** @return list<array<string,mixed>> */
+	public function approvedMatchesAwaitingLink(int $bankAccountId): array
+	{
+		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$sql = 'SELECT m.rowid AS match_rowid, m.link_state, m.link_error, t.rowid, t.tx_date, t.amount, t.currency,'
+			.' t.reference, t.counterparty, t.fk_bankentry FROM '.$prefix.'bankconnect_match m'
+			.' JOIN '.$prefix.'bankconnect_transaction t ON t.rowid=m.fk_transaction'
+			.' WHERE m.approved_by IS NOT NULL AND t.fk_bank_account='.(int)$bankAccountId
+			." AND t.state='approved' AND (m.link_state IN ('pending','error') OR (m.link_state='linking' AND m.linked_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE))) ORDER BY t.tx_date DESC";
+		$res = $this->db->query($sql);
+		$out = [];
+		while ($res && ($row = $this->db->fetch_object($res))) $out[] = (array)$row;
+		return $out;
+	}
+
+	public function claimMatchLink(int $matchRowid): string
+	{
+		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$token = bin2hex(random_bytes(16));
+		$sql = 'UPDATE '.$prefix."bankconnect_match SET link_state='linking', link_token='".$this->db->escape($token)."', link_error=NULL, linked_at=NOW()"
+			.' WHERE rowid='.(int)$matchRowid." AND approved_by IS NOT NULL AND (link_state IN ('pending','error') OR (link_state='linking' AND linked_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE)))";
+		if (!$this->db->query($sql)) throw new RuntimeException('BankConnect: link claim failed: '.$this->db->lasterror());
+		$res = $this->db->query('SELECT link_token FROM '.$prefix.'bankconnect_match WHERE rowid='.(int)$matchRowid." AND link_state='linking' LIMIT 1");
+		$row = $res ? $this->db->fetch_object($res) : false;
+		if (!$row || !hash_equals($token, (string)$row->link_token)) throw new RuntimeException('BankConnect: match is already being linked');
+		return $token;
+	}
+
+	public function completeMatchLink(int $matchRowid, string $token, int $transactionId, int $userId, string $detail): void
+	{
+		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$this->db->begin();
+		try {
+			$sql = 'UPDATE '.$prefix."bankconnect_match SET link_state='linked', link_token=NULL, link_error=NULL, linked_at=NOW()"
+				.' WHERE rowid='.(int)$matchRowid." AND link_state='linking' AND link_token='".$this->db->escape($token)."'";
+			if (!$this->db->query($sql)) throw new RuntimeException('BankConnect: link completion failed: '.$this->db->lasterror());
+			$res = $this->db->query('SELECT link_state FROM '.$prefix.'bankconnect_match WHERE rowid='.(int)$matchRowid.' LIMIT 1');
+			$row = $res ? $this->db->fetch_object($res) : false;
+			if (!$row || (string)$row->link_state !== 'linked') throw new RuntimeException('BankConnect: link claim was lost before completion');
+			$this->setTransactionState($transactionId, 'linked');
+			if (!$this->db->commit()) throw new RuntimeException('BankConnect: link completion commit failed: '.$this->db->lasterror());
+		} catch (Throwable $e) {
+			$this->db->rollback();
+			throw $e;
+		}
+		try {
+			$this->audit($userId, 'payment_linked', $detail);
+		} catch (Throwable $e) {
+			dol_syslog('BankConnect: payment link audit failed: '.$e->getMessage(), LOG_ERR);
+		}
+	}
+
+	public function failMatchLink(int $matchRowid, string $token, string $error): void
+	{
+		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$error = substr($error, 0, 255);
+		$sql = 'UPDATE '.$prefix."bankconnect_match SET link_state='error', link_token=NULL, link_error='".$this->db->escape($error)."'"
+			.' WHERE rowid='.(int)$matchRowid." AND link_state='linking' AND link_token='".$this->db->escape($token)."'";
+		if (!$this->db->query($sql)) throw new RuntimeException('BankConnect: link failure state could not be saved: '.$this->db->lasterror());
+	}
+
     /**
      * Select the concrete candidate(s) to use for a proposed match.
      * Empty selection is rejected for deterministic safety.

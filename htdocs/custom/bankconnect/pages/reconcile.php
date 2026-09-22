@@ -1,6 +1,6 @@
 <?php
 /* BankConnect reconciliation screen: unmatched transactions, match proposals, approve/reject. */
-/* No auto-posting: every approval is explicit. */
+/* Approval may create/link a native Dolibarr payment; transfer to accounting remains standard Dolibarr. */
 
 require '../../../main.inc.php';
 require_once dol_buildpath('/bankconnect/class/CamtParser.php', 0);
@@ -11,6 +11,8 @@ require_once dol_buildpath('/bankconnect/class/DolibarrBankEntryService.php', 0)
 require_once dol_buildpath('/bankconnect/class/DolibarrCandidateProvider.php', 0);
 require_once dol_buildpath('/bankconnect/class/ReconciliationService.php', 0);
 require_once dol_buildpath('/bankconnect/class/ReconciliationWorkflowService.php', 0);
+require_once dol_buildpath('/bankconnect/class/DolibarrPaymentLinkGateway.php', 0);
+require_once dol_buildpath('/bankconnect/class/ApprovedMatchLinkService.php', 0);
 
 if (!$user->hasRight('bankconnect', 'read')) {
 	accessforbidden();
@@ -21,7 +23,7 @@ $store = new BankConnectStore($db);
 $accountid = GETPOST('account', 'int') ?: 0;
 $action = GETPOST('action', 'alpha');
 $requestMethod = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
-$writeAction = in_array($action, ['import', 'match', 'approve', 'reject', 'defer'], true);
+$writeAction = in_array($action, ['import', 'match', 'approve', 'reject', 'defer', 'link'], true);
 if ($writeAction) {
 	if ($requestMethod !== 'POST' || !checkToken()) {
 		accessforbidden();
@@ -88,7 +90,17 @@ if ($action === 'import' && $user->hasRight('bankconnect', 'write')) {
 	try {
 		$workflow = new ReconciliationWorkflowService($store, new DolibarrCandidateProvider($db, (string)($conf->currency ?? 'DKK')));
 		$workflow->approve(GETPOSTINT('matchid'), $accountid, (int)$conf->entity, (array)GETPOST('candidate', 'array'), (int)$user->id);
-		setEventMessages($langs->trans('BankConnectApproved'), null);
+		$linker = new ApprovedMatchLinkService($store, new DolibarrPaymentLinkGateway($db));
+		$linker->link(GETPOSTINT('matchid'), $accountid, (int)$conf->entity, $user);
+		setEventMessages($langs->trans('BankConnectApprovedAndLinked'), null);
+	} catch (Throwable $e) {
+		setEventMessages($e->getMessage(), null, 'errors');
+	}
+} elseif ($action === 'link' && $user->hasRight('bankconnect', 'write')) {
+	try {
+		$linker = new ApprovedMatchLinkService($store, new DolibarrPaymentLinkGateway($db));
+		$linker->link(GETPOSTINT('matchid'), $accountid, (int)$conf->entity, $user);
+		setEventMessages($langs->trans('BankConnectLinked'), null);
 	} catch (Throwable $e) {
 		setEventMessages($e->getMessage(), null, 'errors');
 	}
@@ -146,12 +158,14 @@ if (!$accountid) {
 
 $unmatched = $store->unmatchedTransactions($accountid);
 $proposals = $store->proposedMatchesForAccount($accountid);
+$linkPending = $store->approvedMatchesAwaitingLink($accountid);
 $provider = new DolibarrCandidateProvider($db, (string)($conf->currency ?? 'DKK'));
 $workflow = new ReconciliationWorkflowService($store, $provider);
 
 print '<div class="bc-summary">';
 print '<div><strong>'.count($unmatched).'</strong><span>'.$langs->trans('BankConnectUnmatched').'</span></div>';
 print '<div><strong>'.count($proposals).'</strong><span>'.$langs->trans('BankConnectAwaitingApproval').'</span></div>';
+print '<div><strong>'.count($linkPending).'</strong><span>'.$langs->trans('BankConnectAwaitingLink').'</span></div>';
 print '</div>';
 
 if ($unmatched) {
@@ -201,4 +215,15 @@ foreach ($proposals as $proposal) {
 	print '<div class="bc-actions bc-secondary"><form method="POST" action="'.$_SERVER['PHP_SELF'].'"><input type="hidden" name="token" value="'.newToken().'"><input type="hidden" name="account" value="'.$accountid.'"><input type="hidden" name="action" value="reject"><input type="hidden" name="matchid" value="'.(int)$proposal['match_rowid'].'"><button class="button">'.$langs->trans('BankConnectReject').'</button></form></div></article>';
 }
 print '</section>';
+
+if ($linkPending) {
+	print '<section class="bc-section"><div class="bc-section-head"><div><h2>'.$langs->trans('BankConnectAwaitingLink').'</h2><p>'.$langs->trans('BankConnectAwaitingLinkHelp').'</p></div></div><div class="bc-grid">';
+	foreach ($linkPending as $pending) {
+		print '<article class="bc-card"><div class="bc-card-top"><span>'.dol_print_date($pending['tx_date'], 'day').'</span><strong>'.price($pending['amount']).' '.dol_escape_htmltag($pending['currency']).'</strong></div>';
+		print '<h3>'.dol_escape_htmltag($pending['counterparty'] ?: $langs->trans('BankConnectUnknownCounterparty')).'</h3><p>'.dol_escape_htmltag($pending['reference'] ?: '—').'</p>';
+		if (!empty($pending['link_error'])) print '<p class="bc-link-error">'.dol_escape_htmltag($pending['link_error']).'</p>';
+		print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'"><input type="hidden" name="token" value="'.newToken().'"><input type="hidden" name="account" value="'.$accountid.'"><input type="hidden" name="action" value="link"><input type="hidden" name="matchid" value="'.(int)$pending['match_rowid'].'"><button class="button button-save">'.$langs->trans('BankConnectRetryLink').'</button></form></article>';
+	}
+	print '</div></section>';
+}
 llxFooter();

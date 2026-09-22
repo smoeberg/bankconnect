@@ -37,7 +37,12 @@ CREATE TABLE IF NOT EXISTS llx_bankconnect_match (
 	reason text,
 	approved_by integer,
 	approved_at datetime,
+	link_state varchar(16) NOT NULL DEFAULT 'pending',
+	link_token varchar(64) DEFAULT NULL,
+	link_error varchar(255) DEFAULT NULL,
+	linked_at datetime DEFAULT NULL,
 	KEY idx_bc_match_tx (fk_transaction),
+	KEY idx_bc_match_link_state (link_state),
 	UNIQUE KEY uk_bc_match_bankentry (fk_bankentry),
 	CONSTRAINT fk_bc_match_tx FOREIGN KEY (fk_transaction) REFERENCES llx_bankconnect_transaction(rowid)
 ) ENGINE=innodb;
