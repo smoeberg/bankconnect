@@ -37,6 +37,21 @@ CREATE TABLE IF NOT EXISTS llx_bankconnect_match (
 	CONSTRAINT fk_bc_match_tx FOREIGN KEY (fk_transaction) REFERENCES llx_bankconnect_transaction(rowid)
 ) ENGINE=innodb;
 
+CREATE TABLE IF NOT EXISTS llx_bankconnect_match_candidate (
+	rowid bigint AUTO_INCREMENT PRIMARY KEY,
+	fk_match bigint NOT NULL,
+	candidate_id varchar(128) NOT NULL,
+	candidate_type varchar(32) NOT NULL,
+	candidate_ref varchar(255) NULL,
+	amount double NOT NULL DEFAULT 0,
+	selected integer NOT NULL DEFAULT 0,
+	created_at datetime DEFAULT NULL,
+	KEY idx_bc_match_candidate_match (fk_match),
+	KEY idx_bc_match_candidate_selected (fk_match, selected),
+	UNIQUE KEY uk_bc_match_candidate (fk_match, candidate_id, candidate_type),
+	CONSTRAINT fk_bc_match_candidate_match FOREIGN KEY (fk_match) REFERENCES llx_bankconnect_match(rowid)
+) ENGINE=innodb;
+
 CREATE TABLE IF NOT EXISTS llx_bankconnect_audit (
 	rowid bigint AUTO_INCREMENT PRIMARY KEY,
 	datetime_event datetime NOT NULL,
