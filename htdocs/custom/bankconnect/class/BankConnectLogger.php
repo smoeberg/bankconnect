@@ -45,7 +45,7 @@ class BankConnectLogger
             gmdate('Y-m-d\TH:i:s\Z'),
             $level,
             $message,
-            json_encode($context)
+            json_encode($this->sanitizeContext($context))
         );
         if ($this->stream !== null) {
             fwrite($this->stream, $line);

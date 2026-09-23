@@ -309,4 +309,61 @@ class MistralMatcherTest extends TestCase
         $this->assertStringNotContainsString('BETALING LEVERANDOR', $log);
         $this->assertStringContainsString('latency_ms', $log);
     }
+    /** Sikkerhed: loggeren redigerer hemmelige kontekstnøgler */
+    public function testLoggerRedactsSecrets(): void
+    {
+        $stream = fopen('php://memory', 'w+');
+        $logger = new BankConnectLogger($stream);
+        $logger->info('ctx', ['api_key' => 'sk-supersecret', 'nested' => ['private_key' => 'PEM-DATA'], 'count' => 3]);
+        rewind($stream);
+        $log = stream_get_contents($stream);
+
+        $this->assertStringNotContainsString('sk-supersecret', $log);
+        $this->assertStringNotContainsString('PEM-DATA', $log);
+        $this->assertStringContainsString('[REDACTED]', $log);
+        $this->assertStringContainsString('"count":3', $log);
+    }
+
+    /** Sikkerhed: env-variabel har forrang frem for conf-nøglen */
+    public function testEnvKeyOverridesConf(): void
+    {
+        $captured = null;
+        $matcher = new MistralMatcher(bcMatcherConf(['BANKCONNECT_MISTRAL_API_KEY' => 'conf-key']));
+        $matcher->setTransport(function (string $method, string $url, array $opts) use (&$captured) {
+            foreach ($opts['headers'] ?? [] as $h) {
+                if (stripos((string)$h, 'authorization') === 0) {
+                    $captured = (string)$h;
+                }
+            }
+            return ['status' => 200, 'body' => bcApiBody(['match_type' => 'none'])];
+        });
+
+        putenv('BANKCONNECT_MISTRAL_API_KEY=env-key');
+        try {
+            $matcher->match(bcMakeTx(), bcMakeCandidates());
+        } finally {
+            putenv('BANKCONNECT_MISTRAL_API_KEY');
+        }
+
+        $this->assertStringEndsWith('Bearer env-key', (string)$captured);
+    }
+
+    /** Sikkerhed: ingen API-nøgle i hverken env eller conf -> ingen forespørgsel */
+    public function testMissingKeyNeverCallsApi(): void
+    {
+        $called = false;
+        $conf = bcMatcherConf(['BANKCONNECT_AI_ENABLED' => 1, 'BANKCONNECT_MISTRAL_API_KEY' => '', 'BANKCONNECT_MISTRAL_ENDPOINT' => 'https://api.mistral.ai/v1/chat/completions']);
+        $matcher = new MistralMatcher($conf);
+        $matcher->setTransport(function () use (&$called) {
+            $called = true;
+            return ['status' => 200, 'body' => bcApiBody(['match_type' => 'none'])];
+        });
+
+        putenv('BANKCONNECT_MISTRAL_API_KEY');
+        $r = $matcher->testConnection();
+
+        $this->assertFalse($called);
+        $this->assertFalse($r['success']);
+        $this->assertStringContainsStringIgnoringCase('not configured', $r['message']);
+    }
 }

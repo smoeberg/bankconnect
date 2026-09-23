@@ -58,6 +58,12 @@ class MistralMatcher
 
     private function apiKey(): string
     {
+        // Production secret boundary: prefer the process environment; fall
+        // back to legacy configuration for backwards compatibility only.
+        $env = getenv('BANKCONNECT_MISTRAL_API_KEY');
+        if ($env !== false && trim((string)$env) !== '') {
+            return trim((string)$env);
+        }
         return (string) ($this->conf->global['BANKCONNECT_MISTRAL_API_KEY'] ?? '');
     }
 
