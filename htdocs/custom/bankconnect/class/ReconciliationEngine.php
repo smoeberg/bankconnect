@@ -42,6 +42,7 @@ class ReconciliationEngine
     public const CONF_MULTI_SUM = 0.90;
     public const CONF_PARTIAL = 0.75;
     public const CONF_TEXT = 0.60;
+    public const CONF_INV_IN_TEXT = 0.95;
 
     private int $window1Day = 1;
     private int $window3Days = 3;
@@ -174,6 +175,13 @@ class ReconciliationEngine
             $r->source = 'rule';
             if ($r->ruleName === '') { $r->ruleName = 'rule'; }
             return $r;
+        }
+
+        // Rule 5b: invoice number embedded in the bank text (e.g. "FAKTURA 123456",
+        // "INVOICE 123456", "FNR 123456") + amount match -> high confidence.
+        $inv = $this->invoiceNumberInText($tx, $candidates);
+        if ($inv !== null) {
+            return $inv;
         }
 
         // Rule 5 (before the single-amount rules only if the sum beats them? No):
@@ -331,6 +339,57 @@ class ReconciliationEngine
         $r->reason = 'Reference matcher, belb afviger';
         $r->source = 'rule';
         return $r;
+    }
+
+    /**
+     * Rule 5b: extract invoice-like numbers from the bank text and match them
+     * against candidate refs (customer ref, payment reference, invoice ref).
+     * Amount must match; candidate ref must be reasonably long (>= 4 digits)
+     * to avoid matching random numbers in the text.
+     */
+    private function invoiceNumberInText(BankTransaction $tx, array $candidates): ?MatchResult
+    {
+        $numbers = [];
+        // Text is lowercased by normName(); allow an optional short prefix before
+        // the number (faktura/invoice/fnr/no) plus optional separator.
+        if (preg_match_all('/\b[a-z0-9]{0,10}\s*[:#]?\s*(\d{4,})\b/u', $this->normName($tx->text), $m)) {
+            $numbers = $m[1];
+        }
+        if (empty($numbers)) {
+            return null;
+        }
+        $amt = abs($tx->amount);
+        $matches = [];
+        foreach ($candidates as $c) {
+            if (abs($c->remaining - $amt) > $this->amountTolerance) {
+                continue;
+            }
+            $candRef = $this->normRef($c->ref);
+            if ($candRef === '' || strlen($candRef) < 4) {
+                continue;
+            }
+            foreach ($numbers as $n) {
+                // Exact ref match, or the candidate ref is prefix+number
+                // (Dolibarr "FA240902" vs bank text "240902").
+                if ($candRef === $this->normRef($n)
+                    || substr($candRef, -strlen($n)) === strtoupper($n)) {
+                    $matches[] = $c;
+                    break;
+                }
+            }
+        }
+        if (count($matches) === 1) {
+            $c = $matches[0];
+            $r = new MatchResult();
+            $r->matchType = 'exact';
+            $r->confidence = self::CONF_INV_IN_TEXT;
+            $r->ruleName = 'invoice_number_in_text';
+            $r->suggested = [['id' => $c->id, 'type' => $c->type, 'ref' => $c->ref, 'amount' => $amt]];
+            $r->reason = 'Fakturanummer fundet i bankteksten og belb matcher';
+            $r->source = 'rule';
+            return $r;
+        }
+        return null;
     }
 
     /**

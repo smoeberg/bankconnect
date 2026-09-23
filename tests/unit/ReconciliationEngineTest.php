@@ -102,4 +102,44 @@ class ReconciliationEngineTest extends TestCase
         $this->assertSame('none', $results[1]->matchType);
         $this->assertSame('ai', $results[1]->source);
     }
+    public function testInvoiceNumberInTextMatches(): void
+    {
+        $engine = $this->engine(null);
+        // No structured reference; invoice number embedded in the text.
+        $tx = bcMakeTx([
+            'reference' => '',
+            'text' => 'BETALING TIL ABC A/S FAKTURA 240902 TAK',
+            'amount' => -8200.00,
+        ]);
+        $r = $engine->reconcile($tx, bcMakeCandidates());
+        $this->assertSame('exact', $r->matchType);
+        $this->assertSame('invoice_number_in_text', $r->ruleName);
+        $this->assertEqualsWithDelta(0.95, $r->confidence, 0.001);
+        $this->assertSame(1855, $r->suggested[0]['id']);
+    }
+
+    public function testInvoiceNumberInTextSkipsShortNumbers(): void
+    {
+        $engine = $this->engine(null);
+        // A 3-digit number in the text must not match a 3+ char ref.
+        $tx = bcMakeTx([
+            'reference' => '',
+            'text' => 'BETALING NR 902',
+            'amount' => -8200.00,
+        ]);
+        $r = $engine->reconcile($tx, bcMakeCandidates());
+        $this->assertNotSame('invoice_number_in_text', $r->ruleName);
+    }
+
+    public function testInvoiceNumberInTextRequiresAmountMatch(): void
+    {
+        $engine = $this->engine(null);
+        $tx = bcMakeTx([
+            'reference' => '',
+            'text' => 'BETALING TIL ABC A/S FAKTURA 240902 TAK',
+            'amount' => -1000.00,
+        ]);
+        $r = $engine->reconcile($tx, bcMakeCandidates());
+        $this->assertNotSame('invoice_number_in_text', $r->ruleName);
+    }
 }
