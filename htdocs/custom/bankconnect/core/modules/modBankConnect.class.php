@@ -27,7 +27,7 @@ class modBankConnect extends DolibarrModules
 		$this->descriptionlong = 'ModuleBankConnectDescLong';
 		$this->editor_name = 'WM Group / Eira';
 		$this->editor_url = 'https://github.com/smoeberg/bankconnect';
-		$this->version = '1.1.0';
+		$this->version = '1.2.0';
 		$this->const_name = 'MAIN_MODULE_BANKCONNECT';
 		$this->picto = 'bank';
 

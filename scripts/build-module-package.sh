@@ -22,9 +22,14 @@ for required in \
 	fi
 done
 
+use_python_zip=0
 if ! command -v zip >/dev/null 2>&1; then
-	echo "The zip command is required to build the Dolibarr package" >&2
-	exit 1
+	if command -v python3 >/dev/null 2>&1; then
+		use_python_zip=1
+	else
+		echo "The zip command (or python3) is required to build the Dolibarr package" >&2
+		exit 1
+	fi
 fi
 
 dist_dir="$project_dir/dist"
@@ -44,7 +49,11 @@ package="$dist_dir/module_bankconnect-${version}.zip"
 rm -f "$package"
 (
 	cd "$stage_dir"
-	zip -qr "$package" bankconnect
+	if [[ "$use_python_zip" == 1 ]]; then
+		python3 -c 'import sys,zipfile,pathlib; zf=zipfile.ZipFile(sys.argv[1],"w",zipfile.ZIP_DEFLATED); pkg=pathlib.Path("bankconnect"); [zf.write(f,arcname=str(f)) for f in sorted(pkg.rglob("*")) if f.is_file()]; zf.close()' "$package"
+	else
+		zip -qr "$package" bankconnect
+	fi
 )
 
 echo "$package"
