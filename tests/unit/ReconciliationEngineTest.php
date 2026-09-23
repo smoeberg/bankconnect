@@ -142,4 +142,32 @@ class ReconciliationEngineTest extends TestCase
         $r = $engine->reconcile($tx, bcMakeCandidates());
         $this->assertNotSame('invoice_number_in_text', $r->ruleName);
     }
+
+    /** @dataProvider dkBankTextProvider */
+    public function testRealDanishBankTexts(array $case): void
+    {
+        $engine = $this->engine(null);
+        $tx = bcMakeTx([
+            'text' => $case['text'],
+            'amount' => $case['amount'],
+            'date' => $case['date'],
+            'reference' => $case['reference'],
+            'counterparty' => '',
+        ]);
+        $r = $engine->reconcile($tx, bcMakeCandidates());
+        $this->assertSame($case['expectedType'], $r->matchType, $case['note']);
+        if ($case['expectedRule'] !== null) {
+            $this->assertSame($case['expectedRule'], $r->ruleName, $case['note']);
+        }
+    }
+
+    public static function dkBankTextProvider(): array
+    {
+        $cases = json_decode(file_get_contents(__DIR__.'/../fixtures/dk-bank-texts.json'), true);
+        $out = [];
+        foreach ($cases as $c) {
+            $out[$c['note']] = [$c];
+        }
+        return $out;
+    }
 }

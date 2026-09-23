@@ -1,0 +1,72 @@
+[
+ {
+  "id": 1,
+  "text": "BETALING BS 01 01 MODTAGER NR 12345678 ABC BYG A/S FAKTURA FA240902",
+  "amount": -4820.0,
+  "date": "2026-09-12",
+  "reference": "12345678",
+  "note": "Betalingsservice med modtagernr + faktura",
+  "expectedType": "none",
+  "expectedRule": null
+ },
+ {
+  "id": 2,
+  "text": "BETALING TIL ABC BYG A/S FAKTURA 240902 TAK",
+  "amount": -8200.0,
+  "date": "2026-09-12",
+  "reference": "",
+  "note": "Fakturanummer i teksten",
+  "expectedType": "exact",
+  "expectedRule": "invoice_number_in_text"
+ },
+ {
+  "id": 3,
+  "text": "BETALINGSSERVICE BETFOR TO/FS TOMRA SYSTEMS A/S",
+  "amount": -12500.0,
+  "date": "2026-09-13",
+  "reference": "",
+  "note": "BS-betalingslinje, kun modpartsnavn",
+  "expectedType": "none",
+  "expectedRule": null
+ },
+ {
+  "id": 4,
+  "text": "KORTGEBYR 5966 1234 0012345678 TAXA KOMPAGNIET",
+  "amount": -125.0,
+  "date": "2026-09-13",
+  "reference": "",
+  "note": "Kortgebyr",
+  "expectedType": "none",
+  "expectedRule": null
+ },
+ {
+  "id": 5,
+  "text": "MOBILEPAY BETALING FRA KUNDE 4455",
+  "amount": 1250.0,
+  "date": "2026-09-14",
+  "reference": "",
+  "note": "MobilePay-indbetaling",
+  "expectedType": "none",
+  "expectedRule": null
+ },
+ {
+  "id": 6,
+  "text": "DANID SESAM ABONNEMENT SEPNR 555001",
+  "amount": -1200.0,
+  "date": "2026-09-14",
+  "reference": "555001",
+  "note": "Abonnement med sepnr",
+  "expectedType": "none",
+  "expectedRule": null
+ },
+ {
+  "id": 7,
+  "text": "DIVERSE GEBYR KONTOOPSTAETELSE",
+  "amount": -39.0,
+  "date": "2026-09-14",
+  "reference": "",
+  "note": "Kontooprettelsesgebyr, ingen kandidat forventet",
+  "expectedType": "none",
+  "expectedRule": null
+ }
+]
