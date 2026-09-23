@@ -155,7 +155,7 @@ class ReconciliationEngine
                 $r->confidence = self::CONF_REFERENCE;
                 $r->ruleName = 'reference_amount';
                 $r->suggested = [['id' => $c->id, 'type' => $c->type, 'ref' => $c->ref, 'amount' => $amt]];
-                $r->reason = 'Prcis struktureret reference (FI71/OCR/EndToEndId) og belb matcher';
+                $r->reason = 'Præcis struktureret reference (FI71/OCR/EndToEndId) og beløb matcher';
                 $r->source = 'rule';
                 return $r;
             }
@@ -171,7 +171,7 @@ class ReconciliationEngine
             foreach ($refMatches as $c) {
                 $r->suggested[] = ['id' => $c->id, 'type' => $c->type, 'ref' => $c->ref, 'amount' => $c->remaining];
             }
-            $r->reason = 'Flere fakturaer matcher samme reference';
+            $r->reason = 'Flere fakturaer matcher samme reference — vælg manuelt';
             $r->source = 'rule';
             if ($r->ruleName === '') { $r->ruleName = 'rule'; }
             return $r;
@@ -238,10 +238,10 @@ class ReconciliationEngine
                 $r->ruleName = $requireThirdparty ? 'amount_thirdparty_1d' : ($days === 1 ? 'amount_1d' : 'amount_3d');
                 $r->suggested = [['id' => $c->id, 'type' => $c->type, 'ref' => $c->ref, 'amount' => $amt]];
                 $r->reason = $requireThirdparty
-                    ? 'Belb, modpart og dato (1 dg) matcher'
+                    ? sprintf('Beløb %.2f, modpart %s og dato (1 dag) matcher', $amt, $c->thirdparty)
                     : ($days === 1
-                        ? 'Belb og dato (1 dg) matcher'
-                        : 'Belb matcher, dato inden for 3 dage');
+                        ? sprintf('Beløb %.2f og dato (1 dag) matcher', $amt)
+                        : sprintf('Beløb %.2f matcher, dato inden for 3 dage (gap %d dage)', $amt, $days));
                 $r->source = 'rule';
                 return $r;
             }
@@ -254,7 +254,7 @@ class ReconciliationEngine
                 foreach ($matches as $c) {
                     $r->suggested[] = ['id' => $c->id, 'type' => $c->type, 'ref' => $c->ref, 'amount' => $c->remaining];
                 }
-                $r->reason = 'Flere kandidater med samme belb i datovinduet';
+                $r->reason = 'Flere kandidater med samme beløb i datovinduet — vælg manuelt';
                 $r->source = 'rule';
                 return $r;
             }
@@ -292,8 +292,8 @@ class ReconciliationEngine
                     $r->suggested[] = ['id' => $c->id, 'type' => $c->type, 'ref' => $c->ref, 'amount' => $c->remaining];
                 }
                 $r->reason = $sameThirdpartyOnly
-                    ? 'Belb er summen af flere fakturaer fra samme modpart'
-                    : 'Belb er summen af flere fakturaer';
+                    ? 'Beløbet er summen af flere fakturaer fra samme modpart'
+                    : 'Beløbet er summen af flere fakturaer (samlet betaling)';
                 $r->source = 'rule';
                 return $r;
             }
@@ -336,7 +336,7 @@ class ReconciliationEngine
         $r->confidence = self::CONF_PARTIAL;
         $r->ruleName = 'reference_partial';
         $r->suggested = [['id' => $c->id, 'type' => $c->type, 'ref' => $c->ref, 'amount' => $amt]];
-        $r->reason = 'Reference matcher, belb afviger';
+        $r->reason = 'Reference matcher, men beløbet afviger';
         $r->source = 'rule';
         return $r;
     }
@@ -385,7 +385,7 @@ class ReconciliationEngine
             $r->confidence = self::CONF_INV_IN_TEXT;
             $r->ruleName = 'invoice_number_in_text';
             $r->suggested = [['id' => $c->id, 'type' => $c->type, 'ref' => $c->ref, 'amount' => $amt]];
-            $r->reason = 'Fakturanummer fundet i bankteksten og belb matcher';
+            $r->reason = 'Fakturanummer fra bankteksten matcher fakturanummeret, og beløbet matcher';
             $r->source = 'rule';
             return $r;
         }
@@ -433,7 +433,7 @@ class ReconciliationEngine
             $r->confidence = self::CONF_TEXT;
             $r->ruleName = 'text_similarity';
             $r->suggested = [['id' => $best->id, 'type' => $best->type, 'amount' => $best->remaining]];
-            $r->reason = 'Tekstlighed (svag indikator - krver manuel bekraftelse)';
+            $r->reason = 'Tekstlighed (svag indikator — kræver manuel bekræftelse)';
             $r->source = 'rule';
             return $r;
         }
