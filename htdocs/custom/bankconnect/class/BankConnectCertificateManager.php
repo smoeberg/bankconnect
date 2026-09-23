@@ -112,6 +112,12 @@ class BankConnectCertificateManager
         if (!$dryRun) {
             // Try to fetch bank certificate automatically if not already configured
             $bankCertPem = $this->fetchBankCertificateIfNeeded($datacenter, $environment, $mainReg, $functionId);
+            if ($bankCertPem === null || trim($bankCertPem) === '') {
+                throw new BankConnectException(
+                    'Bankens BankConnect-certifikat kunne ikke hentes automatisk (GetBankCertificate). '
+                    .'Sæt BANKCONNECT_BANK_CERTIFICATE i miljø eller konfiguration, eller kontrollér datacenter/mainReg.'
+                );
+            }
             
             $raw = $this->activateServiceAgreement($activationCode, $keypair['csr'], $header);
             $customerCertPem = $this->extractCustomerCertificatePem($raw, $keypair['private_key']);

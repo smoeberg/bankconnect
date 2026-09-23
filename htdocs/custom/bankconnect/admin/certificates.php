@@ -59,8 +59,9 @@ if ($action === 'onboard') {
 		$environmentBankCertificate = getenv('BANKCONNECT_BANK_CERTIFICATE');
 		if (empty($onboardGlobals['BANKCONNECT_BANK_CERTIFICATE']) && $environmentBankCertificate !== false) $onboardGlobals['BANKCONNECT_BANK_CERTIFICATE'] = $environmentBankCertificate;
 		$onboardConf->global = $onboardGlobals;
-		if (!$dryRun && empty($onboardGlobals['BANKCONNECT_BANK_CERTIFICATE'])) {
-			throw new BankConnectException('Bankens BankConnect-certifikat skal konfigureres før en live aktivering.');
+		if (!$dryRun && empty($onboardGlobals['BANKCONNECT_BANK_CERTIFICATE']) && getenv('BANKCONNECT_BANK_CERTIFICATE') === false) {
+			// Not pre-configured: the manager will attempt automatic GetBankCertificate fetch during onboarding
+			// and fail with a clear error if it cannot obtain one.
 		}
 
         $mgr = new BankConnectCertificateManager($onboardConf, null, null, $store);
