@@ -152,6 +152,17 @@
 - Log-redaction: ingen secrets/PII i logs.
 
 ## Unreleased
+### Added
+- Automatic import now fetches all three statement flavours per agreement:
+  camt.053 (end-of-day statement), camt.052 (intraday account report) and
+  camt.054 (debit/credit notifications). Empty OK responses without a CAMT
+  payload are tolerated for 052/054; the 053 call still fails hard.
+
+### Fixed
+- Corrected reversal (camt return/correction) handling: reversals are no
+  longer auto-booked as separate bank lines; they are marked as deferred
+  for manual treatment in reconciliation.
+
 
 ### Security
 - Align TransferPayment transport signatures with developer package v3.7:
