@@ -5,6 +5,7 @@ require_once __DIR__.'/BankConnectClientFactory.php';
 require_once __DIR__.'/BankConnectStatementResponseParser.php';
 require_once __DIR__.'/ServiceHeaderBuilder.php';
 require_once __DIR__.'/ImportService.php';
+require_once __DIR__.'/BankConnectException.php';
 
 /** Runs automatic BankConnect statement retrieval through the shared import path. */
 class BankConnectAutomaticImportService
@@ -56,16 +57,45 @@ class BankConnectAutomaticImportService
 	 */
 	private function runAgreement(array $agreement, int $bankAccountId, $user): array
 	{
-		$header = (new ServiceHeaderBuilder())
-			->setOrganisation((string)$agreement['main_registration_number'], 'DK')
-			->setFunctionIdentification((string)$agreement['bank_connect_id'])
-			->setErp('Dolibarr', defined('DOL_VERSION') ? DOL_VERSION : '')
-			->setFormat('camt.053.001.02');
-		$serviceHeader = $header->build();
 		$client = $this->clients->create($agreement);
-		$response = $client->getCustomerStatement($serviceHeader);
-		$camt = $this->responses->extract($response);
-		$source = 'bankconnect:'.(int)$agreement['rowid'].':'.$header->getEndToEndMessageId();
-		return $this->importer->import($camt, $bankAccountId, $source, $user);
+		$sum = ['imported' => 0, 'duplicates' => 0, 'deferred_reversals' => 0, 'total' => 0];
+
+		// Fetch all three statement/report/notification flavours in order:
+		// camt.053 (end-of-day statement), camt.052 (intraday account report)
+		// and camt.054 (debit/credit notifications).
+		$requests = [
+			['format' => 'camt.053.001.02', 'call' => static fn(BankConnectClient $c, string $h) => $c->getCustomerStatement($h)],
+			['format' => 'camt.052.001.02', 'call' => static fn(BankConnectClient $c, string $h) => $c->getCustomerAccountReport($h)],
+			['format' => 'camt.054.001.02', 'call' => static fn(BankConnectClient $c, string $h) => $c->getDebitCreditNotification($h)],
+		];
+		foreach ($requests as $request) {
+			$header = (new ServiceHeaderBuilder())
+				->setOrganisation((string)$agreement['main_registration_number'], 'DK')
+				->setFunctionIdentification((string)$agreement['bank_connect_id'])
+				->setErp('Dolibarr', defined('DOL_VERSION') ? DOL_VERSION : '')
+				->setFormat($request['format']);
+			$response = $request['call']($client, $header->build());
+			try {
+				$camt = $this->responses->extract($response);
+			} catch (BankConnectException $e) {
+				// An OK response without a CAMT payload is legitimate for camt.052
+				// and camt.054 when there are no intraday/ notification entries —
+				// only surface a real transport failure for the mandatory 053 call.
+				if ($request['format'] !== 'camt.053.001.02') {
+					continue;
+				}
+				throw $e;
+			}
+			if (trim($camt) === '') {
+				continue;
+			}
+			$source = 'bankconnect:'.(int)$agreement['rowid'].':'.$header->getEndToEndMessageId();
+			$one = $this->importer->import($camt, $bankAccountId, $source, $user);
+			$sum['imported'] += $one['imported'];
+			$sum['duplicates'] += $one['duplicates'];
+			$sum['deferred_reversals'] += $one['deferred_reversals'] ?? 0;
+			$sum['total'] += $one['total'];
+		}
+		return $sum;
 	}
 }

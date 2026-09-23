@@ -45,6 +45,14 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 				$this->header = $serviceHeaderXml;
 				return '<Envelope><content>'.base64_encode('<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"><BkToCstmrStmt/></Document>').'</content></Envelope>';
 			}
+			public function getCustomerAccountReport(string $serviceHeaderXml): string
+			{
+				return '<Envelope><content>'.base64_encode('<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.052.001.02"><BkToCstmrAcctRpt/></Document>').'</content></Envelope>';
+			}
+			public function getDebitCreditNotification(string $serviceHeaderXml): string
+			{
+				return '<Envelope><content>'.base64_encode('<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.054.001.02"><BkToCstmrDbtCdtNtfctn/></Document>').'</content></Envelope>';
+			}
 		};
 		$clients = new class($client) extends BankConnectClientFactory {
 			private BankConnectClient $client;
@@ -57,11 +65,12 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		$result = $service->run(1, $user);
 
 		$this->assertSame(1, $result['agreements']);
-		$this->assertSame(2, $result['imported']);
-		$this->assertSame(1, $result['duplicates']);
-		$this->assertSame(3, $result['total']);
+		$this->assertCount(3, $importer->calls, '053, 052 and 054 are all fetched');
+		$this->assertSame(6, $result['imported']);
+		$this->assertSame(3, $result['duplicates']);
+		$this->assertSame(9, $result['total']);
 		$this->assertSame([], $result['errors']);
-		$this->assertCount(1, $importer->calls);
+		$this->assertCount(3, $importer->calls);
 		$this->assertSame(1004, $importer->calls[0][1]);
 		$this->assertSame($user, $importer->calls[0][3]);
 		$this->assertStringContainsString('camt.053.001.02', $client->header);
