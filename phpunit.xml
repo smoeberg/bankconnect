@@ -4,5 +4,8 @@
         <testsuite name="Unit">
             <directory>tests/unit</directory>
         </testsuite>
+        <testsuite name="Qualification">
+            <directory>tests/qualification</directory>
+        </testsuite>
     </testsuites>
 </phpunit>
