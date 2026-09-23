@@ -1,3 +1,20 @@
+## 1.1.0 (unreleased)
+
+### Added
+- Three-step **Connect to BankConnect** onboarding: activate agreement, map an
+  existing Dolibarr bank account, and run a signed read-only `getStatus` test.
+- Persisted connection-test timestamp, status and redacted error for each
+  agreement.
+- Explicit system-test/production and data-centre choices; system test is
+  restricted to Bankdata as documented by BankConnect.
+
+### Fixed
+- Production endpoint now uses the official `bankconnectservices.dk` host.
+- Agreement-scoped clients infer the endpoint environment before applying the
+  fail-closed endpoint policy.
+- Live activation fails early when the bank certificate is unavailable; draft
+  preparation is no longer selected by default.
+
 ## 1.0.0 (unreleased)
 
 ### Added

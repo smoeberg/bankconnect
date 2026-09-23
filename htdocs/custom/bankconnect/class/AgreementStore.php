@@ -55,6 +55,15 @@ class AgreementStore
         }
     }
 
+	public function recordConnectionTest(int $agreementId, bool $success, string $error = ''): void
+	{
+		$error = substr($error, 0, 255);
+		$sql = "UPDATE llx_bankconnect_agreement SET last_connection_test=NOW(), last_connection_status='"
+			.($success ? 'success' : 'failed')."', last_connection_error="
+			.($error === '' ? 'NULL' : "'".$this->db->escape($error)."'").' WHERE rowid='.(int)$agreementId;
+		if (!$this->db->query($sql)) throw new BankConnectException('recordConnectionTest failed: '.$this->db->lasterror());
+	}
+
     /**
      * @param array{
      *   fk_agreement:int, certificate_pem:string, private_key_enc:string,

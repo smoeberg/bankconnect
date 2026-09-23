@@ -9,7 +9,7 @@
  *  - All CorporateService operations
  *
  * Endpoint (test): https://stest.bankconnect.dk/2019/04/04/services/CorporateService
- * Endpoint (prod): https://www.bankconnectservices.dk/2019/04/04/services/CorporateService
+ * Endpoint (prod): https://bankconnectservices.dk/2019/04/04/services/CorporateService
  *
  * Never throws raw SOAP faults to callers – always wraps in BankConnectException.
  */

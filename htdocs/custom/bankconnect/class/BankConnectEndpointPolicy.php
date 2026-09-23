@@ -6,7 +6,7 @@ class BankConnectEndpointPolicy
 {
     private const BANKCONNECT_ENDPOINTS = [
         'test' => 'stest.bankconnect.dk',
-        'production' => 'www.bankconnectservices.dk',
+		'production' => 'bankconnectservices.dk',
     ];
 
     public static function validateBankConnect(string $endpoint, string $environment = 'production'): string

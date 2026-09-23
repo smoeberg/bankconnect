@@ -28,6 +28,7 @@ class BankConnectClientFactory
 		$global['BANKCONNECT_CUSTOMER_PRIVATE_KEY'] = $manager->decryptPrivateKey((string)$certificate['private_key_enc']);
 		if (!empty($agreement['endpoint'])) {
 			$global['BANKCONNECT_ENDPOINT'] = (string)$agreement['endpoint'];
+			$global['BANKCONNECT_ENVIRONMENT'] = str_contains((string)$agreement['endpoint'], 'stest.bankconnect.dk') ? 'test' : 'production';
 		}
 		if (!empty($agreement['datacenter'])) {
 			$global['BANKCONNECT_DATACENTER'] = (string)$agreement['datacenter'];

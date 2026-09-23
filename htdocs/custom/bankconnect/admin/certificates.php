@@ -8,6 +8,9 @@ require_once dol_buildpath('/bankconnect/class/BankConnectCertificateManager.php
 require_once dol_buildpath('/bankconnect/class/AgreementStore.php', 0);
 require_once dol_buildpath('/bankconnect/class/BankAccountMappingStore.php', 0);
 require_once dol_buildpath('/bankconnect/class/BankConnectException.php', 0);
+require_once dol_buildpath('/bankconnect/class/BankConnectClientFactory.php', 0);
+require_once dol_buildpath('/bankconnect/class/BankConnectConnectionTestService.php', 0);
+require_once dol_buildpath('/bankconnect/class/BankConnectEndpointPolicy.php', 0);
 
 if (!$user->admin) {
     accessforbidden();
@@ -18,7 +21,7 @@ $action = GETPOST('action', 'aZ09');
 $store = new AgreementStore($db);
 $mappingStore = new BankAccountMappingStore($db);
 
-if (in_array($action, ['onboard', 'map_account', 'unmap_account'], true) && $_SERVER['REQUEST_METHOD'] === 'POST') {
+if (in_array($action, ['onboard', 'map_account', 'unmap_account', 'test_connection'], true) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!checkToken()) {
         accessforbidden();
     }
@@ -29,16 +32,38 @@ if ($action === 'onboard') {
     $functionId = GETPOST('function_identification', 'alpha');
     $mainReg = GETPOST('main_registration_number', 'alpha') ?: '8079';
     $label = GETPOST('label', 'alphanohtml');
-    $dryRun = GETPOSTINT('dry_run');
+	$dryRun = 0;
+	$environment = GETPOST('environment', 'alpha') === 'production' ? 'production' : 'test';
+	$datacenter = strtoupper(GETPOST('datacenter', 'alpha') ?: 'BANKDATA');
+	$endpoint = $environment === 'production'
+		? 'https://bankconnectservices.dk/2019/04/04/services/CorporateService'
+		: 'https://stest.bankconnect.dk/2019/04/04/services/CorporateService';
 
     try {
-        if (empty($conf->global->BANKCONNECT_KEY_ENCRYPTION_SECRET) && empty(getenv('BANKCONNECT_KEY_ENCRYPTION_SECRET'))) {
+		$currentGlobals = (array)($conf->global ?? []);
+        if (empty($currentGlobals['BANKCONNECT_KEY_ENCRYPTION_SECRET']) && empty(getenv('BANKCONNECT_KEY_ENCRYPTION_SECRET'))) {
             throw new BankConnectException(
                 'Sæt BANKCONNECT_KEY_ENCRYPTION_SECRET i Dolibarr-konstant eller miljø før onboarding.'
             );
         }
 
-        $mgr = new BankConnectCertificateManager($conf, null, null, $store);
+		if ($environment === 'test' && $datacenter !== 'BANKDATA') {
+			throw new BankConnectException('BankConnects systemtest understøtter kun Bankdata.');
+		}
+		BankConnectEndpointPolicy::validateBankConnect($endpoint, $environment);
+		$onboardConf = clone $conf;
+		$onboardGlobals = (array)($conf->global ?? []);
+		$onboardGlobals['BANKCONNECT_ENDPOINT'] = $endpoint;
+		$onboardGlobals['BANKCONNECT_ENVIRONMENT'] = $environment;
+		$onboardGlobals['BANKCONNECT_DATACENTER'] = $datacenter;
+		$environmentBankCertificate = getenv('BANKCONNECT_BANK_CERTIFICATE');
+		if (empty($onboardGlobals['BANKCONNECT_BANK_CERTIFICATE']) && $environmentBankCertificate !== false) $onboardGlobals['BANKCONNECT_BANK_CERTIFICATE'] = $environmentBankCertificate;
+		$onboardConf->global = $onboardGlobals;
+		if (!$dryRun && empty($onboardGlobals['BANKCONNECT_BANK_CERTIFICATE'])) {
+			throw new BankConnectException('Bankens BankConnect-certifikat skal konfigureres før en live aktivering.');
+		}
+
+        $mgr = new BankConnectCertificateManager($onboardConf, null, null, $store);
         $result = $mgr->onboard([
             'activation_code'            => $activation,
             'function_identification'    => $functionId,
@@ -46,6 +71,8 @@ if ($action === 'onboard') {
             'label'                      => $label,
             'entity'                     => $conf->entity,
             'fk_user'                    => $user->id,
+			'datacenter'                  => $datacenter,
+			'endpoint'                    => $endpoint,
             'dry_run'                    => (bool) $dryRun,
         ]);
 
@@ -78,6 +105,14 @@ if ($action === 'onboard') {
     } catch (Throwable $e) {
         setEventMessages($e->getMessage(), null, 'errors');
     }
+} elseif ($action === 'test_connection') {
+	try {
+		$tester = new BankConnectConnectionTestService($store, $mappingStore, new BankConnectClientFactory($conf, $store));
+		$tester->test(GETPOSTINT('agreement_id'), (int)$conf->entity);
+		setEventMessages($langs->trans('BankConnectConnectionOk'), null);
+	} catch (Throwable $e) {
+		setEventMessages($langs->trans('BankConnectConnectionFailed').': '.$e->getMessage(), null, 'errors');
+	}
 }
 
 $agreements = $store->listAgreements((int) $conf->entity);
@@ -91,7 +126,11 @@ while ($resAccounts && ($account = $db->fetch_object($resAccounts))) {
 }
 
 llxHeader('', 'BankConnect certificates');
-print load_fiche_titre('BankConnect — Certificates / Onboarding', '', 'technic');
+print load_fiche_titre($langs->trans('BankConnectConnectTitle'), '', 'technic');
+
+print '<div class="info">'.$langs->trans('BankConnectConnectIntro').'</div>';
+print '<div class="fichecenter"><div class="fichehalfleft"><div class="underbanner clearboth"></div>';
+print '<h3>1. '.$langs->trans('BankConnectActivateAgreement').'</h3>';
 
 print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
 print '<input type="hidden" name="token" value="'.newToken().'">';
@@ -100,13 +139,17 @@ print '<table class="border centpercent">';
 print '<tr><td>Label</td><td><input name="label" class="minwidth200" value="Testaftale"></td></tr>';
 print '<tr><td>Function identification (Bank Connect ID)</td><td><input name="function_identification" class="minwidth200" required placeholder="0010888100007"></td></tr>';
 print '<tr><td>Main registration number</td><td><input name="main_registration_number" value="8079" class="minwidth100"> (8079 = test/Sydbank)</td></tr>';
-print '<tr><td>Activation code (SMS)</td><td><input name="activation_code" class="minwidth200" required></td></tr>';
-print '<tr><td>Dry-run (ingen SOAP)</td><td><input type="checkbox" name="dry_run" value="1" checked> Generér CSR + gem aftale uden bankkald</td></tr>';
+print '<tr><td>Activation code (SMS)</td><td><input type="password" name="activation_code" class="minwidth200" required autocomplete="new-password"></td></tr>';
+print '<tr><td>'.$langs->trans('BankConnectEnvironment').'</td><td><select name="environment"><option value="test">Systemtest</option><option value="production">Produktion</option></select></td></tr>';
+print '<tr><td>'.$langs->trans('BankConnectDatacenter').'</td><td><select name="datacenter"><option value="BANKDATA">Bankdata</option><option value="NBS">NBS/SDC</option><option value="BEC">BEC</option></select></td></tr>';
 print '</table>';
-print '<br><input type="submit" class="button button-save" value="Onboard">';
+print '<br><input type="submit" class="button button-save" value="'.$langs->trans('BankConnectActivateAgreement').'">';
 print '</form>';
+print '</div><div class="fichehalfright"><div class="underbanner clearboth"></div>';
+print '<h3>'.$langs->trans('BankConnectBeforeConnect').'</h3><ol><li>'.$langs->trans('BankConnectNeedAgreement').'</li><li>'.$langs->trans('BankConnectNeedSecret').'</li><li>'.$langs->trans('BankConnectNeedBankCertificate').'</li></ol>';
+print '<p>'.$langs->trans('BankConnectOfficialEnvironmentHelp').'</p></div></div><div class="clearboth"></div>';
 
-print '<br><h3>Bank account mapping</h3>';
+print '<br><h3>2. '.$langs->trans('BankConnectMapAccount').'</h3>';
 print '<p>Hver BankConnect-aftale kan mappes til én åben Dolibarr-bankkonto i den aktuelle entity. Bankkontoen genbruges fra Dolibarr; BankConnect opretter ikke en parallel konto.</p>';
 print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
 print '<input type="hidden" name="token" value="'.newToken().'">';
@@ -153,9 +196,9 @@ foreach ($mappingStore->listMappings((int)$conf->entity) as $mapping) {
 }
 print '</table>';
 
-print '<br><h3>Eksisterende aftaler</h3>';
+print '<br><h3>3. '.$langs->trans('BankConnectTestConnection').'</h3>';
 print '<table class="noborder centpercent">';
-print '<tr class="liste_titre"><th>ID</th><th>Label</th><th>BC ID</th><th>Status</th><th>Aktiv cert</th></tr>';
+print '<tr class="liste_titre"><th>ID</th><th>Label</th><th>BC ID</th><th>Status</th><th>Aktiv cert</th><th>'.$langs->trans('BankConnectLastTest').'</th><th></th></tr>';
 foreach ($agreements as $a) {
     $cert = $store->getActiveCertificate((int) $a['rowid']);
     print '<tr class="oddeven">';
@@ -164,6 +207,8 @@ foreach ($agreements as $a) {
     print '<td>'.dol_escape_htmltag($a['bank_connect_id'] ?? '').'</td>';
     print '<td>'.dol_escape_htmltag($a['status'] ?? '').'</td>';
     print '<td>'.($cert ? '#'.$cert['rowid'].' (til '.$cert['valid_to'].')' : '—').'</td>';
+	print '<td>'.dol_escape_htmltag(($a['last_connection_status'] ?? '') ?: '—').(!empty($a['last_connection_test']) ? '<br><small>'.dol_print_date($a['last_connection_test'], 'dayhour').'</small>' : '').(!empty($a['last_connection_error']) ? '<br><small class="error">'.dol_escape_htmltag($a['last_connection_error']).'</small>' : '').'</td>';
+	print '<td><form method="POST" action="'.$_SERVER['PHP_SELF'].'"><input type="hidden" name="token" value="'.newToken().'"><input type="hidden" name="action" value="test_connection"><input type="hidden" name="agreement_id" value="'.(int)$a['rowid'].'"><button class="button">'.$langs->trans('BankConnectTestConnection').'</button></form></td>';
     print '</tr>';
 }
 print '</table>';
