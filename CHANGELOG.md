@@ -1,6 +1,10 @@
 ## 1.2.0 (unreleased)
 
 ### Added
+- Kvalifikationssuite (issue #43) dokumenteret i README: failure-injection,
+  idempotens og performance-gate i eget CI-workflow.
+
+### Added
 - **PR #61: Security hardening**
   - Mistral API-nøglen læses først fra miljøvariablen
     `BANKCONNECT_MISTRAL_API_KEY` (production secret boundary); den gamle

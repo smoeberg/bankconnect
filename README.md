@@ -186,6 +186,13 @@ php phpunit.phar --bootstrap tests/unit/bootstrap.php tests/unit
 
 CI (`.github/workflows/test.yml`): syntax check + unit tests på push/PR.
 
+Kvalifikation (`.github/workflows/qualification.yml`): separat suite
+(`tests/qualification/`) med failure-injection (transportfejl -> UNKNOWN er
+terminal, ingen dobbeltsending; duplikat-import er idempotent) og
+performance-qualification (deterministisk reconciliation: 500 transaktioner
+x 12 kandidater, m. eksplicit 12-kandidat-grænse). Ingen netværk, ingen
+Mistral-kald. Skal være grøn før merge.
+
 ## Bankfinanskladde
 
 Når et match er forbundet, kontrollerer modulet, at bankkontoen har en
@@ -198,5 +205,4 @@ til finans. BankConnect-modulet skriver ikke direkte i bogføringen.
 ## Videre udvikling
 
 - Live XML crypto (kræver officiel BankConnect developer package).
-- Issue #43: qualification/performance/failure-injection gate.
 - OIOUBL/EAN-fakturering (dkmodul-dolibarr-repoet).
