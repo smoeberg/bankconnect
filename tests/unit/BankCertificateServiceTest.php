@@ -108,7 +108,7 @@ class BankCertificateServiceTest extends PHPUnit\Framework\TestCase
     public function testDatacenterEndpoints()
     {
         // Verify that the service knows the correct endpoints
-        $endpoints = BankCertificateService::DATACENTER_ENDPOINTS;
+        $endpoints = ((fn() => (new ReflectionClass(BankCertificateService::class))->getConstant('DATACENTER_ENDPOINTS')))();
 
         $this->assertArrayHasKey('BANKDATA', $endpoints);
         $this->assertArrayHasKey('NBS', $endpoints);
