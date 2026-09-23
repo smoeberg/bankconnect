@@ -14,6 +14,7 @@ class ImportServiceTest extends TestCase
     {
         return new class($captured) extends BankConnectStore {
             private $txs = [];
+            public array $deferred = [];
             private $captured;
             public function __construct(&$captured) { $this->captured =& $captured; }
             public function upsertTransactionDetailed(array $t, int $fkBankAccount, string $sourceFile): array
@@ -23,10 +24,14 @@ class ImportServiceTest extends TestCase
                 }
                 $hash = $t['hash'] !== '' ? $t['hash'] : hash('sha256', implode('|', [$t['date'], $t['amount'], $t['reference'] ?? '', $t['counterparty'] ?? '']));
                 if (isset($this->txs[$hash])) {
-                    return ['rowid' => $this->txs[$hash], 'duplicate' => true];
+                    return ['rowid' => $this->txs[$hash], 'duplicate' => true, 'fk_bankentry' => 0, 'bank_entry_state' => 'pending'];
                 }
                 $this->txs[$hash] = count($this->txs) + 1;
-                return ['rowid' => $this->txs[$hash], 'duplicate' => false];
+                return ['rowid' => $this->txs[$hash], 'duplicate' => false, 'fk_bankentry' => 0, 'bank_entry_state' => 'pending'];
+            }
+            public function deferBankEntryReversal(int $transactionId): void
+            {
+                $this->deferred[] = $transactionId;
             }
         };
     }
@@ -36,7 +41,7 @@ class ImportServiceTest extends TestCase
         $service = new ImportService($this->makeStore());
         $xml = $this->camt([[1, '2026-09-01'], [2, '2026-09-02']]);
         $r = $service->import($xml);
-        $this->assertSame(['imported' => 2, 'duplicates' => 0, 'total' => 2], $r);
+        $this->assertSame(['imported' => 2, 'duplicates' => 0, 'deferred_reversals' => 0, 'total' => 2], $r);
     }
 
     public function testSecondImportCountsDuplicates(): void
@@ -77,9 +82,11 @@ class ImportServiceTest extends TestCase
             }
         };
 
-        $service = new ImportService($this->makeStore($captured), $parser);
+        $store = $this->makeStore($captured);
+        $service = new ImportService($store, $parser);
         $result = $service->import('<Document/>');
 
+        $this->assertSame([1], $store->deferred, 'reversal must be deferred from automatic bank entry creation');
         $this->assertSame(1, $result['imported']);
         $this->assertCount(1, $captured);
         $this->assertTrue($captured[0]['requiresManualReview']);
@@ -132,6 +139,58 @@ class ImportServiceTest extends TestCase
 		$this->assertSame(1, $bankEntries->creates);
 		$this->assertSame(1, $store->claims);
 		$this->assertSame([[12, 7631]], $store->linked);
+	}
+
+	public function testReversalIsDeferredAndNeverAutoPosted(): void
+	{
+		$store = new class extends BankConnectStore {
+			public array $deferred = [];
+			public int $claims = 0;
+			public function __construct() {}
+			public function upsertTransactionDetailed(array $t, int $fkBankAccount, string $sourceFile): array
+			{
+				return ['rowid' => 77, 'duplicate' => false, 'fk_bankentry' => 0, 'bank_entry_state' => 'pending'];
+			}
+			public function deferBankEntryReversal(int $transactionId): void
+			{
+				$this->deferred[] = $transactionId;
+			}
+			public function claimBankEntry(int $transactionId): bool
+			{
+				$this->claims++;
+				return true;
+			}
+		};
+		$tx = new BankTransaction();
+		$tx->date = '2026-09-19';
+		$tx->amount = -18900.0;
+		$tx->currency = 'DKK';
+		$tx->text = 'Korrektion';
+		$tx->isReversal = true;
+		$tx->hash = hash('sha256', 'rev-1');
+		$parser = new class($tx) extends CamtParser {
+			private BankTransaction $tx;
+			public function __construct(BankTransaction $tx) { $this->tx = $tx; }
+			public function parse(string $xml): array { return [$this->tx]; }
+		};
+		$bankEntries = new class extends DolibarrBankEntryService {
+			public int $creates = 0;
+			public function __construct() {}
+			public function create(array $transaction, int $bankAccountId, $user): int
+			{
+				$this->creates++;
+				return 9001;
+			}
+		};
+		$service = new ImportService($store, $parser, $bankEntries);
+
+		$r = $service->import('<Document/>', 1004, 'rev.xml', (object)['id' => 42]);
+		$r2 = $service->import('<Document/>', 1004, 'rev.xml', (object)['id' => 42]);
+
+		$this->assertSame(1, $r['imported']);
+		$this->assertSame([77, 77], $store->deferred, 'deferral must also run on re-import');
+		$this->assertSame(0, $store->claims, 'reversal must never claim an automatic bank entry');
+		$this->assertSame(0, $bankEntries->creates, 'reversal must never be auto-posted');
 	}
 
     public function testImportFileRejectsOversizedFile(): void

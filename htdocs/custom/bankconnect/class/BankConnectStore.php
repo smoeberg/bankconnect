@@ -89,7 +89,7 @@ class BankConnectStore
     {
         $res = $this->db->query('SELECT fk_bankentry, bank_entry_state FROM llx_bankconnect_transaction WHERE rowid='.(int)$transactionId);
         $row = $res ? $this->db->fetch_object($res) : false;
-        if (!$row || !empty($row->fk_bankentry) || !in_array((string)$row->bank_entry_state, ['pending', 'error'], true)) {
+        if (!$row || !empty($row->fk_bankentry) || !in_array((string)$row->bank_entry_state, ['pending', 'error', 'deferred'], true)) {
             return false;
         }
 
@@ -125,6 +125,20 @@ class BankConnectStore
 		if (!$affected || (int)$affected->affected !== 1) {
 			throw new RuntimeException('BankConnect: bank entry link lost its reservation');
 		}
+    }
+
+    /**
+     * Mark a reversal/correction transaction as excluded from automatic bank entry
+     * creation: it must be reconciled manually so the operator can post the correct
+     * compensating (or annulling) entry.
+     */
+    public function deferBankEntryReversal(int $transactionId): void
+    {
+        $sql = "UPDATE llx_bankconnect_transaction SET bank_entry_state='deferred', bank_entry_error=NULL"
+            ." WHERE rowid=".(int)$transactionId." AND fk_bankentry IS NULL";
+        if (!$this->db->query($sql)) {
+            throw new RuntimeException('BankConnect: reversal deferral could not be saved: '.$this->db->lasterror());
+        }
     }
 
     public function failBankEntry(int $transactionId, string $error): void

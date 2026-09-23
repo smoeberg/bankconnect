@@ -32,6 +32,7 @@ class ImportService
 		$txs = $this->parser->parse($xml);
 		$imported = 0;
 		$duplicates = 0;
+		$deferredReversals = 0;
 		foreach ($txs as $t) {
 			$arr = $t instanceof BankTransaction ? [
 				'date' => $t->date,
@@ -48,6 +49,18 @@ class ImportService
 				'hash' => $t->hash,
 			] : (array)$t;
 			$r = $this->store->upsertTransactionDetailed($arr, $fkBankAccount, $sourceFile);
+			if (!empty($arr['isReversal']) && empty($r['fk_bankentry'])) {
+				// Reversals/corrections must never be auto-posted as standalone lines:
+				// they are reconciled manually against the original entry.
+				$this->store->deferBankEntryReversal((int)$r['rowid']);
+				if ($r['duplicate']) {
+					$duplicates++;
+				} else {
+					$imported++;
+					$deferredReversals++;
+				}
+				continue;
+			}
 			if ($this->bankEntryService !== null && empty($r['fk_bankentry']) && $this->store->claimBankEntry((int)$r['rowid'])) {
 				try {
 					$bankEntryId = $this->bankEntryService->create($arr, $fkBankAccount, $user);
@@ -63,7 +76,7 @@ class ImportService
 				$imported++;
 			}
 		}
-		return ['imported' => $imported, 'duplicates' => $duplicates, 'total' => count($txs)];
+		return ['imported' => $imported, 'duplicates' => $duplicates, 'deferred_reversals' => $deferredReversals, 'total' => count($txs)];
 	}
 
 	/**
