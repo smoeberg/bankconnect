@@ -616,13 +616,13 @@ class BankConnectCertificateManager
         string $mainReg,
         string $functionId
     ): ?string {
-        $g = (array) ($this->conf->global ?? []);
-        if (!empty($g['BANKCONNECT_BANK_CERTIFICATE'])) {
-            return $g['BANKCONNECT_BANK_CERTIFICATE'];
-        }
         $envCert = getenv('BANKCONNECT_BANK_CERTIFICATE');
         if ($envCert !== false && trim($envCert) !== '') {
             return trim($envCert);
+        }
+        $g = (array) ($this->conf->global ?? []);
+        if (!empty($g['BANKCONNECT_BANK_CERTIFICATE'])) {
+            return $g['BANKCONNECT_BANK_CERTIFICATE'];
         }
         try {
             $header = (new ServiceHeaderBuilder())
