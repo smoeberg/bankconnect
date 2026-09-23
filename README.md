@@ -17,6 +17,15 @@ BankConnect -> import/dedup -> Dolibarr-bankkonto og bankpost
                                       |
                                       v
                  Dolibarr standard bankfinanskladde -> finans
+
+Betalingsflow (pain.001):
+
+Godkendt match -> payment batch (draft -> validated -> approved)
+     -> Pain001Builder (pain.001.001.03)
+     -> BankConnectXmlSecurity (sign/krypter pr. datacenter)
+     -> BankConnectClient (SOAP CorporateService)
+     -> Pain002Parser (status) -> accepted/rejected/unknown
+     -> ApprovedMatchLinkService -> Dolibarr-betaling + bankpost
 ```
 
 Modulets egne tabeller er sidecar-data til BankConnect-identitet, importstatus,
@@ -73,6 +82,9 @@ standardflow.
 | `BankConnectHealth` | Health/status-sjekk |
 | `BankConnectLogger` | PII-safe logging (hash, metrics - ingen tekst) |
 | `BankAccountMappingStore` | Atomisk bankkonto -> Dolibarr-konto-mapping |
+| `BankCertificateService` | Henter og validerer bankcertifikater via `getBankCertificate` SOAP; datacenter- og miljøvalg (test/produktion) |
+| `BankCertificateStore` | Vedvarende, sikker lagring af bankcertifikater med gyldighedssporing og automatisk fornyelse |
+
 
 ## Modulstruktur
 
@@ -83,7 +95,7 @@ htdocs/custom/bankconnect/
 ├── core/modules/   modulbeskrivelse
 ├── langs/          da_DK, en_US
 ├── pages/          reconcile.php, payments.php
-└── sql/            llx_bankconnect_{transaction,payment,account_mapping}.sql
+└── sql/            llx_bankconnect_{transaction,payment,account_mapping,bank_certificate}.sql
 
 tests/unit/         PHPUnit-tests + MockDoliDB
 .github/workflows/  CI: php -l + unit tests
@@ -124,8 +136,11 @@ $conf->global['BANKCONNECT_AI_TIMEOUT'] = 8;         // sekunder
 $conf->global['BANKCONNECT_RULE_DATE_WINDOW'] = 30;  // dage
 $conf->global['BANKCONNECT_RULE_AMOUNT_TOLERANCE'] = 0.05;
 
-// Secrets: sæt som miljøvariabler (IKKE i conf.php) - fail-closed
-// BANKCONNECT_SECRET_KEY, BANKCONNECT_MISTRAL_API_KEY_ENV m.fl.
+// Secrets: sæt som miljøvariabler (IKKE i conf.php) - fail-closed.
+// Mistral API-nøglen læses FØRST fra BANKCONNECT_MISTRAL_API_KEY i
+// process-miljøet (production secret boundary); conf-værdien ovenfor
+// er kun legacy-fallback. Admin-siden gemmer eller viser aldrig nøglen.
+// BANKCONNECT_SECRET_KEY, BANKCONNECT_MISTRAL_API_KEY m.fl.
 
 // Required before live TransferPayment. Controls the normative v3.7
 // transport-signature/encryption order: BANKDATA, NBS or BEC.
@@ -156,7 +171,11 @@ draft -> validated -> approved -> sent -> accepted/rejected/unknown
 - Certifikat-livscyklus: atomisk renewal, per-agreement serialisering,
   CSRF på onboarding.
 - Secret-håndtering via miljøvariabler; ingen secrets i DB eller logs
-  (redaction i logger).
+  (redaction i logger). `BankConnectLogger::write()` kalder altid
+  `sanitizeContext()`, så nøglenavne som `api_key` og `private_key`
+  aldrig lander i klartekst.
+- Bankcertifikater hentes automatisk fra banken under onboarding
+  (`getBankCertificate`) og lagres krypteret — ingen manuel konfiguration.
 - Respons-side: verificeret dekrypteringsgrænse før parsing.
 
 ## Tests
