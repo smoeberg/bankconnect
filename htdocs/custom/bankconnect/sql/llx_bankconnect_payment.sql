@@ -80,3 +80,9 @@ ALTER TABLE llx_bankconnect_agreement
     ADD COLUMN last_sync_at datetime NULL AFTER status,
     ADD COLUMN last_sync_summary varchar(255) NULL AFTER last_sync_at,
     ADD COLUMN last_sync_error text NULL AFTER last_sync_summary;
+
+-- Import cursor (task 23: date/cursor management + controlled re-fetch).
+-- NULL = fetch everything available; otherwise fetch only data changed after
+-- this timestamp. Only advanced after a fully successful agreement run.
+ALTER TABLE llx_bankconnect_agreement
+    ADD COLUMN import_cursor datetime NULL AFTER last_sync_error;

@@ -150,6 +150,29 @@ class AgreementStore
         return $obj ? (array) $obj : null;
     }
 
+    /** Current import cursor (NULL = fetch everything available). */
+    public function getImportCursor(int $agreementId): ?string
+    {
+        $sql = "SELECT import_cursor FROM llx_bankconnect_agreement WHERE rowid = ".(int) $agreementId;
+        $res = $this->db->query($sql);
+        if (!$res) {
+            return null;
+        }
+        $obj = $this->db->fetch_object($res);
+        return ($obj && $obj->import_cursor !== null) ? (string) $obj->import_cursor : null;
+    }
+
+    /** Advance the import cursor. Only call after a fully successful run. */
+    public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void
+    {
+        $sql = "UPDATE llx_bankconnect_agreement"
+             . " SET import_cursor = '".$this->db->escape($dateTimeUtc)."'"
+             . " WHERE rowid = ".(int) $agreementId;
+        if (!$this->db->query($sql)) {
+            throw new BankConnectException('advanceImportCursor failed: '.$this->db->lasterror());
+        }
+    }
+
     /** Record the outcome of a sync run for one agreement (task: status display). */
     public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void
     {
