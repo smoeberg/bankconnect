@@ -87,6 +87,8 @@ class BankConnectCertificateManager
         $functionId     = (string) ($opts['function_identification'] ?? '');
         $mainReg        = (string) ($opts['main_registration_number'] ?? '8079'); // test default Sydbank
         $dryRun         = !empty($opts['dry_run']);
+        $datacenter     = strtoupper(trim($opts['datacenter'] ?? 'BANKDATA'));
+        $environment    = $this->getEnvironmentFromEndpoint($opts['endpoint'] ?? '');
 
         if ($activationCode === '' || $functionId === '') {
             throw new BankConnectException('activation_code and function_identification are required');
@@ -108,6 +110,9 @@ class BankConnectCertificateManager
         $status = 'draft';
 
         if (!$dryRun) {
+            // Try to fetch bank certificate automatically if not already configured
+            $bankCertPem = $this->fetchBankCertificateIfNeeded($datacenter, $environment, $mainReg, $functionId);
+            
             $raw = $this->activateServiceAgreement($activationCode, $keypair['csr'], $header);
             $customerCertPem = $this->extractCustomerCertificatePem($raw, $keypair['private_key']);
             if ($customerCertPem === null || $customerCertPem === '') {
@@ -125,6 +130,7 @@ class BankConnectCertificateManager
                 'activation_code_b64'  => $actB64,
                 'customer_cert_pem'    => $customerCertPem,
                 'private_key_pem'      => $keypair['private_key'], // only when no store – caller must secure
+                'bank_certificate_pem' => $bankCertPem ?? null,
             ];
         }
 
@@ -368,6 +374,20 @@ class BankConnectCertificateManager
     }
 
     /**
+     * Determine environment from endpoint URL.
+     */
+    private function getEnvironmentFromEndpoint(string $endpoint): string
+    {
+        if (str_contains($endpoint, 'stest.bankconnect.dk')) {
+            return 'test';
+        }
+        if (str_contains($endpoint, 'bankconnectservices.dk')) {
+            return 'production';
+        }
+        return 'test';
+    }
+
+    /**
      * Load active customer private key (decrypted) for an agreement.
      */
     public function loadCustomerPrivateKey(int $agreementId): string
@@ -585,6 +605,41 @@ class BankConnectCertificateManager
         $to   = isset($parsed['validTo_time_t']) ? date('Y-m-d H:i:s', $parsed['validTo_time_t']) : null;
         return ['from' => $from, 'to' => $to];
     }
+
+
+    /**
+     * Fetch bank certificate automatically if not already available.
+     */
+    private function fetchBankCertificateIfNeeded(
+        string $datacenter,
+        string $environment,
+        string $mainReg,
+        string $functionId
+    ): ?string {
+        $g = (array) ($this->conf->global ?? []);
+        if (!empty($g['BANKCONNECT_BANK_CERTIFICATE'])) {
+            return $g['BANKCONNECT_BANK_CERTIFICATE'];
+        }
+        $envCert = getenv('BANKCONNECT_BANK_CERTIFICATE');
+        if ($envCert !== false && trim($envCert) !== '') {
+            return trim($envCert);
+        }
+        try {
+            $header = (new ServiceHeaderBuilder())
+                ->setOrganisation($mainReg, 'DK')
+                ->setFunctionIdentification($functionId)
+                ->build();
+            $raw = $this->getBankCertificate($header);
+            return $raw;
+        } catch (BankConnectException $e) {
+            $this->logger->warning('auto_fetch_bank_cert_failed', [
+                'datacenter' => $datacenter,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
+    }
+
 
     private function getEncryptionSecret(): string
     {

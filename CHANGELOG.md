@@ -1,3 +1,26 @@
+## 1.2.0 (unreleased)
+
+### Added
+- **PR #60: Automatic BankConnect bank certificate fetching** via `getBankCertificate`
+  SOAP call during onboarding. No manual certificate configuration required.
+- `BankCertificateService` for automatic certificate management with datacenter
+  selection (BANKDATA, NBS, BEC) and environment awareness (test/production).
+- `BankCertificateStore` for persistent, secure storage of bank certificates with
+  validity tracking and automatic refresh.
+- Support for different security orders: BEC uses RSA-1_5 encryption with
+  encrypt-then-sign, while BANKDATA/NBS use RSA-OAEP-MGF1P with sign-then-encrypt.
+- New database table `llx_bankconnect_bank_certificate` for certificate persistence.
+
+### Changed
+- Renamed configuration constant from `BANKCONNECT_BANK_*******` to
+  `BANKCONNECT_BANK_CERTIFICATE` for clarity and consistency.
+- Onboarding flow now automatically fetches bank certificate when not configured.
+
+### Fixed
+- Production endpoint now uses the official `bankconnectservices.dk` host.
+- Agreement-scoped clients infer the endpoint environment before applying the
+  fail-closed endpoint policy.
+
 ## 1.1.0 (unreleased)
 
 ### Added

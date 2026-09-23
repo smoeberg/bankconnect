@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__.'/BankConnectClient.php';
 require_once __DIR__.'/BankConnectCertificateManager.php';
+require_once __DIR__.'/BankCertificateService.php';
 
 /** Creates an agreement-scoped, certificate-backed BankConnect client. */
 class BankConnectClientFactory
