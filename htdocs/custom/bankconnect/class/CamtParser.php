@@ -103,7 +103,8 @@ class CamtParser
         $cp=$this->extractCounterparty($txDtls,$creditDebit);if($cp==='')$cp=$this->extractCounterparty($ntry,$creditDebit);
         $acct=(string)($this->first($txDtls,'.//*[local-name()="AcctSvcrRef"]')??'');if($acct==='')$acct=$ntryAcctSvcrRef;
         $e2e=(string)($this->first($txDtls,'.//*[local-name()="EndToEndId"]')??'');if($acct===''&&$e2e!=='')$acct=$e2e;
-        return $this->makeTx($date,$signed,$ccy,$text,$ref,$cp,$acct,$isReversal,false,$statementId,$transactionId);
+        $manual=$ref===''&&$cp==='';
+        return $this->makeTx($date,$signed,$ccy,$text,$ref,$cp,$acct,$isReversal,$manual,$statementId,$transactionId);
     }
 
     private function buildFromNtryOnly($ntry,string $date,string $creditDebit,float $amount,string $ccy,string $acct,bool $reversal,bool $manual,string $statementId,string $transactionId): BankTransaction {
@@ -111,6 +112,7 @@ class CamtParser
         $text=$this->collectUnstructured($ntry);if($text==='')$text=trim((string)($this->first($ntry,'./*[local-name()="AddtlNtryInf"]')??''));
         $ref=$this->extractStructuredReference($ntry);if($ref==='')$ref=$this->extractFallbackReference($text);
         $cp=$this->extractCounterparty($ntry,$creditDebit);
+        if($ref===''&&$cp==='')$manual=true;
         return $this->makeTx($date,$signed,$ccy,$text,$ref,$cp,$acct,$reversal,$manual,$statementId,$transactionId);
     }
 

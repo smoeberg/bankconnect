@@ -147,4 +147,20 @@ XML;
         $this->expectException(RuntimeException::class);
         (new CamtParser())->parse('');
     }
+    public function testTransactionWithoutReferenceAndCounterpartyRequiresManualReview(): void
+    {
+        $xml = <<<'XML'
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02">
+ <BkToCstmrStmt><Stmt><Id>ST-1</Id>
+  <Bal><Amt Ccy="DKK">0.00</Amt><CdtDbtInd>CRDT</CdtDbtInd></Bal>
+  <Ntry><Amt Ccy="DKK">75.00</Amt><CdtDbtInd>DBIT</CdtDbtInd>
+   <Sts>BOOK</Sts><BookgDt><Dt>2026-09-20</Dt></BookgDt></Ntry>
+ </Stmt></BkToCstmrStmt></Document>
+XML;
+        $txs = (new CamtParser())->parse($xml);
+        $this->assertNotEmpty($txs);
+        $this->assertTrue($txs[0]->requiresManualReview);
+        $this->assertSame('', $txs[0]->reference);
+        $this->assertSame('', $txs[0]->counterparty);
+    }
 }
