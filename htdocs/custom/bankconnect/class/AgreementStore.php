@@ -150,6 +150,25 @@ class AgreementStore
         return $obj ? (array) $obj : null;
     }
 
+    /** Record the outcome of a sync run for one agreement (task: status display). */
+    public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void
+    {
+        $summary = substr($summary, 0, 255);
+        $error = substr($error, 0, 65535);
+        if ($error !== '') {
+            $sql = "UPDATE llx_bankconnect_agreement"
+                 . " SET last_sync_at = NOW(), last_sync_summary = NULL, last_sync_error = '".$this->db->escape($error)."'"
+                 . " WHERE rowid = ".(int) $agreementId;
+        } else {
+            $sql = "UPDATE llx_bankconnect_agreement"
+                 . " SET last_sync_at = NOW(), last_sync_summary = '".$this->db->escape($summary)."', last_sync_error = NULL"
+                 . " WHERE rowid = ".(int) $agreementId;
+        }
+        if (!$this->db->query($sql)) {
+            throw new BankConnectException('recordSyncResult failed: '.$this->db->lasterror());
+        }
+    }
+
     public function getActiveCertificate(int $agreementId): ?array
     {
         $sql = "SELECT * FROM llx_bankconnect_certificate"

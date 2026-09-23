@@ -45,7 +45,12 @@ class BankConnectAutomaticImportService
 				$result['imported'] += $one['imported'];
 				$result['duplicates'] += $one['duplicates'];
 				$result['total'] += $one['total'];
+				$summary = $one['imported'].' imported, '.$one['duplicates'].' duplicates, '
+					.(isset($one['deferred_reversals']) ? $one['deferred_reversals'].' deferred reversals, ' : '')
+					.$one['total'].' total (camt.053/052/054)';
+				$this->agreements->recordSyncResult((int)$agreement['rowid'], $summary);
 			} catch (Throwable $e) {
+				$this->agreements->recordSyncResult((int)$agreement['rowid'], '', $e->getMessage());
 				$result['errors'][] = 'Agreement #'.(int)$agreement['rowid'].': '.$e->getMessage();
 			}
 		}

@@ -10,11 +10,16 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 	{
 		$agreements = new class extends AgreementStore {
 			public function __construct() {}
+			public array $syncResults = [];
 			public function getAgreement(int $id): ?array
 			{
 				return $id === 1
 					? ['rowid' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1']
 					: ['rowid' => 2, 'status' => 'draft', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC2'];
+			}
+			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void
+			{
+				$this->syncResults[] = [$agreementId, $summary, $error];
 			}
 		};
 		$mappings = new class extends BankAccountMappingStore {
@@ -74,5 +79,8 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		$this->assertSame(1004, $importer->calls[0][1]);
 		$this->assertSame($user, $importer->calls[0][3]);
 		$this->assertStringContainsString('camt.053.001.02', $client->header);
+		// The active agreement must have its sync status recorded, the draft one must not.
+		$this->assertCount(1, $agreements->syncResults, 'one status record per active agreement');
+		$this->assertSame([1, '6 imported, 3 duplicates, 0 deferred reversals, 9 total (camt.053/052/054)', ''], $agreements->syncResults[0]);
 	}
 }

@@ -74,3 +74,9 @@ CREATE TABLE IF NOT EXISTS llx_bankconnect_batch_line (
     INDEX idx_bc_batchline_batch (fk_batch),
     INDEX idx_bc_batchline_status (fk_batch, status)
 ) ENGINE=innodb;
+
+-- Sync status columns (task: show last sync, next run, imported count, errors)
+ALTER TABLE llx_bankconnect_agreement
+    ADD COLUMN last_sync_at datetime NULL AFTER status,
+    ADD COLUMN last_sync_summary varchar(255) NULL AFTER last_sync_at,
+    ADD COLUMN last_sync_error text NULL AFTER last_sync_summary;

@@ -86,3 +86,6 @@ BankConnectSyncNow=Synkronisér nu
 BankConnectSyncOk=Synkroniseret: importerede %s transaktioner (%s dubletter)
 BankConnectSyncPartial=Synkronisering fuldført med fejl
 BankConnectSyncFailed=BankConnect-synkronisering fejlede
+BankConnectLastSync=Sidste synkronisering
+BankConnectLastSyncFailed=Seneste synkronisering fejlede
+BankConnectNeverSynced=Endnu ikke synkroniseret

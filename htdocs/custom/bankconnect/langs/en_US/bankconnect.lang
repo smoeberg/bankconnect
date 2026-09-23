@@ -86,3 +86,6 @@ BankConnectSyncNow=Sync now
 BankConnectSyncOk=Synced: imported %s transactions (%s duplicates)
 BankConnectSyncPartial=Sync completed with errors
 BankConnectSyncFailed=BankConnect sync failed
+BankConnectLastSync=Last sync
+BankConnectLastSyncFailed=Last sync failed
+BankConnectNeverSynced=Never synced yet

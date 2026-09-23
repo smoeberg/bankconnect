@@ -171,6 +171,29 @@ if ($user->hasRight('bankconnect', 'write')) {
 	print '</form>';
 }
 if ($accountid) {
+	// Sync status card: last run, imported count / errors (task: show last sync status)
+	$agreementStore = new AgreementStore($db);
+	$mappingStore = new BankAccountMappingStore($db);
+	$agreement = null;
+	foreach ($agreementStore->listAgreements((int) $conf->entity) as $a) {
+		$mapping = $mappingStore->findByAgreement((int) $conf->entity, (int) $a['rowid']);
+		if ($mapping && (int)$mapping['fk_bank_account'] === $accountid) {
+			$agreement = $a;
+			break;
+		}
+	}
+	if ($agreement) {
+		print '<div class="bc-sync-status">';
+		if (!empty($agreement['last_sync_error'])) {
+			print '<span class="error">'.$langs->trans('BankConnectLastSyncFailed').': '.dol_escape_htmltag($agreement['last_sync_error']).'</span>';
+		} elseif (!empty($agreement['last_sync_at'])) {
+			print '<span class="ok">'.dol_escape_htmltag($langs->trans('BankConnectLastSync').': '.dol_print_date($agreement['last_sync_at'], 'dayhour').' — '.($agreement['last_sync_summary'] ?? '')).'</span>';
+		} else {
+			print '<span class="opacitymedium">'.$langs->trans('BankConnectNeverSynced').'</span>';
+		}
+		print '</div>';
+	}
+
 	print '<details class="bc-import"><summary>'.$langs->trans('BankConnectManualImport').'</summary>';
 	print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" enctype="multipart/form-data">';
 	print '<input type="hidden" name="token" value="'.newToken().'"><input type="hidden" name="action" value="import"><input type="hidden" name="account" value="'.$accountid.'">';
