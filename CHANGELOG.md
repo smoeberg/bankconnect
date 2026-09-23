@@ -1,6 +1,17 @@
 ## 1.2.0 (unreleased)
 
 ### Added
+- **PR #61: Security hardening**
+  - Mistral API-nøglen læses først fra miljøvariablen
+    `BANKCONNECT_MISTRAL_API_KEY` (production secret boundary); den gamle
+    conf-værdi er kun legacy-fallback.
+  - `BankConnectLogger` saniterer nu context ved hver skrivning, så
+    hemmeligheder aldrig logges i klartekst.
+  - Admin-siden gemmer eller echo'er aldrig API-nøglen.
+- Tre nye sikkerhedsregressionstests (header-sanitering, env-overrides-conf,
+  fail-closed ved manglende nøgle).
+
+### Added
 - **PR #60: Automatic BankConnect bank certificate fetching** via `getBankCertificate`
   SOAP call during onboarding. No manual certificate configuration required.
 - `BankCertificateService` for automatic certificate management with datacenter
