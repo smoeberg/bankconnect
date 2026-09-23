@@ -82,3 +82,7 @@ BankConnectTestConnection=Test forbindelse
 BankConnectLastTest=Seneste forbindelsestest
 BankConnectConnectionOk=Den signerede BankConnect-forbindelsestest lykkedes
 BankConnectConnectionFailed=BankConnect-forbindelsestesten fejlede
+BankConnectSyncNow=Synkronisér nu
+BankConnectSyncOk=Synkroniseret: importerede %s transaktioner (%s dubletter)
+BankConnectSyncPartial=Synkronisering fuldført med fejl
+BankConnectSyncFailed=BankConnect-synkronisering fejlede

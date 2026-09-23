@@ -82,3 +82,7 @@ BankConnectTestConnection=Test connection
 BankConnectLastTest=Last connection test
 BankConnectConnectionOk=The signed BankConnect connection test succeeded
 BankConnectConnectionFailed=The BankConnect connection test failed
+BankConnectSyncNow=Sync now
+BankConnectSyncOk=Synced: imported %s transactions (%s duplicates)
+BankConnectSyncPartial=Sync completed with errors
+BankConnectSyncFailed=BankConnect sync failed

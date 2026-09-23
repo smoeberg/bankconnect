@@ -14,6 +14,10 @@ require_once dol_buildpath('/bankconnect/class/ReconciliationWorkflowService.php
 require_once dol_buildpath('/bankconnect/class/DolibarrPaymentLinkGateway.php', 0);
 require_once dol_buildpath('/bankconnect/class/ApprovedMatchLinkService.php', 0);
 require_once dol_buildpath('/bankconnect/class/BankJournalHandoffService.php', 0);
+require_once dol_buildpath('/bankconnect/class/AgreementStore.php', 0);
+require_once dol_buildpath('/bankconnect/class/BankAccountMappingStore.php', 0);
+require_once dol_buildpath('/bankconnect/class/BankConnectAutomaticImportService.php', 0);
+require_once dol_buildpath('/bankconnect/class/BankConnectClientFactory.php', 0);
 
 if (!$user->hasRight('bankconnect', 'read')) {
 	accessforbidden();
@@ -24,7 +28,7 @@ $store = new BankConnectStore($db);
 $accountid = GETPOST('account', 'int') ?: 0;
 $action = GETPOST('action', 'alpha');
 $requestMethod = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
-$writeAction = in_array($action, ['import', 'match', 'approve', 'reject', 'defer', 'link'], true);
+$writeAction = in_array($action, ['import', 'sync', 'match', 'approve', 'reject', 'defer', 'link'], true);
 if ($writeAction) {
 	if ($requestMethod !== 'POST' || !checkToken()) {
 		accessforbidden();
@@ -78,6 +82,24 @@ if ($action === 'import' && $user->hasRight('bankconnect', 'write')) {
 			}
 		}
 	}
+ } elseif ($action === 'sync' && $user->hasRight('bankconnect', 'write')) {
+	try {
+		$syncService = new BankConnectAutomaticImportService(
+			new AgreementStore($db),
+			new BankAccountMappingStore($db),
+			new ImportService($store, null, new DolibarrBankEntryService($db)),
+			new BankConnectClientFactory()
+		);
+		$syncResult = $syncService->run((int)$conf->entity, $user);
+		$store->audit($user->id, 'sync', 'auto import: '.$syncResult['imported'].' new, '.$syncResult['duplicates'].' duplicates across '.$syncResult['agreements'].' agreement(s)');
+		if (!empty($syncResult['errors'])) {
+			setEventMessages($langs->trans('BankConnectSyncPartial').': '.implode(' — ', $syncResult['errors']), null, 'errors');
+		} else {
+			setEventMessages($langs->trans('BankConnectSyncOk', $syncResult['imported'], $syncResult['duplicates']), null);
+		}
+	} catch (Throwable $e) {
+		setEventMessages($langs->trans('BankConnectSyncFailed').': '.$e->getMessage(), null, 'errors');
+	 }
 } elseif ($action === 'match' && $user->hasRight('bankconnect', 'write')) {
 	$engine = new ReconciliationEngine($conf);
 	$reconciliation = new ReconciliationService($engine, $store);
@@ -142,6 +164,12 @@ foreach ($accounts as $account) {
 	print '<option value="'.(int)$account->rowid.'"'.($accountid === (int)$account->rowid ? ' selected' : '').'>'.dol_escape_htmltag($account->label).'</option>';
 }
 print '</select></label></form>';
+if ($user->hasRight('bankconnect', 'write')) {
+	print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" class="inlineblock">';
+	print '<input type="hidden" name="token" value="'.newToken().'"><input type="hidden" name="action" value="sync"><input type="hidden" name="account" value="'.$accountid.'">';
+	print '<input type="submit" class="button" value="'.$langs->trans('BankConnectSyncNow').'">';
+	print '</form>';
+}
 if ($accountid) {
 	print '<details class="bc-import"><summary>'.$langs->trans('BankConnectManualImport').'</summary>';
 	print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" enctype="multipart/form-data">';
