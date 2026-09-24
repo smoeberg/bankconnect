@@ -18,6 +18,7 @@ require_once __DIR__.'/BankConnectLogger.php';
 require_once __DIR__.'/AgreementStore.php';
 require_once __DIR__.'/ServiceHeaderBuilder.php';
 require_once __DIR__.'/BankConnectSecretStore.php';
+require_once __DIR__.'/BankCertificateStore.php';
 
 if (!class_exists('Conf')) {
     class Conf
@@ -41,17 +42,20 @@ class BankConnectCertificateManager
     private BankConnectClient $client;
     private BankConnectLogger $logger;
     private ?AgreementStore $store;
+    private ?BankCertificateStore $bankCertificateStore;
 
     public function __construct(
         Conf $conf,
         ?BankConnectClient $client = null,
         ?BankConnectLogger $logger = null,
-        ?AgreementStore $store = null
+        ?AgreementStore $store = null,
+        ?BankCertificateStore $bankCertificateStore = null
     ) {
         $this->conf   = $conf;
         $this->client = $client ?? new BankConnectClient($conf);
         $this->logger = $logger ?? new BankConnectLogger();
         $this->store  = $store;
+        $this->bankCertificateStore = $bankCertificateStore;
     }
 
     public function setStore(AgreementStore $store): void
@@ -118,6 +122,9 @@ class BankConnectCertificateManager
                     .'Sæt BANKCONNECT_BANK_CERTIFICATE i miljø eller konfiguration, eller kontrollér datacenter/mainReg.'
                 );
             }
+            // getBankCertificate is deliberately unsigned, but activation must
+            // immediately encrypt with the certificate returned by that call.
+            $this->client->setBankCertificate($bankCertPem);
             
             $raw = $this->activateServiceAgreement($activationCode, $keypair['csr'], $header);
             $customerCertPem = $this->extractCustomerCertificatePem($raw, $keypair['private_key']);
@@ -630,13 +637,31 @@ class BankConnectCertificateManager
         if (!empty($g['BANKCONNECT_BANK_CERTIFICATE'])) {
             return $g['BANKCONNECT_BANK_CERTIFICATE'];
         }
+        if ($this->bankCertificateStore !== null) {
+            $cached = $this->bankCertificateStore->getBankCertificate($datacenter, $environment);
+            if ($cached !== null
+                && $this->bankCertificateStore->isCertificateValid((string)$cached['certificate_pem'])) {
+                return (string)$cached['certificate_pem'];
+            }
+        }
         try {
             $header = (new ServiceHeaderBuilder())
                 ->setOrganisation($mainReg, 'DK')
                 ->setFunctionIdentification($functionId)
                 ->build();
-            $raw = $this->getBankCertificate($header);
-            return $raw;
+            $certificatePem = $this->getBankCertificate($header);
+            if ($this->bankCertificateStore !== null) {
+                $meta = $this->bankCertificateStore->validateCertificatePem($certificatePem);
+                $this->bankCertificateStore->saveBankCertificate([
+                    'datacenter' => $datacenter,
+                    'environment' => $environment,
+                    'certificate_pem' => $certificatePem,
+                    'fingerprint_sha256' => $meta['fingerprint_sha256'],
+                    'valid_from' => $meta['valid_from'],
+                    'valid_to' => $meta['valid_to'],
+                ]);
+            }
+            return $certificatePem;
         } catch (BankConnectException $e) {
             $this->logger->warning('auto_fetch_bank_cert_failed', [
                 'datacenter' => $datacenter,

@@ -65,6 +65,17 @@ class BankConnectClient
         }
     }
 
+    /** Install the validated bank certificate used to encrypt subsequent calls. */
+    public function setBankCertificate(string $certificatePem): void
+    {
+        $certificatePem = trim($certificatePem);
+        if ($certificatePem === '') {
+            throw new BankConnectException('BankConnect bank certificate is empty');
+        }
+        $this->conf->global['BANKCONNECT_BANK_CERTIFICATE'] = $certificatePem;
+        $this->xmlSecurity?->setBankCertificate($certificatePem);
+    }
+
     public function call(string $operation, string $bodyXml, array $context = []): string
     {
         $start = microtime(true);

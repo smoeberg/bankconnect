@@ -2,17 +2,20 @@
 require_once __DIR__.'/BankConnectClient.php';
 require_once __DIR__.'/BankConnectCertificateManager.php';
 require_once __DIR__.'/BankCertificateService.php';
+require_once __DIR__.'/BankCertificateStore.php';
 
 /** Creates an agreement-scoped, certificate-backed BankConnect client. */
 class BankConnectClientFactory
 {
 	private $conf;
 	private AgreementStore $agreements;
+	private ?BankCertificateStore $bankCertificates;
 
-	public function __construct($conf, AgreementStore $agreements)
+	public function __construct($conf, AgreementStore $agreements, ?BankCertificateStore $bankCertificates = null)
 	{
 		$this->conf = $conf;
 		$this->agreements = $agreements;
+		$this->bankCertificates = $bankCertificates;
 	}
 
 	/** @param array<string,mixed> $agreement */
@@ -39,6 +42,20 @@ class BankConnectClientFactory
 			if ($environmentCertificate !== false && trim($environmentCertificate) !== '') {
 				$global['BANKCONNECT_BANK_CERTIFICATE'] = $environmentCertificate;
 			}
+		}
+		if (empty($global['BANKCONNECT_BANK_CERTIFICATE']) && $this->bankCertificates !== null) {
+			$environment = (string)($global['BANKCONNECT_ENVIRONMENT'] ?? 'test');
+			$stored = $this->bankCertificates->getBankCertificate(
+				(string)($global['BANKCONNECT_DATACENTER'] ?? 'BANKDATA'),
+				$environment
+			);
+			if ($stored !== null
+				&& $this->bankCertificates->isCertificateValid((string)$stored['certificate_pem'])) {
+				$global['BANKCONNECT_BANK_CERTIFICATE'] = (string)$stored['certificate_pem'];
+			}
+		}
+		if (empty($global['BANKCONNECT_BANK_CERTIFICATE'])) {
+			throw new BankConnectException('BankConnect agreement has no valid bank certificate for its datacenter and environment');
 		}
 
 		$clientConf = new Conf();
