@@ -23,19 +23,21 @@ class BankConnectStore
             throw new RuntimeException('BankConnect: a valid bank account is required for CAMT import');
         }
 
-        $hash = !empty($t['hash'])
-            ? (string)$t['hash']
-            : hash('sha256', implode('|', [
-                $fkBankAccount,
-                $t['statement_id'] ?? '',
-                $t['transaction_id'] ?? '',
-                $t['date'] ?? '',
-                $t['amount'] ?? '',
-                $t['reference'] ?? '',
-                $t['counterparty'] ?? '',
-                $t['text'] ?? '',
-                $t['acctSvcrRef'] ?? '',
-            ]));
+        // A statement is a delivery envelope, not the identity of a bank
+        // transaction. The same movement can be delivered first in CAMT.054
+        // and later in CAMT.053 with different statement ids. Conversely, two
+        // Dolibarr bank accounts may legitimately receive the same bank-side
+        // reference. Build the persistence identity here, where the account is
+        // known, instead of trusting the parser's document-scoped hash.
+        $hash = $this->canonicalHash($t, $fkBankAccount);
+
+        // Rows imported by older releases have a statement-scoped hash. Find
+        // those by the strongest bank-provided reference before inserting the
+        // new canonical hash, so upgrading cannot duplicate an existing entry.
+        $legacy = $this->findByStableReference($t, $fkBankAccount);
+        if ($legacy !== null) {
+            return $this->transactionResult($legacy, true);
+        }
 
         $manualReview = !empty($t['requiresManualReview']) ? 1 : 0;
         $isReversal = !empty($t['isReversal']) ? 1 : 0;
@@ -68,15 +70,62 @@ class BankConnectStore
         $affected = $affectedRes ? $this->db->fetch_object($affectedRes) : false;
         $duplicate = $affected && (int)$affected->affected === 0;
 
-        $res = $this->db->query("SELECT rowid, fk_bankentry, bank_entry_state FROM llx_bankconnect_transaction WHERE hash='".$this->db->escape($hash)."'");
+        $res = $this->db->query("SELECT rowid, fk_bankentry, bank_entry_state FROM llx_bankconnect_transaction WHERE hash='".$this->db->escape($hash)."' AND fk_bank_account=".(int)$fkBankAccount);
         if (!$res || !($obj=$this->db->fetch_object($res))) {
             throw new RuntimeException('BankConnect: transaction upsert succeeded but row cannot be reloaded');
         }
+        return $this->transactionResult($obj, $duplicate);
+    }
+
+    /** @param array<string,mixed> $t */
+    private function canonicalHash(array $t, int $fkBankAccount): string
+    {
+        $accountReference = trim((string)($t['acctSvcrRef'] ?? ''));
+        if ($accountReference !== '' && strtoupper($accountReference) !== 'NOTPROVIDED') {
+            $identity = 'account-service-reference|'.$accountReference;
+        } else {
+            $transactionId = trim((string)($t['transaction_id'] ?? ''));
+            $isSyntheticId = $transactionId === ''
+                || preg_match('/^(entry:|:\d+$)/', $transactionId) === 1;
+            $identity = !$isSyntheticId
+                ? 'transaction-id|'.$transactionId
+                : 'fingerprint|'.implode('|', [
+                    (string)($t['date'] ?? ''),
+                    sprintf('%.2F', (float)($t['amount'] ?? 0)),
+                    strtoupper((string)($t['currency'] ?? 'DKK')),
+                    trim((string)($t['reference'] ?? '')),
+                    trim((string)($t['counterparty'] ?? '')),
+                    trim((string)($t['text'] ?? '')),
+                ]);
+        }
+
+        return hash('sha256', 'bank-account|'.$fkBankAccount.'|'.$identity);
+    }
+
+    /** @param array<string,mixed> $t */
+    private function findByStableReference(array $t, int $fkBankAccount): ?object
+    {
+        $accountReference = trim((string)($t['acctSvcrRef'] ?? ''));
+        if ($accountReference === '' || strtoupper($accountReference) === 'NOTPROVIDED') {
+            return null;
+        }
+
+        $sql = "SELECT rowid, fk_bankentry, bank_entry_state FROM llx_bankconnect_transaction"
+            ." WHERE fk_bank_account=".(int)$fkBankAccount
+            ." AND acct_svcr_ref='".$this->db->escape($accountReference)."' LIMIT 1";
+        $res = $this->db->query($sql);
+        $row = $res ? $this->db->fetch_object($res) : false;
+        return $row ?: null;
+    }
+
+    /** @return array{rowid:int,duplicate:bool,fk_bankentry:int,bank_entry_state:string} */
+    private function transactionResult(object $row, bool $duplicate): array
+    {
         return [
-            'rowid' => (int)$obj->rowid,
+            'rowid' => (int)$row->rowid,
             'duplicate' => $duplicate,
-            'fk_bankentry' => (int)($obj->fk_bankentry ?? 0),
-            'bank_entry_state' => (string)($obj->bank_entry_state ?? 'pending'),
+            'fk_bankentry' => (int)($row->fk_bankentry ?? 0),
+            'bank_entry_state' => (string)($row->bank_entry_state ?? 'pending'),
         ];
     }
 

@@ -297,6 +297,13 @@ class MockDoliDB
 		return $this->nextId['llx_bankconnect_transaction'];
 	}
 
+	public function seedLegacyTransaction(string $hash, string $accountReference, string $date, float $amount, int $account = 1): int
+	{
+		$this->insert('llx_bankconnect_transaction', 'fk_bank_account, hash, acct_svcr_ref, tx_date, amount, currency, reference, counterparty, cam_file, state, created_at',
+			"$account, '".addslashes($hash)."', '".addslashes($accountReference)."', '$date', $amount, 'DKK', 'legacy', 'Legacy', 'legacy.xml', 'unmatched', NOW()");
+		return $this->nextId['llx_bankconnect_transaction'];
+	}
+
 	public function seedTransaction(string $date, float $amount, string $ref, string $counterparty, int $account = 1): int
 	{
 		$this->insert('llx_bankconnect_transaction', 'fk_bank_account, hash, tx_date, amount, currency, reference, counterparty, cam_file, state, created_at',
