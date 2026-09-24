@@ -12,10 +12,12 @@ require_once __DIR__.'/BankConnectException.php';
 class BankCertificateStore
 {
     private $db;
+    private int $entity;
 
-    public function __construct($db)
+    public function __construct($db, ?int $entity = null)
     {
         $this->db = $db;
+        $this->entity = max(1, $entity ?? (int)($db->entity ?? 1));
     }
 
     /**
@@ -49,7 +51,7 @@ class BankCertificateStore
                  . " valid_from = $from,"
                  . " valid_to = $to,"
                  . " date_updated = NOW()"
-                 . " WHERE datacenter = '$datacenter' AND environment = '$environment' AND entity = ".(int)$this->db->entity;
+                 . " WHERE datacenter = '$datacenter' AND environment = '$environment' AND entity = ".$this->entity;
             
             if (!$this->db->query($sql)) {
                 throw new BankConnectException('Update bank certificate failed: '.$this->db->lasterror());
@@ -61,7 +63,7 @@ class BankCertificateStore
         $sql = "INSERT INTO llx_bankconnect_bank_certificate"
              . " (entity, datacenter, environment, certificate_pem, fingerprint_sha256, valid_from, valid_to, date_creation)"
              . " VALUES ("
-             . (int)$this->db->entity.", '$datacenter', '$environment', '$pem', $fingerprint, $from, $to, NOW())";
+             . $this->entity.", '$datacenter', '$environment', '$pem', $fingerprint, $from, $to, NOW())";
 
         if (!$this->db->query($sql)) {
             throw new BankConnectException('Save bank certificate failed: '.$this->db->lasterror());
@@ -80,7 +82,7 @@ class BankCertificateStore
         $environment = $this->db->escape($environment);
         
         $sql = "SELECT * FROM llx_bankconnect_bank_certificate"
-             . " WHERE datacenter = '$datacenter' AND environment = '$environment' AND entity = ".(int)$this->db->entity
+             . " WHERE datacenter = '$datacenter' AND environment = '$environment' AND entity = ".$this->entity
              . " ORDER BY rowid DESC LIMIT 1";
         
         $res = $this->db->query($sql);
@@ -117,7 +119,7 @@ class BankCertificateStore
      */
     public function listBankCertificates(int $entity = null): array
     {
-        $entity = $entity ?? (int)$this->db->entity;
+        $entity = $entity ?? $this->entity;
         $sql = "SELECT * FROM llx_bankconnect_bank_certificate WHERE entity = ".(int)$entity." ORDER BY datacenter, environment, rowid DESC";
         $res = $this->db->query($sql);
         $out = [];

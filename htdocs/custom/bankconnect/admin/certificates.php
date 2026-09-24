@@ -11,6 +11,7 @@ require_once dol_buildpath('/bankconnect/class/BankConnectException.php', 0);
 require_once dol_buildpath('/bankconnect/class/BankConnectClientFactory.php', 0);
 require_once dol_buildpath('/bankconnect/class/BankConnectConnectionTestService.php', 0);
 require_once dol_buildpath('/bankconnect/class/BankConnectEndpointPolicy.php', 0);
+require_once dol_buildpath('/bankconnect/class/BankCertificateStore.php', 0);
 
 if (!$user->admin) {
     accessforbidden();
@@ -64,7 +65,8 @@ if ($action === 'onboard') {
 			// and fail with a clear error if it cannot obtain one.
 		}
 
-        $mgr = new BankConnectCertificateManager($onboardConf, null, null, $store);
+			$bankCertificateStore = new BankCertificateStore($db, (int)$conf->entity);
+			$mgr = new BankConnectCertificateManager($onboardConf, null, null, $store, $bankCertificateStore);
         $result = $mgr->onboard([
             'activation_code'            => $activation,
             'function_identification'    => $functionId,
@@ -108,7 +110,7 @@ if ($action === 'onboard') {
     }
 } elseif ($action === 'test_connection') {
 	try {
-		$tester = new BankConnectConnectionTestService($store, $mappingStore, new BankConnectClientFactory($conf, $store));
+			$tester = new BankConnectConnectionTestService($store, $mappingStore, new BankConnectClientFactory($conf, $store, new BankCertificateStore($db, (int)$conf->entity)));
 		$tester->test(GETPOSTINT('agreement_id'), (int)$conf->entity);
 		setEventMessages($langs->trans('BankConnectConnectionOk'), null);
 	} catch (Throwable $e) {

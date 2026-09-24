@@ -18,6 +18,7 @@ require_once dol_buildpath('/bankconnect/class/AgreementStore.php', 0);
 require_once dol_buildpath('/bankconnect/class/BankAccountMappingStore.php', 0);
 require_once dol_buildpath('/bankconnect/class/BankConnectAutomaticImportService.php', 0);
 require_once dol_buildpath('/bankconnect/class/BankConnectClientFactory.php', 0);
+require_once dol_buildpath('/bankconnect/class/BankCertificateStore.php', 0);
 
 if (!$user->hasRight('bankconnect', 'read')) {
 	accessforbidden();
@@ -84,11 +85,12 @@ if ($action === 'import' && $user->hasRight('bankconnect', 'write')) {
 	}
  } elseif ($action === 'sync' && $user->hasRight('bankconnect', 'write')) {
 	try {
+		$syncAgreements = new AgreementStore($db);
 		$syncService = new BankConnectAutomaticImportService(
-			new AgreementStore($db),
+			$syncAgreements,
 			new BankAccountMappingStore($db),
 			new ImportService($store, null, new DolibarrBankEntryService($db)),
-			new BankConnectClientFactory()
+			new BankConnectClientFactory($conf, $syncAgreements, new BankCertificateStore($db, (int)$conf->entity))
 		);
 		$syncResult = $syncService->run((int)$conf->entity, $user);
 		$store->audit($user->id, 'sync', 'auto import: '.$syncResult['imported'].' new, '.$syncResult['duplicates'].' duplicates across '.$syncResult['agreements'].' agreement(s)');

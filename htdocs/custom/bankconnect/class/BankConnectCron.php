@@ -2,6 +2,7 @@
 require_once __DIR__.'/BankConnectAutomaticImportService.php';
 require_once __DIR__.'/BankConnectStore.php';
 require_once __DIR__.'/DolibarrBankEntryService.php';
+require_once __DIR__.'/BankCertificateStore.php';
 
 /** Dolibarr scheduled-job entry point for automatic statement import. */
 class BankConnectCron
@@ -28,7 +29,7 @@ class BankConnectCron
 				$agreements,
 				$mappings,
 				$importer,
-				new BankConnectClientFactory($conf, $agreements)
+					new BankConnectClientFactory($conf, $agreements, new BankCertificateStore($db, (int)$conf->entity))
 			);
 			$result = $service->run((int)$conf->entity, $user);
 			$this->errors = $result['errors'];

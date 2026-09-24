@@ -157,6 +157,41 @@ class CertificateManagerTest extends TestCase
         $this->assertSame('0010888100007', $agr['bank_connect_id']);
     }
 
+    public function testOnboardingInstallsAndStoresFetchedBankCertificateBeforeActivation(): void
+    {
+        $key = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        $this->assertNotFalse($key);
+        $csr = openssl_csr_new(['commonName' => 'bankconnect-bank'], $key, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($csr);
+        $certificate = openssl_csr_sign($csr, null, $key, 365, ['digest_alg' => 'sha256']);
+        $this->assertNotFalse($certificate);
+        openssl_x509_export($certificate, $bankCertificatePem);
+
+        $db = new MockDoliDB();
+        $db->tables['llx_bankconnect_bank_certificate'] = [];
+        $bankStore = new BankCertificateStore($db, 1);
+        $client = new CertificateBootstrapProbeClient($this->conf, $bankCertificatePem);
+        $manager = new BankConnectCertificateManager($this->conf, $client, null, null, $bankStore);
+
+        try {
+            $manager->onboard([
+                'activation_code' => '1234-5678-9012',
+                'function_identification' => '0010888100007',
+                'main_registration_number' => '8079',
+                'datacenter' => 'BANKDATA',
+                'endpoint' => 'https://stest.bankconnect.dk/2019/04/04/services/CorporateService',
+            ]);
+            $this->fail('The probe client must stop after proving activation was reached');
+        } catch (BankConnectException $e) {
+            $this->assertSame('activation probe reached', $e->getMessage());
+        }
+
+        $this->assertTrue($client->bankCertificateInstalled);
+        $stored = $bankStore->getBankCertificate('BANKDATA', 'test');
+        $this->assertNotNull($stored);
+        $this->assertSame(rtrim($bankCertificatePem), rtrim((string)$stored['certificate_pem']));
+    }
+
     public function testCertificateSaveLocksAgreementBeforeActivation(): void
     {
         $db = new MockDoliDB();
@@ -443,5 +478,36 @@ class RenewalMismatchClient extends BankConnectClient
     public function renewCustomerCertificate(string $payloadXml): string
     {
         return $this->response;
+    }
+}
+
+class CertificateBootstrapProbeClient extends BankConnectClient
+{
+    public bool $bankCertificateInstalled = false;
+    private string $bankCertificatePem;
+
+    public function __construct(Conf $conf, string $bankCertificatePem)
+    {
+        parent::__construct($conf);
+        $this->bankCertificatePem = $bankCertificatePem;
+    }
+
+    public function getBankCertificate(string $activationHeaderXml): string
+    {
+        return $this->bankCertificatePem;
+    }
+
+    public function setBankCertificate(string $certificatePem): void
+    {
+        parent::setBankCertificate($certificatePem);
+        $this->bankCertificateInstalled = true;
+    }
+
+    public function activateServiceAgreement(string $payloadXml): string
+    {
+        if (!$this->bankCertificateInstalled) {
+            throw new BankConnectException('activation attempted without a bank certificate');
+        }
+        throw new BankConnectException('activation probe reached');
     }
 }
