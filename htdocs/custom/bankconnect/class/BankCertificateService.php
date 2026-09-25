@@ -131,23 +131,23 @@ class BankCertificateService
             throw new BankConnectException('No certificate found in getBankCertificate response');
         }
 
-        // Validate the certificate
-        $certificatePem = $this->certManager->validateCertificatePem($pem[0]);
+        // Responses may contain an intermediate before the bank leaf.
+        $certificatePem = $this->certManager->selectBankCertificatePem($pem);
 
         // Store the certificate for future use
         if ($this->bankCertStore !== null) {
-            $meta = $this->bankCertStore->validateCertificatePem($pem[0]);
+            $meta = $this->bankCertStore->validateCertificatePem($certificatePem);
             $this->bankCertStore->saveBankCertificate([
                 'datacenter' => $datacenter,
                 'environment' => $environment,
-                'certificate_pem' => $pem[0],
+                'certificate_pem' => $certificatePem,
                 'fingerprint_sha256' => $meta['fingerprint_sha256'],
                 'valid_from' => $meta['valid_from'],
                 'valid_to' => $meta['valid_to'],
             ]);
         }
 
-        return $pem[0];
+        return $certificatePem;
     }
 
     /**
