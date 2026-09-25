@@ -395,4 +395,53 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		$this->assertCount(1, $result['errors']);
 		$this->assertStringContainsString('without a CAMT document', $result['errors'][0]);
 	}
+
+	public function testEmptyCustomerStatementCompletesWithoutBankEntries(): void
+	{
+		$agreements = new class extends AgreementStore {
+			public int $advanced = 0;
+			public function __construct() {}
+			public function getAgreement(int $id): ?array { return ['rowid' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1']; }
+			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void {}
+			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void { $this->advanced++; }
+		};
+		$mappings = new class extends BankAccountMappingStore {
+			public function __construct() {}
+			public function listMappings(int $entity): array { return [['fk_agreement' => 1, 'fk_bank_account' => 1004]]; }
+		};
+		$importer = new class extends ImportService {
+			public int $calls = 0;
+			public function __construct() {}
+			public function import(string $xml, int $fkBankAccount = 0, string $sourceFile = 'import', $user = null): array
+			{
+				$this->calls++;
+				return ['imported' => 1, 'duplicates' => 0, 'total' => 1];
+			}
+		};
+		$client = new class extends BankConnectClient {
+			public int $statements = 0;
+			public function __construct() {}
+			public function getCustomerStatement(string $serviceHeaderXml): string
+			{
+				$this->statements++;
+				return '<Envelope><Body><getCustomerStatementResponse/></Body></Envelope>';
+			}
+			public function getCustomerAccountReport(string $serviceHeaderXml): string { return '<Envelope><Body><getCustomerAccountReportResponse/></Body></Envelope>'; }
+			public function getDebitCreditNotification(string $serviceHeaderXml): string { return '<Envelope><Body><getDebitCreditNotificationResponse/></Body></Envelope>'; }
+		};
+		$clients = new class($client) extends BankConnectClientFactory {
+			private BankConnectClient $client;
+			public function __construct(BankConnectClient $client) { $this->client = $client; }
+			public function create(array $agreement): BankConnectClient { return $this->client; }
+		};
+
+		$result = (new BankConnectAutomaticImportService($agreements, $mappings, $importer, $clients))
+			->run(1, (object)['id' => 1]);
+
+		$this->assertSame([], $result['errors']);
+		$this->assertSame(0, $result['total']);
+		$this->assertSame(0, $importer->calls);
+		$this->assertSame(1, $client->statements);
+		$this->assertSame(1, $agreements->advanced);
+	}
 }
