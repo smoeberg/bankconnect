@@ -159,13 +159,7 @@ class CertificateManagerTest extends TestCase
 
     public function testOnboardingInstallsAndStoresFetchedBankCertificateBeforeActivation(): void
     {
-        $key = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
-        $this->assertNotFalse($key);
-        $csr = openssl_csr_new(['commonName' => 'bankconnect-bank'], $key, ['digest_alg' => 'sha256']);
-        $this->assertNotFalse($csr);
-        $certificate = openssl_csr_sign($csr, null, $key, 365, ['digest_alg' => 'sha256']);
-        $this->assertNotFalse($certificate);
-        openssl_x509_export($certificate, $bankCertificatePem);
+        [, $bankCertificatePem] = $this->createBankCertificateChain();
 
         $db = new MockDoliDB();
         $db->tables['llx_bankconnect_bank_certificate'] = [];
