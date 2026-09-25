@@ -95,7 +95,7 @@ final class BankConnectResponseSecurityTest extends TestCase
         return $doc->saveXML();
     }
 
-    private function activationResponse(): string
+    private function activationResponse(string $operationName = 'activateServiceAgreementResponse'): string
     {
         preg_match('/-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----/s', $this->cert, $matches);
         $certificateBase64 = preg_replace('/\s+/', '', $matches[1]);
@@ -109,7 +109,7 @@ final class BankConnectResponseSecurityTest extends TestCase
         $envelope->appendChild($doc->createElementNS($soap, 'soap:Header'));
         $body = $doc->createElementNS($soap, 'soap:Body');
         $envelope->appendChild($body);
-        $response = $doc->createElementNS($bc, 'bc:activateServiceAgreementResponse');
+        $response = $doc->createElementNS($bc, 'bc:'.$operationName);
         $body->appendChild($response);
         $message = $doc->createElementNS($bc, 'bc:corporateMessage');
         $message->setAttribute('id', 'Sign-activation-test');
@@ -182,6 +182,39 @@ final class BankConnectResponseSecurityTest extends TestCase
         $this->expectException(BankConnectException::class);
         $this->expectExceptionMessage('not trusted');
         (new BankConnectResponseSecurity($conf))->verifyBusinessSignature($this->activationResponse(), 'activateServiceAgreementResponse');
+    }
+
+    public function testGetResponseRequiresBusinessSignatureWhenItHasContent(): void
+    {
+        $response = $this->activationResponse('getCustomerStatementResponse');
+        $this->assertSame($response, $this->security()->verifyBusinessSignature($response, 'getCustomerStatementResponse', true));
+        $this->expectException(BankConnectException::class);
+        $this->expectExceptionMessage('digest verification failed');
+        $this->security()->verifyBusinessSignature(str_replace('approval', 'tampered', $response), 'getCustomerStatementResponse', true);
+    }
+
+    public function testEmptyGetResponseCanOmitBusinessMessageAndSignature(): void
+    {
+        $doc = new DOMDocument();
+        $this->assertTrue($doc->loadXML($this->activationResponse('getCustomerStatementResponse'), LIBXML_NONET));
+        $response = $doc->getElementsByTagNameNS('http://bankconnect.dk/schema/2014', 'getCustomerStatementResponse')->item(0);
+        while ($response->firstChild) {
+            $response->removeChild($response->firstChild);
+        }
+        $xml = $doc->saveXML();
+        $this->assertSame($xml, $this->security()->verifyBusinessSignature($xml, 'getCustomerStatementResponse', true));
+        $this->expectException(BankConnectException::class);
+        $this->security()->verifyBusinessSignature($xml, 'activateServiceAgreementResponse');
+    }
+
+    public function testNonEmptyGetResponseRejectsMissingBusinessSignature(): void
+    {
+        $doc = new DOMDocument();
+        $this->assertTrue($doc->loadXML($this->activationResponse('getCustomerStatementResponse'), LIBXML_NONET));
+        $signature = $doc->getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#', 'Signature')->item(0);
+        $signature->parentNode->removeChild($signature);
+        $this->expectException(BankConnectException::class);
+        $this->security()->verifyBusinessSignature($doc->saveXML(), 'getCustomerStatementResponse', true);
     }
 
     private function encryptedResponse(string $payloadXml = '', bool $tamper = false): string
