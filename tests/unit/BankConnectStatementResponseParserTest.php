@@ -39,4 +39,24 @@ class BankConnectStatementResponseParserTest extends TestCase
 		$content = base64_encode($this->camt);
 		(new BankConnectStatementResponseParser())->extract('<Envelope><content>'.$content.'</content><content>'.$content.'</content></Envelope>');
 	}
+
+	public function testOptionalExtractionAllowsStructurallyEmptyResponse(): void
+	{
+		$result = (new BankConnectStatementResponseParser())->extractOptional('<Envelope><Body><content></content></Body></Envelope>');
+		$this->assertNull($result);
+	}
+
+	public function testOptionalExtractionRejectsMalformedResponse(): void
+	{
+		$this->expectException(BankConnectException::class);
+		$this->expectExceptionMessage('malformed XML');
+		(new BankConnectStatementResponseParser())->extractOptional('<Envelope>');
+	}
+
+	public function testOptionalExtractionRejectsNonEmptyInvalidPayload(): void
+	{
+		$this->expectException(BankConnectException::class);
+		$this->expectExceptionMessage('no CAMT');
+		(new BankConnectStatementResponseParser())->extractOptional('<Envelope><content>not-a-camt-document</content></Envelope>');
+	}
 }

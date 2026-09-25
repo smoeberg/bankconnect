@@ -2,16 +2,33 @@
 /** Extracts exactly one ISO 20022 CAMT document from a BankConnect SOAP response. */
 class BankConnectStatementResponseParser
 {
+	/**
+	 * Extract a CAMT document when the operation returned one.
+	 *
+	 * A structurally valid response with no non-empty content is the only case
+	 * treated as "no data". Invalid or ambiguous payloads still fail closed.
+	 */
+	public function extractOptional(string $responseXml): ?string
+	{
+		$document = $this->loadResponse($responseXml);
+		$xpath = new DOMXPath($document);
+		$direct = $xpath->query('//*[local-name()="Document" and starts-with(namespace-uri(), "urn:iso:std:iso:20022:tech:xsd:camt.")]');
+		if ($direct && $direct->length > 0) {
+			return $this->extract($responseXml);
+		}
+
+		$contentNodes = $xpath->query('//*[local-name()="content"]');
+		foreach ($contentNodes ?: [] as $contentNode) {
+			if (trim((string)$contentNode->textContent) !== '') {
+				return $this->extract($responseXml);
+			}
+		}
+		return null;
+	}
+
 	public function extract(string $responseXml): string
 	{
-		$document = new DOMDocument();
-		$previous = libxml_use_internal_errors(true);
-		$loaded = $document->loadXML($responseXml, LIBXML_NONET | LIBXML_NOBLANKS);
-		libxml_clear_errors();
-		libxml_use_internal_errors($previous);
-		if (!$loaded) {
-			throw new BankConnectException('BankConnect statement response is malformed XML');
-		}
+		$document = $this->loadResponse($responseXml);
 
 		$xpath = new DOMXPath($document);
 		$direct = $xpath->query('//*[local-name()="Document" and starts-with(namespace-uri(), "urn:iso:std:iso:20022:tech:xsd:camt.")]');
@@ -50,6 +67,19 @@ class BankConnectStatementResponseParser
 				: 'BankConnect response contains multiple CAMT statements');
 		}
 		return $candidates[0];
+	}
+
+	private function loadResponse(string $responseXml): DOMDocument
+	{
+		$document = new DOMDocument();
+		$previous = libxml_use_internal_errors(true);
+		$loaded = $document->loadXML($responseXml, LIBXML_NONET | LIBXML_NOBLANKS);
+		libxml_clear_errors();
+		libxml_use_internal_errors($previous);
+		if (!$loaded) {
+			throw new BankConnectException('BankConnect statement response is malformed XML');
+		}
+		return $document;
 	}
 
 	private function isCamtDocument(string $xml): bool

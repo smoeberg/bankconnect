@@ -15,6 +15,8 @@ class BankConnectAutomaticImportService
 	private ImportService $importer;
 	private BankConnectClientFactory $clients;
 	private BankConnectStatementResponseParser $responses;
+	/** @var array<string,mixed> */
+	private array $settings;
 
 	public function __construct(
 		AgreementStore $agreements,
@@ -115,16 +117,11 @@ class BankConnectAutomaticImportService
 					}
 				}
 			}
-			try {
-				$camt = $this->responses->extract($response);
-			} catch (BankConnectException $e) {
-				// An OK response without a CAMT payload is legitimate for camt.052
-				// and camt.054 when there are no intraday/ notification entries —
-				// only surface a real transport failure for the mandatory 053 call.
-				if ($request['format'] !== 'camt.053.001.02') {
-					continue;
-				}
-				throw $e;
+			$camt = $request['format'] === 'camt.053.001.02'
+				? $this->responses->extract($response)
+				: $this->responses->extractOptional($response);
+			if ($camt === null) {
+				continue;
 			}
 			if (trim($camt) === '') {
 				continue;
