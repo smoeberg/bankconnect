@@ -3,16 +3,20 @@
  * Read-only production health checks. No secret values are returned.
  */
 require_once __DIR__.'/BankConnectEndpointPolicy.php';
+require_once __DIR__.'/BankConnectDatabasePrefix.php';
 
 class BankConnectHealth
 {
+    use BankConnectDatabasePrefix;
+
     private $db;
     private $conf;
 
-    public function __construct($db = null, $conf = null)
+    public function __construct($db = null, $conf = null, ?string $prefix = null)
     {
         $this->db = $db;
         $this->conf = $conf;
+        $this->initializeDatabasePrefix($prefix);
     }
 
     /** @return array{status:string,checks:array<string,array>} */
@@ -69,7 +73,7 @@ class BankConnectHealth
     {
         if ($this->db === null) return ['status'=>'warning','message'=>'Certificate check unavailable without database'];
         $sql = 'SELECT valid_to FROM llx_bankconnect_certificate WHERE is_active = 1 ORDER BY valid_to ASC';
-        $res = $this->db->query($sql);
+        $res = $this->prefixQuery($sql);
         if (!$res) return ['status'=>'warning','message'=>'Certificate health query failed'];
         $now = time(); $warning = false; $found = false;
         while ($o = $this->db->fetch_object($res)) {
@@ -85,7 +89,7 @@ class BankConnectHealth
     private function unknownPaymentCheck(): array
     {
         if ($this->db === null) return ['status'=>'warning','message'=>'Payment check unavailable without database'];
-        $res = $this->db->query("SELECT COUNT(*) AS c FROM llx_bankconnect_batch WHERE status = 'unknown'");
+        $res = $this->prefixQuery("SELECT COUNT(*) AS c FROM llx_bankconnect_batch WHERE status = 'unknown'");
         if (!$res) return ['status'=>'warning','message'=>'Payment health query failed'];
         $count = (int)$this->db->fetch_object($res)->c;
         return $count > 0

@@ -9,6 +9,7 @@ require_once __DIR__.'/BankConnectException.php';
 require_once __DIR__.'/BankConnectLogger.php';
 require_once __DIR__.'/ServiceHeaderBuilder.php';
 require_once __DIR__.'/PaymentStateMachine.php';
+require_once __DIR__.'/BankConnectDatabasePrefix.php';
 
 if (!class_exists('Conf')) {
     class Conf { public $global = []; }
@@ -16,17 +17,20 @@ if (!class_exists('Conf')) {
 
 class PaymentBatchService
 {
+    use BankConnectDatabasePrefix;
+
     private $db;
     private Conf $conf;
     private BankConnectLogger $logger;
     private ?BankConnectClient $client;
 
-    public function __construct($db, Conf $conf, ?BankConnectClient $client = null, ?BankConnectLogger $logger = null)
+    public function __construct($db, Conf $conf, ?BankConnectClient $client = null, ?BankConnectLogger $logger = null, ?string $prefix = null)
     {
         $this->db = $db;
         $this->conf = $conf;
         $this->client = $client;
         $this->logger = $logger ?? new BankConnectLogger();
+        $this->initializeDatabasePrefix($prefix);
     }
 
     public function createBatch(Pain001Builder $builder, int $fkAgreement, int $entity = 1): array
@@ -355,7 +359,7 @@ class PaymentBatchService
             throw new BankConnectException('Payment batch has no valid agreement');
         }
 
-        $res = $this->db->query(
+        $res = $this->prefixQuery(
             'SELECT bank_connect_id, main_registration_number '
             .'FROM llx_bankconnect_agreement WHERE rowid = '.$agreementId
         );
@@ -406,7 +410,7 @@ class PaymentBatchService
         $sql = 'UPDATE llx_bankconnect_batch_line SET '.implode(', ', $sets)
              .' WHERE fk_batch = '.(int)$batchId
              ." AND end_to_end_id = '".$this->db->escape($endToEndId)."'";
-        return (bool)$this->db->query($sql);
+        return (bool)$this->prefixQuery($sql);
     }
 
 
@@ -418,8 +422,8 @@ class PaymentBatchService
     {
         $sql = 'INSERT INTO llx_bankconnect_batch (entity,fk_agreement,end_to_end_message_id,msg_id,status,pain001_xml,control_sum,nb_of_txs,date_sent) VALUES ('
             .(int)$d['entity'].','.(int)$d['fk_agreement'] . ",'".$this->db->escape($d['end_to_end_message_id'])."','".$this->db->escape($d['msg_id'])."','".$this->db->escape($d['status'])."','".$this->db->escape($d['pain001_xml'])."',".(float)$d['control_sum'].','.(int)$d['nb_of_txs'].',NULL)';
-        if (!$this->db->query($sql)) throw new BankConnectException('INSERT batch failed: '.$this->db->lasterror());
-        return (int)$this->db->last_insert_id('llx_bankconnect_batch');
+        if (!$this->prefixQuery($sql)) throw new BankConnectException('INSERT batch failed: '.$this->db->lasterror());
+        return (int)$this->prefixLastInsertId('llx_bankconnect_batch');
     }
 
     private function insertBatchLine(int $batchId, array $tx): void
@@ -427,12 +431,12 @@ class PaymentBatchService
         $sql = 'INSERT INTO llx_bankconnect_batch_line (fk_batch,end_to_end_id,amount,currency,fk_facture_fourn,fk_facture,status) VALUES ('
             .$batchId.",'".$this->db->escape($tx['endToEndId'])."',".(float)$tx['amount'].",'".$this->db->escape($tx['currency'] ?? 'DKK')."',"
             .(isset($tx['fk_facture_fourn'])?(int)$tx['fk_facture_fourn']:'NULL').','.(isset($tx['fk_facture'])?(int)$tx['fk_facture']:'NULL').",'draft')";
-        if (!$this->db->query($sql)) throw new BankConnectException('INSERT batch_line failed: '.$this->db->lasterror());
+        if (!$this->prefixQuery($sql)) throw new BankConnectException('INSERT batch_line failed: '.$this->db->lasterror());
     }
 
     private function fetchBatch(int $batchId): ?array
     {
-        $res = $this->db->query('SELECT * FROM llx_bankconnect_batch WHERE rowid = '.(int)$batchId);
+        $res = $this->prefixQuery('SELECT * FROM llx_bankconnect_batch WHERE rowid = '.(int)$batchId);
         if (!$res) return null;
         $obj = $this->db->fetch_object($res);
         return $obj ? (array)$obj : null;
@@ -442,7 +446,7 @@ class PaymentBatchService
         $sql = "UPDATE llx_bankconnect_batch SET status = '".PaymentStateMachine::SUBMITTING."'"
              . " WHERE rowid = ".(int)$batchId
              . " AND status = '".PaymentStateMachine::PREPARED."'";
-        if (!$this->db->query($sql)) {
+        if (!$this->prefixQuery($sql)) {
             throw new BankConnectException('Failed to claim payment submission: '.$this->db->lasterror());
         }
 
@@ -469,7 +473,7 @@ class PaymentBatchService
         $sql = 'UPDATE llx_bankconnect_batch SET '.implode(', ', $sets)
              .' WHERE rowid = '.(int)$batchId
              ." AND status = '".$this->db->escape($from)."'";
-        if (!$this->db->query($sql)) {
+        if (!$this->prefixQuery($sql)) {
             throw new BankConnectException('Payment state transition failed: '.$this->db->lasterror());
         }
 
@@ -492,7 +496,7 @@ class PaymentBatchService
         foreach (['response_code','message','correlation_id','date_sent','date_status'] as $field) {
             if (isset($extra[$field])) $sets[] = $field." = '".$this->db->escape($extra[$field])."'";
         }
-        $this->db->query('UPDATE llx_bankconnect_batch SET '.implode(', ', $sets).' WHERE rowid = '.(int)$batchId);
+        $this->prefixQuery('UPDATE llx_bankconnect_batch SET '.implode(', ', $sets).' WHERE rowid = '.(int)$batchId);
     }
 
     private function generateEndToEndMessageId(): string
