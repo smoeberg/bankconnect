@@ -92,16 +92,17 @@ class BankConnectClient
             $responseSecurity = new BankConnectResponseSecurity($this->conf);
             if ($operation === self::OP_GET_BANK_CERTIFICATE) {
                 $responseSecurity->validateStructure($response);
+            } elseif ($operation === self::OP_ACTIVATE_SERVICE_AGREEMENT) {
+                // Activation has no WS-Security signature or response encryption.
+                // Its corporateMessage carries the bank's business signature.
+                $response = $responseSecurity->verifyBusinessSignature(
+                    $response,
+                    $this->expectedResponseOperation($operation)
+                );
             } else {
                 $expectedResponse = $this->expectedResponseOperation($operation);
                 $verifiedResponse = $responseSecurity->verify($response);
-                // BankConnect v3.7 requires encrypted responses for signed get,
-                // renewal and payment operations, but not for activation.
-                $response = $responseSecurity->decrypt(
-                    $verifiedResponse,
-                    $expectedResponse,
-                    $operation !== self::OP_ACTIVATE_SERVICE_AGREEMENT
-                );
+                $response = $responseSecurity->decrypt($verifiedResponse, $expectedResponse);
             }
             $duration = (int) ((microtime(true) - $start) * 1000);
             $this->logger->info('soap_call', [

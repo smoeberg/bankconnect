@@ -41,6 +41,82 @@ class BankConnectResponseSecurity
         return $responseXml;
     }
 
+    /** Verify the pinned bank's business signature on an unencrypted response. */
+    public function verifyBusinessSignature(string $responseXml, string $expectedOperation): string
+    {
+        $this->validateStructure($responseXml);
+        $doc = $this->loadDocument($responseXml);
+        $xp = new DOMXPath($doc);
+        $xp->registerNamespace('s', 'http://schemas.xmlsoap.org/soap/envelope/');
+        $xp->registerNamespace('bc', 'http://bankconnect.dk/schema/2014');
+        $xp->registerNamespace('ds', 'http://www.w3.org/2000/09/xmldsig#');
+
+        $operations = $xp->query('/s:Envelope/s:Body/*');
+        if ($operations->length !== 1 || $operations->item(0)->namespaceURI !== 'http://bankconnect.dk/schema/2014'
+            || $operations->item(0)->localName !== $expectedOperation) {
+            throw new BankConnectException('Unexpected BankConnect business response operation');
+        }
+        $operation = $operations->item(0);
+        $children = $xp->query('./*', $operation);
+        $messages = $xp->query('./bc:corporateMessage', $operation);
+        $signatures = $xp->query('./ds:Signature', $operation);
+        if ($children->length !== 2 || $messages->length !== 1 || $signatures->length !== 1) {
+            throw new BankConnectException('BankConnect business response requires one message and one signature');
+        }
+        $message = $messages->item(0);
+        $signature = $signatures->item(0);
+        $id = $message->getAttribute('id');
+        if (!preg_match('/^[A-Za-z_][A-Za-z0-9_.:-]*$/', $id)) {
+            throw new BankConnectException('Invalid BankConnect business message identifier');
+        }
+        $idCount = 0;
+        foreach ($xp->query('//*[@id]') as $candidate) {
+            if ($candidate->getAttribute('id') === $id) {
+                $idCount++;
+            }
+        }
+        if ($idCount !== 1) {
+            throw new BankConnectException('Duplicate BankConnect business message identifier');
+        }
+
+        $signedInfo = $xp->query('./ds:SignedInfo', $signature);
+        $signatureValue = $xp->query('./ds:SignatureValue', $signature);
+        $certificateNodes = $xp->query('./ds:KeyInfo/ds:X509Data/ds:X509Certificate', $signature);
+        if ($signedInfo->length !== 1 || $signatureValue->length !== 1 || $certificateNodes->length !== 1) {
+            throw new BankConnectException('BankConnect business signature is incomplete');
+        }
+        $canonicalMethod = $xp->query('./ds:CanonicalizationMethod', $signedInfo->item(0));
+        $signatureMethod = $xp->query('./ds:SignatureMethod', $signedInfo->item(0));
+        $references = $xp->query('./ds:Reference', $signedInfo->item(0));
+        if ($canonicalMethod->length !== 1 || $canonicalMethod->item(0)->getAttribute('Algorithm') !== 'http://www.w3.org/2001/10/xml-exc-c14n#'
+            || $signatureMethod->length !== 1 || $signatureMethod->item(0)->getAttribute('Algorithm') !== 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256'
+            || $references->length !== 1 || $references->item(0)->getAttribute('URI') !== '#'.$id) {
+            throw new BankConnectException('Unsupported BankConnect business signature profile');
+        }
+        $reference = $references->item(0);
+        $transforms = $xp->query('./ds:Transforms/ds:Transform', $reference);
+        $digestMethod = $xp->query('./ds:DigestMethod', $reference);
+        $digest = $xp->query('./ds:DigestValue', $reference);
+        if ($transforms->length !== 1 || $transforms->item(0)->getAttribute('Algorithm') !== 'http://www.w3.org/2001/10/xml-exc-c14n#'
+            || $digestMethod->length !== 1 || $digestMethod->item(0)->getAttribute('Algorithm') !== 'http://www.w3.org/2001/04/xmlenc#sha256'
+            || $digest->length !== 1) {
+            throw new BankConnectException('Unsupported BankConnect business reference profile');
+        }
+        $canonicalMessage = $message->C14N(true, false);
+        if ($canonicalMessage === false || !hash_equals(base64_encode(hash('sha256', $canonicalMessage, true)), trim($digest->item(0)->textContent))) {
+            throw new BankConnectException('BankConnect business response digest verification failed');
+        }
+        $certificate = $this->decodeCertificate($certificateNodes->item(0)->textContent);
+        $this->requireTrustedCertificate($certificate);
+        $canonicalInfo = $signedInfo->item(0)->C14N(true, false);
+        $signatureBytes = base64_decode(preg_replace('/\s+/', '', $signatureValue->item(0)->textContent), true);
+        if ($canonicalInfo === false || $signatureBytes === false || $signatureBytes === ''
+            || openssl_verify($canonicalInfo, $signatureBytes, $certificate, OPENSSL_ALGO_SHA256) !== 1) {
+            throw new BankConnectException('BankConnect business response signature verification failed');
+        }
+        return $responseXml;
+    }
+
     public function verify(string $responseXml, ?string $expectedOperation = null): string
     {
         $doc = $this->loadDocument($responseXml);
