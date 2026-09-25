@@ -95,7 +95,13 @@ class BankConnectClient
             } else {
                 $expectedResponse = $this->expectedResponseOperation($operation);
                 $verifiedResponse = $responseSecurity->verify($response);
-                $response = $responseSecurity->decrypt($verifiedResponse, $expectedResponse);
+                // BankConnect v3.7 requires encrypted responses for signed get,
+                // renewal and payment operations, but not for activation.
+                $response = $responseSecurity->decrypt(
+                    $verifiedResponse,
+                    $expectedResponse,
+                    $operation !== self::OP_ACTIVATE_SERVICE_AGREEMENT
+                );
             }
             $duration = (int) ((microtime(true) - $start) * 1000);
             $this->logger->info('soap_call', [
