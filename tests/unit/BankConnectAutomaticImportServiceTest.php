@@ -301,4 +301,98 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		$this->assertStringContainsString('malformed XML', $agreements->lastError);
 		$this->assertCount(1, $result['errors']);
 	}
+
+	public function testDrainsMultipleStatementsWithDistinctRequestIds(): void
+	{
+		$agreements = new class extends AgreementStore {
+			public int $advanced = 0;
+			public function __construct() {}
+			public function getAgreement(int $id): ?array { return ['rowid' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1']; }
+			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void {}
+			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void { $this->advanced++; }
+		};
+		$mappings = new class extends BankAccountMappingStore {
+			public function __construct() {}
+			public function listMappings(int $entity): array { return [['fk_agreement' => 1, 'fk_bank_account' => 1004]]; }
+		};
+		$importer = new class extends ImportService {
+			public array $sources = [];
+			public function __construct() {}
+			public function import(string $xml, int $fkBankAccount = 0, string $sourceFile = 'import', $user = null): array
+			{
+				$this->sources[] = $sourceFile;
+				return ['imported' => 1, 'duplicates' => 0, 'total' => 1];
+			}
+		};
+		$client = new class extends BankConnectClient {
+			public array $headers = [];
+			public function __construct() {}
+			public function getCustomerStatement(string $serviceHeaderXml): string
+			{
+				$this->headers[] = $serviceHeaderXml;
+				$more = count($this->headers) === 1 ? 'true' : 'false';
+				$camt = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"><BkToCstmrStmt/></Document>';
+				return '<Envelope><corporateMessage><severalMessages>'.$more.'</severalMessages><content>'.base64_encode($camt).'</content></corporateMessage></Envelope>';
+			}
+			public function getCustomerAccountReport(string $serviceHeaderXml): string { return '<Envelope><content/></Envelope>'; }
+			public function getDebitCreditNotification(string $serviceHeaderXml): string { return '<Envelope><content/></Envelope>'; }
+		};
+		$clients = new class($client) extends BankConnectClientFactory {
+			private BankConnectClient $client;
+			public function __construct(BankConnectClient $client) { $this->client = $client; }
+			public function create(array $agreement): BankConnectClient { return $this->client; }
+		};
+
+		$result = (new BankConnectAutomaticImportService($agreements, $mappings, $importer, $clients))
+			->run(1, (object)['id' => 1]);
+
+		$this->assertSame([], $result['errors']);
+		$this->assertSame(2, $result['imported']);
+		$this->assertCount(2, $client->headers);
+		$this->assertNotSame($client->headers[0], $client->headers[1]);
+		$this->assertCount(2, array_unique($importer->sources));
+		$this->assertSame(1, $agreements->advanced);
+	}
+
+	public function testEmptyContinuationFailsWithoutAdvancingCursor(): void
+	{
+		$agreements = new class extends AgreementStore {
+			public bool $advanced = false;
+			public function __construct() {}
+			public function getAgreement(int $id): ?array { return ['rowid' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1']; }
+			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void {}
+			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void { $this->advanced = true; }
+		};
+		$mappings = new class extends BankAccountMappingStore {
+			public function __construct() {}
+			public function listMappings(int $entity): array { return [['fk_agreement' => 1, 'fk_bank_account' => 1004]]; }
+		};
+		$importer = new class extends ImportService {
+			public function __construct() {}
+			public function import(string $xml, int $fkBankAccount = 0, string $sourceFile = 'import', $user = null): array
+			{ return ['imported' => 0, 'duplicates' => 0, 'total' => 0]; }
+		};
+		$client = new class extends BankConnectClient {
+			public function __construct() {}
+			public function getCustomerStatement(string $serviceHeaderXml): string
+			{
+				$camt = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"><BkToCstmrStmt/></Document>';
+				return '<Envelope><corporateMessage><severalMessages>false</severalMessages><content>'.base64_encode($camt).'</content></corporateMessage></Envelope>';
+			}
+			public function getCustomerAccountReport(string $serviceHeaderXml): string
+			{ return '<Envelope><corporateMessage><severalMessages>true</severalMessages><content/></corporateMessage></Envelope>'; }
+		};
+		$clients = new class($client) extends BankConnectClientFactory {
+			private BankConnectClient $client;
+			public function __construct(BankConnectClient $client) { $this->client = $client; }
+			public function create(array $agreement): BankConnectClient { return $this->client; }
+		};
+
+		$result = (new BankConnectAutomaticImportService($agreements, $mappings, $importer, $clients))
+			->run(1, (object)['id' => 1]);
+
+		$this->assertFalse($agreements->advanced);
+		$this->assertCount(1, $result['errors']);
+		$this->assertStringContainsString('without a CAMT document', $result['errors'][0]);
+	}
 }

@@ -59,4 +59,26 @@ class BankConnectStatementResponseParserTest extends TestCase
 		$this->expectExceptionMessage('no CAMT');
 		(new BankConnectStatementResponseParser())->extractOptional('<Envelope><content>not-a-camt-document</content></Envelope>');
 	}
+
+	public function testReadsContinuationFlagFromCorporateMessage(): void
+	{
+		$parser = new BankConnectStatementResponseParser();
+		$this->assertTrue($parser->hasMoreMessages('<Envelope><corporateMessage><severalMessages>true</severalMessages><content>data</content></corporateMessage></Envelope>'));
+		$this->assertTrue($parser->hasMoreMessages('<Envelope><corporateMessage><severalMessages>1</severalMessages></corporateMessage></Envelope>'));
+		$this->assertFalse($parser->hasMoreMessages('<Envelope><corporateMessage><severalMessages>false</severalMessages></corporateMessage></Envelope>'));
+		$this->assertFalse($parser->hasMoreMessages('<Envelope><content>legacy fixture</content></Envelope>'));
+	}
+
+	public function testRejectsMalformedContinuationFlag(): void
+	{
+		$this->expectException(BankConnectException::class);
+		$this->expectExceptionMessage('invalid severalMessages');
+		(new BankConnectStatementResponseParser())->hasMoreMessages('<Envelope><corporateMessage><severalMessages>maybe</severalMessages></corporateMessage></Envelope>');
+	}
+
+	public function testRejectsMissingContinuationFlagInCorporateMessage(): void
+	{
+		$this->expectException(BankConnectException::class);
+		(new BankConnectStatementResponseParser())->hasMoreMessages('<Envelope><corporateMessage><content>data</content></corporateMessage></Envelope>');
+	}
 }

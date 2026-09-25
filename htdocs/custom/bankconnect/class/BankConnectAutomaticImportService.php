@@ -98,40 +98,51 @@ class BankConnectAutomaticImportService
 			['format' => 'camt.054.001.02', 'call' => static fn(BankConnectClient $c, string $h) => $c->getDebitCreditNotification($h)],
 		];
 		foreach ($requests as $request) {
-			$header = (new ServiceHeaderBuilder())
-				->setOrganisation((string)$agreement['main_registration_number'], 'DK')
-				->setFunctionIdentification((string)$agreement['bank_connect_id'])
-				->setErp('Dolibarr', defined('DOL_VERSION') ? DOL_VERSION : '')
-				->setFormat($request['format']);
-			$response = null;
-			for ($attempt = 0; ; $attempt++) {
-				try {
-					$response = $request['call']($client, $header->build());
-					break;
-				} catch (\Throwable $e) {
-					if ($attempt >= $retriesLeft || !$transient($e)) {
-						throw $e;
-					}
-					if ($retryDelay > 0) {
-						sleep($retryDelay);
+			// Each response contains at most one document. The BankConnect flag
+			// signals whether another request of the same kind is needed.
+			for ($page = 0; $page < 100; $page++) {
+				$header = (new ServiceHeaderBuilder())
+					->setOrganisation((string)$agreement['main_registration_number'], 'DK')
+					->setFunctionIdentification((string)$agreement['bank_connect_id'])
+					->setErp('Dolibarr', defined('DOL_VERSION') ? DOL_VERSION : '')
+					->setFormat($request['format']);
+				$requestXml = $header->build();
+				for ($attempt = 0; ; $attempt++) {
+					try {
+						$response = $request['call']($client, $requestXml);
+						break;
+					} catch (\Throwable $e) {
+						if ($attempt >= $retriesLeft || !$transient($e)) {
+							throw $e;
+						}
+						if ($retryDelay > 0) {
+							sleep($retryDelay);
+						}
 					}
 				}
+				$more = $this->responses->hasMoreMessages($response);
+				$camt = $request['format'] === 'camt.053.001.02'
+					? $this->responses->extract($response)
+					: $this->responses->extractOptional($response);
+				if ($camt === null) {
+					if ($more) {
+						throw new BankConnectException('BankConnect signals more messages without a CAMT document');
+					}
+					break;
+				}
+				$source = 'bankconnect:'.(int)$agreement['rowid'].':'.$header->getEndToEndMessageId();
+				$one = $this->importer->import($camt, $bankAccountId, $source, $user);
+				$sum['imported'] += $one['imported'];
+				$sum['duplicates'] += $one['duplicates'];
+				$sum['deferred_reversals'] += $one['deferred_reversals'] ?? 0;
+				$sum['total'] += $one['total'];
+				if (!$more) {
+					break;
+				}
+				if ($page === 99) {
+					throw new BankConnectException('BankConnect still signals more messages after 100 responses');
+				}
 			}
-			$camt = $request['format'] === 'camt.053.001.02'
-				? $this->responses->extract($response)
-				: $this->responses->extractOptional($response);
-			if ($camt === null) {
-				continue;
-			}
-			if (trim($camt) === '') {
-				continue;
-			}
-			$source = 'bankconnect:'.(int)$agreement['rowid'].':'.$header->getEndToEndMessageId();
-			$one = $this->importer->import($camt, $bankAccountId, $source, $user);
-			$sum['imported'] += $one['imported'];
-			$sum['duplicates'] += $one['duplicates'];
-			$sum['deferred_reversals'] += $one['deferred_reversals'] ?? 0;
-			$sum['total'] += $one['total'];
 		}
 		return $sum;
 	}
