@@ -57,7 +57,6 @@ standardflow.
 | `ReconciliationEngine` | Regler + AI-koordinering, batch |
 | `MistralMatcher` | AI-matching, PII-sanitering, logging |
 | `MatchResult` | DTO: match_type, confidence, suggested, reason, source |
-| `ApprovalPosting` | Legacy-prototype; ikke eksponeret eller medtaget i installations-ZIP |
 | `ImportService` | Fælles camt-import-flow med dedup-tælling |
 | `ReconciliationService` | Orchestrering + confidence-audit |
 | `ReconciliationWorkflowService` | Validering af GUI-valg, ejerskab og godkendelsesflow |

@@ -41,7 +41,6 @@ cp -R "$module_dir/." "$stage_dir/bankconnect/"
 # The legacy prototype writes directly to llx_bank and is intentionally not
 # part of an installable release. It remains in the repository until the
 # standard Dolibarr Account/Paiement adapter replaces it.
-rm -f "$stage_dir/bankconnect/class/ApprovalPosting.php"
 cp "$project_dir/README.md" "$stage_dir/bankconnect/README.md"
 cp "$project_dir/CHANGELOG.md" "$stage_dir/bankconnect/CHANGELOG.md"
 

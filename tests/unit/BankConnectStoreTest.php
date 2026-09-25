@@ -136,4 +136,24 @@ class BankConnectStoreTest extends TestCase
         $this->assertSame(1, $result['rowid']);
         $this->assertSame(1, $this->db->countRows('llx_bankconnect_transaction'));
     }
+
+    public function testUsesConfiguredDolibarrDatabasePrefix(): void
+    {
+        $db = new MockDoliDB();
+        $store = new BankConnectStore($db, 'tenant_');
+
+        $result = $store->upsertTransactionDetailed([
+            'date' => '2026-09-25',
+            'amount' => 89.50,
+            'currency' => 'DKK',
+            'reference' => 'PREFIX-1',
+            'counterparty' => 'Prefix ApS',
+            'text' => 'Custom prefix import',
+            'acctSvcrRef' => 'BANK-PREFIX-1',
+        ], 4, 'prefix.xml');
+
+        $this->assertFalse($result['duplicate']);
+        $this->assertSame(1, $db->countRows('tenant_bankconnect_transaction'));
+        $this->assertSame(0, $db->countRows('llx_bankconnect_transaction'));
+    }
 }
