@@ -255,4 +255,50 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		$this->assertSame(1, $result['agreements']);
 		$this->assertStringContainsString('invalid credentials', $agreements->lastError);
 	}
+
+	public function testInvalidOptionalCamtFailsRunWithoutAdvancingCursor(): void
+	{
+		$agreements = new class extends AgreementStore {
+			public bool $advanced = false;
+			public string $lastError = '';
+			public function __construct() {}
+			public function getAgreement(int $id): ?array
+			{
+				return ['rowid' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1'];
+			}
+			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void { $this->lastError = $error; }
+			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void { $this->advanced = true; }
+		};
+		$mappings = new class extends BankAccountMappingStore {
+			public function __construct() {}
+			public function listMappings(int $entity): array { return [['fk_agreement' => 1, 'fk_bank_account' => 1004]]; }
+		};
+		$importer = new class extends ImportService {
+			public function __construct() {}
+			public function import(string $xml, int $fkBankAccount = 0, string $sourceFile = 'import', $user = null): array
+			{
+				return ['imported' => 0, 'duplicates' => 0, 'total' => 0];
+			}
+		};
+		$client = new class extends BankConnectClient {
+			public function __construct() {}
+			public function getCustomerStatement(string $serviceHeaderXml): string
+			{
+				return '<Envelope><content>'.base64_encode('<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"><BkToCstmrStmt/></Document>').'</content></Envelope>';
+			}
+			public function getCustomerAccountReport(string $serviceHeaderXml): string { return '<Envelope>'; }
+		};
+		$clients = new class($client) extends BankConnectClientFactory {
+			private BankConnectClient $client;
+			public function __construct(BankConnectClient $client) { $this->client = $client; }
+			public function create(array $agreement): BankConnectClient { return $this->client; }
+		};
+
+		$result = (new BankConnectAutomaticImportService($agreements, $mappings, $importer, $clients))
+			->run(1, (object)['id' => 1]);
+
+		$this->assertFalse($agreements->advanced);
+		$this->assertStringContainsString('malformed XML', $agreements->lastError);
+		$this->assertCount(1, $result['errors']);
+	}
 }
