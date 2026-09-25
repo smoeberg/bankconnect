@@ -95,7 +95,7 @@ final class BankConnectResponseSecurityTest extends TestCase
         return $doc->saveXML();
     }
 
-    private function activationResponse(string $operationName = 'activateServiceAgreementResponse'): string
+    private function activationResponse(string $operationName = 'activateServiceAgreementResponse', string $businessElement = 'corporateMessage', string $idAttribute = 'id'): string
     {
         preg_match('/-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----/s', $this->cert, $matches);
         $certificateBase64 = preg_replace('/\s+/', '', $matches[1]);
@@ -111,8 +111,12 @@ final class BankConnectResponseSecurityTest extends TestCase
         $envelope->appendChild($body);
         $response = $doc->createElementNS($bc, 'bc:'.$operationName);
         $body->appendChild($response);
-        $message = $doc->createElementNS($bc, 'bc:corporateMessage');
-        $message->setAttribute('id', 'Sign-activation-test');
+        $message = $doc->createElementNS($bc, 'bc:'.$businessElement);
+        if ($idAttribute === 'wsu:Id') {
+            $message->setAttributeNS('http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd', $idAttribute, 'Sign-activation-test');
+        } else {
+            $message->setAttribute($idAttribute, 'Sign-activation-test');
+        }
         $message->appendChild($doc->createElementNS($bc, 'bc:content', 'approval'));
         $response->appendChild($message);
 
@@ -215,6 +219,28 @@ final class BankConnectResponseSecurityTest extends TestCase
         $signature->parentNode->removeChild($signature);
         $this->expectException(BankConnectException::class);
         $this->security()->verifyBusinessSignature($doc->saveXML(), 'getCustomerStatementResponse', true);
+    }
+
+    public function testPaymentResponseRequiresSignedPaymentResponse(): void
+    {
+        $response = $this->activationResponse('transferPaymentResponse', 'paymentResponse', 'Id');
+        $this->assertSame($response, $this->security()->verifyBusinessSignature($response, 'transferPaymentResponse'));
+        $this->expectException(BankConnectException::class);
+        $this->expectExceptionMessage('digest verification failed');
+        $this->security()->verifyBusinessSignature(str_replace('approval', 'tampered', $response), 'transferPaymentResponse');
+    }
+
+    public function testPaymentResponseRejectsUnexpectedCorporateMessage(): void
+    {
+        $response = $this->activationResponse('transferPaymentResponse');
+        $this->expectException(BankConnectException::class);
+        $this->security()->verifyBusinessSignature($response, 'transferPaymentResponse');
+    }
+
+    public function testPaymentResponseAcceptsWsuIdReference(): void
+    {
+        $response = $this->activationResponse('transferPaymentResponse', 'paymentResponse', 'wsu:Id');
+        $this->assertSame($response, $this->security()->verifyBusinessSignature($response, 'transferPaymentResponse'));
     }
 
     private function encryptedResponse(string $payloadXml = '', bool $tamper = false): string

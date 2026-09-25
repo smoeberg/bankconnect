@@ -50,6 +50,8 @@ class BankConnectResponseSecurity
         $xp->registerNamespace('s', 'http://schemas.xmlsoap.org/soap/envelope/');
         $xp->registerNamespace('bc', 'http://bankconnect.dk/schema/2014');
         $xp->registerNamespace('ds', 'http://www.w3.org/2000/09/xmldsig#');
+        $wsuNs = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd';
+        $xp->registerNamespace('wsu', $wsuNs);
 
         $operations = $xp->query('/s:Envelope/s:Body/*');
         if ($operations->length !== 1 || $operations->item(0)->namespaceURI !== 'http://bankconnect.dk/schema/2014'
@@ -63,20 +65,28 @@ class BankConnectResponseSecurity
         if ($allowEmpty && $children->length === 0) {
             return $responseXml;
         }
-        $messages = $xp->query('./bc:corporateMessage', $operation);
+        $elementName = $expectedOperation === 'transferPaymentResponse' ? 'paymentResponse' : 'corporateMessage';
+        $messages = $xp->query('./bc:'.$elementName, $operation);
         $signatures = $xp->query('./ds:Signature', $operation);
         if ($children->length !== 2 || $messages->length !== 1 || $signatures->length !== 1) {
             throw new BankConnectException('BankConnect business response requires one message and one signature');
         }
         $message = $messages->item(0);
         $signature = $signatures->item(0);
-        $id = $message->getAttribute('id');
+        $lowerId = $message->getAttribute('id');
+        $upperId = $message->getAttribute('Id');
+        $wsuId = $message->getAttributeNS($wsuNs, 'Id');
+        if (count(array_filter([$lowerId, $upperId, $wsuId], static fn($value) => $value !== '')) !== 1) {
+            throw new BankConnectException('Ambiguous BankConnect business message identifier');
+        }
+        $id = $lowerId !== '' ? $lowerId : ($upperId !== '' ? $upperId : $wsuId);
         if (!preg_match('/^[A-Za-z_][A-Za-z0-9_.:-]*$/', $id)) {
             throw new BankConnectException('Invalid BankConnect business message identifier');
         }
         $idCount = 0;
-        foreach ($xp->query('//*[@id]') as $candidate) {
-            if ($candidate->getAttribute('id') === $id) {
+        foreach ($xp->query('//*[@id or @Id or @wsu:Id]') as $candidate) {
+            if ($candidate->getAttribute('id') === $id || $candidate->getAttribute('Id') === $id
+                || $candidate->getAttributeNS($wsuNs, 'Id') === $id) {
                 $idCount++;
             }
         }
