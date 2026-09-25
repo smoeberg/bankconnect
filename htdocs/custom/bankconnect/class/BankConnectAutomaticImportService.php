@@ -121,9 +121,9 @@ class BankConnectAutomaticImportService
 					}
 				}
 				$more = $this->responses->hasMoreMessages($response);
-				$camt = $request['format'] === 'camt.053.001.02'
-					? $this->responses->extract($response)
-					: $this->responses->extractOptional($response);
+				// The v3.7 API allows an empty response for all three get
+				// operations, including the end-of-day statement.
+				$camt = $this->responses->extractOptional($response);
 				if ($camt === null) {
 					if ($more) {
 						throw new BankConnectException('BankConnect signals more messages without a CAMT document');
