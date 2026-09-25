@@ -2,6 +2,29 @@
 /** Extracts exactly one ISO 20022 CAMT document from a BankConnect SOAP response. */
 class BankConnectStatementResponseParser
 {
+	/** Read the continuation flag defined on the BankConnect corporateMessage. */
+	public function hasMoreMessages(string $responseXml): bool
+	{
+		$xpath = new DOMXPath($this->loadResponse($responseXml));
+		$messages = $xpath->query('//*[local-name()="corporateMessage"]');
+		if (!$messages || $messages->length === 0) {
+			// Older fixtures and direct CAMT responses have no BankConnect wrapper.
+			return false;
+		}
+		if ($messages->length !== 1) {
+			throw new BankConnectException('BankConnect response contains multiple corporate messages');
+		}
+		$flags = $xpath->query('./*[local-name()="severalMessages"]', $messages->item(0));
+		if (!$flags || $flags->length !== 1) {
+			throw new BankConnectException('BankConnect response has no unique severalMessages flag');
+		}
+		$value = trim((string)$flags->item(0)->textContent);
+		if ($value !== 'true' && $value !== '1' && $value !== 'false' && $value !== '0') {
+			throw new BankConnectException('BankConnect response has an invalid severalMessages flag');
+		}
+		return $value === 'true' || $value === '1';
+	}
+
 	/**
 	 * Extract a CAMT document when the operation returned one.
 	 *
