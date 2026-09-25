@@ -192,6 +192,65 @@ class CertificateManagerTest extends TestCase
         $this->assertSame(rtrim($bankCertificatePem), rtrim((string)$stored['certificate_pem']));
     }
 
+    public function testGetBankCertificateSelectsLeafAfterIntermediate(): void
+    {
+        [$intermediate, $leaf] = $this->createBankCertificateChain();
+        $client = new class($this->conf, $intermediate, $leaf) extends BankConnectClient {
+            private string $response;
+            public function __construct(Conf $conf, string $intermediate, string $leaf)
+            {
+                parent::__construct($conf);
+                $this->response = '<Envelope><content>'.base64_encode($intermediate."\n".$leaf).'</content></Envelope>';
+            }
+            public function getBankCertificate(string $activationHeaderXml): string { return $this->response; }
+        };
+        $manager = new BankConnectCertificateManager($this->conf, $client);
+
+        $this->assertSame(rtrim($leaf), rtrim($manager->getBankCertificate('<activationHeader/>')));
+        $this->assertSame($leaf, $manager->selectBankCertificatePem([$intermediate, $leaf]));
+    }
+
+    public function testBankCertificateSelectionRejectsCaAndAmbiguousLeaves(): void
+    {
+        [$intermediate, $leaf] = $this->createBankCertificateChain();
+        $manager = new BankConnectCertificateManager($this->conf);
+        try {
+            $manager->selectBankCertificatePem([$intermediate]);
+            $this->fail('An intermediate CA must not be used for bank encryption');
+        } catch (BankConnectException $e) {
+            $this->assertStringContainsString('no unique bank leaf', $e->getMessage());
+        }
+        $this->expectException(BankConnectException::class);
+        $manager->selectBankCertificatePem([$leaf, $leaf]);
+    }
+
+    /** @return array{string,string} */
+    private function createBankCertificateChain(): array
+    {
+        $config = tempnam(sys_get_temp_dir(), 'bc-cert-');
+        $this->assertNotFalse($config);
+        try {
+            $this->assertNotFalse(file_put_contents($config, "[v3_ca]\nbasicConstraints=critical,CA:TRUE\n[v3_leaf]\nbasicConstraints=critical,CA:FALSE\n"));
+            $caKey = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+            $leafKey = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+            $this->assertNotFalse($caKey);
+            $this->assertNotFalse($leafKey);
+            $caCsr = openssl_csr_new(['commonName' => 'BankConnect Intermediate'], $caKey, ['digest_alg' => 'sha256']);
+            $leafCsr = openssl_csr_new(['commonName' => 'BankConnect Bank'], $leafKey, ['digest_alg' => 'sha256']);
+            $this->assertNotFalse($caCsr);
+            $this->assertNotFalse($leafCsr);
+            $caCert = openssl_csr_sign($caCsr, null, $caKey, 365, ['config' => $config, 'x509_extensions' => 'v3_ca', 'digest_alg' => 'sha256']);
+            $this->assertNotFalse($caCert);
+            $leafCert = openssl_csr_sign($leafCsr, $caCert, $caKey, 365, ['config' => $config, 'x509_extensions' => 'v3_leaf', 'digest_alg' => 'sha256']);
+            $this->assertNotFalse($leafCert);
+            $this->assertTrue(openssl_x509_export($caCert, $intermediate));
+            $this->assertTrue(openssl_x509_export($leafCert, $leaf));
+            return [$intermediate, $leaf];
+        } finally {
+            unlink($config);
+        }
+    }
+
     public function testCertificateSaveLocksAgreementBeforeActivation(): void
     {
         $db = new MockDoliDB();

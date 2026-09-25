@@ -208,8 +208,33 @@ class BankConnectCertificateManager
         if (empty($pem)) {
             throw new BankConnectException('Bank certificate response did not contain a certificate');
         }
-        $this->validateCertificatePem($pem[0]);
-        return $pem[0];
+        return $this->selectBankCertificatePem($pem);
+    }
+
+    /**
+     * BankConnect can return an intermediate CA followed by the bank's leaf
+     * certificate. Encryption must use the leaf, never a CA certificate.
+     *
+     * @param list<string> $certificates
+     */
+    public function selectBankCertificatePem(array $certificates): string
+    {
+        $leaves = [];
+        foreach ($certificates as $pem) {
+            $this->validateCertificatePem($pem);
+            $parsed = openssl_x509_parse($pem);
+            $constraints = (string) ($parsed['extensions']['basicConstraints'] ?? '');
+            if (preg_match('/(?:^|,)\s*CA\s*:\s*TRUE\b/i', $constraints)) {
+                continue;
+            }
+            if (count($certificates) === 1 || preg_match('/(?:^|,)\s*CA\s*:\s*FALSE\b/i', $constraints)) {
+                $leaves[] = $pem;
+            }
+        }
+        if (count($leaves) !== 1) {
+            throw new BankConnectException('BankConnect certificate response has no unique bank leaf certificate');
+        }
+        return $leaves[0];
     }
 
     public function activateServiceAgreement(
