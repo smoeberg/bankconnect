@@ -95,6 +95,95 @@ final class BankConnectResponseSecurityTest extends TestCase
         return $doc->saveXML();
     }
 
+    private function activationResponse(): string
+    {
+        preg_match('/-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----/s', $this->cert, $matches);
+        $certificateBase64 = preg_replace('/\s+/', '', $matches[1]);
+        $doc = new DOMDocument('1.0', 'UTF-8');
+        $doc->preserveWhiteSpace = false;
+        $soap = 'http://schemas.xmlsoap.org/soap/envelope/';
+        $bc = 'http://bankconnect.dk/schema/2014';
+        $ds = 'http://www.w3.org/2000/09/xmldsig#';
+        $envelope = $doc->createElementNS($soap, 'soap:Envelope');
+        $doc->appendChild($envelope);
+        $envelope->appendChild($doc->createElementNS($soap, 'soap:Header'));
+        $body = $doc->createElementNS($soap, 'soap:Body');
+        $envelope->appendChild($body);
+        $response = $doc->createElementNS($bc, 'bc:activateServiceAgreementResponse');
+        $body->appendChild($response);
+        $message = $doc->createElementNS($bc, 'bc:corporateMessage');
+        $message->setAttribute('id', 'Sign-activation-test');
+        $message->appendChild($doc->createElementNS($bc, 'bc:content', 'approval'));
+        $response->appendChild($message);
+
+        $signature = $doc->createElementNS($ds, 'ds:Signature');
+        $response->appendChild($signature);
+        $signedInfo = $doc->createElementNS($ds, 'ds:SignedInfo');
+        $signature->appendChild($signedInfo);
+        $canonical = $doc->createElementNS($ds, 'ds:CanonicalizationMethod');
+        $canonical->setAttribute('Algorithm', 'http://www.w3.org/2001/10/xml-exc-c14n#');
+        $signedInfo->appendChild($canonical);
+        $method = $doc->createElementNS($ds, 'ds:SignatureMethod');
+        $method->setAttribute('Algorithm', 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256');
+        $signedInfo->appendChild($method);
+        $reference = $doc->createElementNS($ds, 'ds:Reference');
+        $reference->setAttribute('URI', '#Sign-activation-test');
+        $signedInfo->appendChild($reference);
+        $transforms = $doc->createElementNS($ds, 'ds:Transforms');
+        $reference->appendChild($transforms);
+        $transform = $doc->createElementNS($ds, 'ds:Transform');
+        $transform->setAttribute('Algorithm', 'http://www.w3.org/2001/10/xml-exc-c14n#');
+        $transforms->appendChild($transform);
+        $digestMethod = $doc->createElementNS($ds, 'ds:DigestMethod');
+        $digestMethod->setAttribute('Algorithm', 'http://www.w3.org/2001/04/xmlenc#sha256');
+        $reference->appendChild($digestMethod);
+        $reference->appendChild($doc->createElementNS($ds, 'ds:DigestValue', base64_encode(hash('sha256', $message->C14N(true, false), true))));
+
+        $bytes = '';
+        $this->assertTrue(openssl_sign($signedInfo->C14N(true, false), $bytes, $this->private, OPENSSL_ALGO_SHA256));
+        $signature->appendChild($doc->createElementNS($ds, 'ds:SignatureValue', base64_encode($bytes)));
+        $keyInfo = $doc->createElementNS($ds, 'ds:KeyInfo');
+        $signature->appendChild($keyInfo);
+        $x509Data = $doc->createElementNS($ds, 'ds:X509Data');
+        $keyInfo->appendChild($x509Data);
+        $x509Data->appendChild($doc->createElementNS($ds, 'ds:X509Certificate', $certificateBase64));
+        return $doc->saveXML();
+    }
+
+    public function testActivationResponseUsesBusinessSignatureWithoutWsSecurity(): void
+    {
+        $response = $this->activationResponse();
+        $this->assertSame($response, $this->security()->verifyBusinessSignature($response, 'activateServiceAgreementResponse'));
+    }
+
+    public function testActivationResponseRejectsTamperedMessage(): void
+    {
+        $this->expectException(BankConnectException::class);
+        $this->expectExceptionMessage('digest verification failed');
+        $this->security()->verifyBusinessSignature(str_replace('approval', 'tampered', $this->activationResponse()), 'activateServiceAgreementResponse');
+    }
+
+    public function testActivationResponseRejectsMissingSignature(): void
+    {
+        $response = $this->activationResponse();
+        $doc = new DOMDocument();
+        $this->assertTrue($doc->loadXML($response, LIBXML_NONET));
+        $signature = $doc->getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#', 'Signature')->item(0);
+        $signature->parentNode->removeChild($signature);
+        $this->expectException(BankConnectException::class);
+        $this->security()->verifyBusinessSignature($doc->saveXML(), 'activateServiceAgreementResponse');
+    }
+
+    public function testActivationResponseRejectsUnknownBankCertificate(): void
+    {
+        [, $otherCertificate] = $this->certificate();
+        $conf = new Conf();
+        $conf->global['BANKCONNECT_BANK_CERTIFICATE'] = $otherCertificate;
+        $this->expectException(BankConnectException::class);
+        $this->expectExceptionMessage('not trusted');
+        (new BankConnectResponseSecurity($conf))->verifyBusinessSignature($this->activationResponse(), 'activateServiceAgreementResponse');
+    }
+
     private function encryptedResponse(string $payloadXml = '', bool $tamper = false): string
     {
         $doc = new DOMDocument('1.0', 'UTF-8');
