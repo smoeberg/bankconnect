@@ -4,14 +4,18 @@
  */
 
 require_once __DIR__.'/BankConnectException.php';
+require_once __DIR__.'/BankConnectDatabasePrefix.php';
 
 class AgreementStore
 {
+    use BankConnectDatabasePrefix;
+
     private $db;
 
-    public function __construct($db)
+    public function __construct($db, ?string $prefix = null)
     {
         $this->db = $db;
+        $this->initializeDatabasePrefix($prefix);
     }
 
     /**
@@ -36,10 +40,10 @@ class AgreementStore
              . " (entity, label, bank_connect_id, main_registration_number, datacenter, endpoint, status, date_creation, fk_user_creat)"
              . " VALUES ($entity, '$label', '$bcId', '$reg', '$dc', '$ep', '$status', NOW(), $uid)";
 
-        if (!$this->db->query($sql)) {
+        if (!$this->prefixQuery($sql)) {
             throw new BankConnectException('createAgreement failed: '.$this->db->lasterror());
         }
-        return (int) $this->db->last_insert_id('llx_bankconnect_agreement');
+        return (int) $this->prefixLastInsertId('llx_bankconnect_agreement');
     }
 
     public function updateAgreementStatus(int $agreementId, string $status, ?string $dateActivation = null): void
@@ -50,7 +54,7 @@ class AgreementStore
         }
         $sql = "UPDATE llx_bankconnect_agreement SET ".implode(', ', $sets)
              . " WHERE rowid = ".(int) $agreementId;
-        if (!$this->db->query($sql)) {
+        if (!$this->prefixQuery($sql)) {
             throw new BankConnectException('updateAgreementStatus failed: '.$this->db->lasterror());
         }
     }
@@ -61,7 +65,7 @@ class AgreementStore
 		$sql = "UPDATE llx_bankconnect_agreement SET last_connection_test=NOW(), last_connection_status='"
 			.($success ? 'success' : 'failed')."', last_connection_error="
 			.($error === '' ? 'NULL' : "'".$this->db->escape($error)."'").' WHERE rowid='.(int)$agreementId;
-		if (!$this->db->query($sql)) throw new BankConnectException('recordConnectionTest failed: '.$this->db->lasterror());
+		if (!$this->prefixQuery($sql)) throw new BankConnectException('recordConnectionTest failed: '.$this->db->lasterror());
 	}
 
     /**
@@ -94,7 +98,7 @@ class AgreementStore
             // replace the same active certificate at the same time.
             $lockSql = "SELECT rowid FROM llx_bankconnect_agreement"
                 . " WHERE rowid = $fk FOR UPDATE";
-            $lockRes = $this->db->query($lockSql);
+            $lockRes = $this->prefixQuery($lockSql);
             if (!$lockRes || !$this->db->fetch_object($lockRes)) {
                 throw new BankConnectException('saveCertificate agreement lock failed: agreement not found');
             }
@@ -103,24 +107,24 @@ class AgreementStore
                  . " (fk_agreement, certificate_pem, private_key_enc, valid_from, valid_to, is_active, date_creation)"
                  . " VALUES ($fk, '$pem', '$keyEnc', $from, $to, 0, NOW())";
 
-            if (!$this->db->query($sql)) {
+            if (!$this->prefixQuery($sql)) {
                 throw new BankConnectException('saveCertificate insert failed: '.$this->db->lasterror());
             }
 
-            $certificateId = (int) $this->db->last_insert_id('llx_bankconnect_certificate');
+            $certificateId = (int) $this->prefixLastInsertId('llx_bankconnect_certificate');
 
             if ($requestedActive) {
                 $deactivateSql = "UPDATE llx_bankconnect_certificate"
                     . " SET is_active = 0"
                     . " WHERE fk_agreement = $fk AND is_active = 1";
-                if (!$this->db->query($deactivateSql)) {
+                if (!$this->prefixQuery($deactivateSql)) {
                     throw new BankConnectException('saveCertificate deactivation failed: '.$this->db->lasterror());
                 }
 
                 $activateSql = "UPDATE llx_bankconnect_certificate"
                     . " SET is_active = 1"
                     . " WHERE rowid = $certificateId AND fk_agreement = $fk";
-                if (!$this->db->query($activateSql)) {
+                if (!$this->prefixQuery($activateSql)) {
                     throw new BankConnectException('saveCertificate activation failed: '.$this->db->lasterror());
                 }
             }
@@ -142,7 +146,7 @@ class AgreementStore
     public function getAgreement(int $id): ?array
     {
         $sql = "SELECT * FROM llx_bankconnect_agreement WHERE rowid = ".(int) $id;
-        $res = $this->db->query($sql);
+        $res = $this->prefixQuery($sql);
         if (!$res) {
             return null;
         }
@@ -154,7 +158,7 @@ class AgreementStore
     public function getImportCursor(int $agreementId): ?string
     {
         $sql = "SELECT import_cursor FROM llx_bankconnect_agreement WHERE rowid = ".(int) $agreementId;
-        $res = $this->db->query($sql);
+        $res = $this->prefixQuery($sql);
         if (!$res) {
             return null;
         }
@@ -168,7 +172,7 @@ class AgreementStore
         $sql = "UPDATE llx_bankconnect_agreement"
              . " SET import_cursor = '".$this->db->escape($dateTimeUtc)."'"
              . " WHERE rowid = ".(int) $agreementId;
-        if (!$this->db->query($sql)) {
+        if (!$this->prefixQuery($sql)) {
             throw new BankConnectException('advanceImportCursor failed: '.$this->db->lasterror());
         }
     }
@@ -187,7 +191,7 @@ class AgreementStore
                  . " SET last_sync_at = NOW(), last_sync_summary = '".$this->db->escape($summary)."', last_sync_error = NULL"
                  . " WHERE rowid = ".(int) $agreementId;
         }
-        if (!$this->db->query($sql)) {
+        if (!$this->prefixQuery($sql)) {
             throw new BankConnectException('recordSyncResult failed: '.$this->db->lasterror());
         }
     }
@@ -197,7 +201,7 @@ class AgreementStore
         $sql = "SELECT * FROM llx_bankconnect_certificate"
              . " WHERE fk_agreement = ".(int) $agreementId." AND is_active = 1"
              . " ORDER BY rowid DESC LIMIT 1";
-        $res = $this->db->query($sql);
+        $res = $this->prefixQuery($sql);
         if (!$res) {
             return null;
         }
@@ -209,7 +213,7 @@ class AgreementStore
     public function listAgreements(int $entity = 1): array
     {
         $sql = "SELECT * FROM llx_bankconnect_agreement WHERE entity = ".(int) $entity." ORDER BY rowid DESC";
-        $res = $this->db->query($sql);
+        $res = $this->prefixQuery($sql);
         $out = [];
         while ($res && ($obj = $this->db->fetch_object($res))) {
             $out[] = (array) $obj;

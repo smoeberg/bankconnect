@@ -8,16 +8,20 @@
  */
 
 require_once __DIR__.'/BankConnectException.php';
+require_once __DIR__.'/BankConnectDatabasePrefix.php';
 
 class BankCertificateStore
 {
+    use BankConnectDatabasePrefix;
+
     private $db;
     private int $entity;
 
-    public function __construct($db, ?int $entity = null)
+    public function __construct($db, ?int $entity = null, ?string $prefix = null)
     {
         $this->db = $db;
         $this->entity = max(1, $entity ?? (int)($db->entity ?? 1));
+        $this->initializeDatabasePrefix($prefix);
     }
 
     /**
@@ -53,7 +57,7 @@ class BankCertificateStore
                  . " date_updated = NOW()"
                  . " WHERE datacenter = '$datacenter' AND environment = '$environment' AND entity = ".$this->entity;
             
-            if (!$this->db->query($sql)) {
+            if (!$this->prefixQuery($sql)) {
                 throw new BankConnectException('Update bank certificate failed: '.$this->db->lasterror());
             }
             return (int)$existing['rowid'];
@@ -65,10 +69,10 @@ class BankCertificateStore
              . " VALUES ("
              . $this->entity.", '$datacenter', '$environment', '$pem', $fingerprint, $from, $to, NOW())";
 
-        if (!$this->db->query($sql)) {
+        if (!$this->prefixQuery($sql)) {
             throw new BankConnectException('Save bank certificate failed: '.$this->db->lasterror());
         }
-        return (int) $this->db->last_insert_id('llx_bankconnect_bank_certificate');
+        return (int) $this->prefixLastInsertId('llx_bankconnect_bank_certificate');
     }
 
     /**
@@ -85,7 +89,7 @@ class BankCertificateStore
              . " WHERE datacenter = '$datacenter' AND environment = '$environment' AND entity = ".$this->entity
              . " ORDER BY rowid DESC LIMIT 1";
         
-        $res = $this->db->query($sql);
+        $res = $this->prefixQuery($sql);
         if (!$res) {
             return null;
         }
@@ -121,7 +125,7 @@ class BankCertificateStore
     {
         $entity = $entity ?? $this->entity;
         $sql = "SELECT * FROM llx_bankconnect_bank_certificate WHERE entity = ".(int)$entity." ORDER BY datacenter, environment, rowid DESC";
-        $res = $this->db->query($sql);
+        $res = $this->prefixQuery($sql);
         $out = [];
         while ($res && ($obj = $this->db->fetch_object($res))) {
             $out[] = (array) $obj;
@@ -135,7 +139,7 @@ class BankCertificateStore
     public function deleteBankCertificate(int $id): void
     {
         $sql = "DELETE FROM llx_bankconnect_bank_certificate WHERE rowid = ".(int)$id;
-        if (!$this->db->query($sql)) {
+        if (!$this->prefixQuery($sql)) {
             throw new BankConnectException('Delete bank certificate failed: '.$this->db->lasterror());
         }
     }

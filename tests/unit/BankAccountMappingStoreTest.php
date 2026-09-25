@@ -85,6 +85,22 @@ class BankAccountMappingStoreTest extends TestCase
         $this->assertNull($this->store->findByAgreement(1, $this->agreementId));
     }
 
+    public function testMappingUsesConfiguredDolibarrDatabasePrefix(): void
+    {
+        $db = new MockDoliDB();
+        $db->query("INSERT INTO tenant_bankconnect_agreement (entity, label, bank_connect_id, status) VALUES (1, 'Tenant agreement', 'BC-TENANT', 'active')");
+        $agreementId = (int)$db->last_insert_id('tenant_bankconnect_agreement');
+        $db->query("INSERT INTO tenant_bank_account (entity, label, clos) VALUES (1, 'Tenant account', 0)");
+        $bankAccountId = (int)$db->last_insert_id('tenant_bank_account');
+
+        $store = new BankAccountMappingStore($db, 'tenant_');
+        $mappingId = $store->map(1, $agreementId, $bankAccountId, 9);
+
+        $this->assertSame(1, $mappingId);
+        $this->assertSame(1, $db->countRows('tenant_bankconnect_account_mapping'));
+        $this->assertSame(0, $db->countRows('llx_bankconnect_account_mapping'));
+    }
+
     private function seedAgreement(int $entity, string $bankConnectId): int
     {
         $this->db->query(

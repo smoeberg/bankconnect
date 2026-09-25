@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__.'/BankConnectDatabasePrefix.php';
 /**
  * Maps a BankConnect agreement to a native Dolibarr bank account.
  *
@@ -7,12 +8,15 @@
  */
 class BankAccountMappingStore
 {
+    use BankConnectDatabasePrefix;
+
     /** @var DoliDB */
     private $db;
 
-    public function __construct($db)
+    public function __construct($db, ?string $prefix = null)
     {
         $this->db = $db;
+        $this->initializeDatabasePrefix($prefix);
     }
 
     /**
@@ -39,14 +43,14 @@ class BankAccountMappingStore
             $deleteAgreement = "DELETE FROM llx_bankconnect_account_mapping"
                 . " WHERE entity = ".$entity
                 . " AND fk_agreement = ".(int) $agreementId;
-            if (!$this->db->query($deleteAgreement)) {
+            if (!$this->prefixQuery($deleteAgreement)) {
                 throw new RuntimeException('BankConnect: mapping cleanup failed: '.$this->db->lasterror());
             }
 
             $deleteBankAccount = "DELETE FROM llx_bankconnect_account_mapping"
                 . " WHERE entity = ".$entity
                 . " AND fk_bank_account = ".(int) $bankAccountId;
-            if (!$this->db->query($deleteBankAccount)) {
+            if (!$this->prefixQuery($deleteBankAccount)) {
                 throw new RuntimeException('BankConnect: mapping cleanup failed: '.$this->db->lasterror());
             }
 
@@ -55,7 +59,7 @@ class BankAccountMappingStore
                 . " VALUES (".$entity.", ".(int) $agreementId.", ".(int) $bankAccountId
                 . ", NOW(), ".max(0, $userId).")";
 
-            if (!$this->db->query($sql)) {
+            if (!$this->prefixQuery($sql)) {
                 throw new RuntimeException('BankConnect: mapping insert failed: '.$this->db->lasterror());
             }
 
@@ -63,7 +67,7 @@ class BankAccountMappingStore
                 throw new RuntimeException('BankConnect: mapping commit failed: '.$this->db->lasterror());
             }
 
-            return (int) $this->db->last_insert_id('llx_bankconnect_account_mapping');
+            return (int) $this->prefixLastInsertId('llx_bankconnect_account_mapping');
         } catch (Throwable $e) {
             $this->db->rollback();
             throw $e;
@@ -75,7 +79,7 @@ class BankAccountMappingStore
         $sql = "DELETE FROM llx_bankconnect_account_mapping"
             . " WHERE entity = ".max(1, $entity)
             . " AND fk_agreement = ".(int) $agreementId;
-        if (!$this->db->query($sql)) {
+        if (!$this->prefixQuery($sql)) {
             throw new RuntimeException('BankConnect: mapping delete failed: '.$this->db->lasterror());
         }
     }
@@ -87,7 +91,7 @@ class BankAccountMappingStore
             . " WHERE entity = ".max(1, $entity)
             . " AND fk_agreement = ".(int) $agreementId
             . " LIMIT 1";
-        $res = $this->db->query($sql);
+        $res = $this->prefixQuery($sql);
         if (!$res) {
             return null;
         }
@@ -102,7 +106,7 @@ class BankAccountMappingStore
             . " WHERE entity = ".max(1, $entity)
             . " AND fk_bank_account = ".(int) $bankAccountId
             . " LIMIT 1";
-        $res = $this->db->query($sql);
+        $res = $this->prefixQuery($sql);
         if (!$res) {
             return null;
         }
@@ -117,7 +121,7 @@ class BankAccountMappingStore
             . " FROM llx_bankconnect_account_mapping"
             . " WHERE entity = ".max(1, $entity)
             . " ORDER BY rowid DESC";
-        $res = $this->db->query($sql);
+        $res = $this->prefixQuery($sql);
         $out = [];
         while ($res && ($obj = $this->db->fetch_object($res))) {
             $out[] = (array) $obj;
@@ -131,7 +135,7 @@ class BankAccountMappingStore
             . " WHERE rowid = ".(int) $agreementId
             . " AND entity = ".max(1, $entity)
             . " LIMIT 1";
-        $res = $this->db->query($sql);
+        $res = $this->prefixQuery($sql);
         if (!$res || !$this->db->fetch_object($res)) {
             throw new RuntimeException('BankConnect: agreement does not exist in this entity');
         }
@@ -144,7 +148,7 @@ class BankAccountMappingStore
             . " AND entity = ".max(1, $entity)
             . " AND clos = 0"
             . " LIMIT 1";
-        $res = $this->db->query($sql);
+        $res = $this->prefixQuery($sql);
         if (!$res || !$this->db->fetch_object($res)) {
             throw new RuntimeException('BankConnect: bank account does not exist, is closed, or belongs to another entity');
         }
