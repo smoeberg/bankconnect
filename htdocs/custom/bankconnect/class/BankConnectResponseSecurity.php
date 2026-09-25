@@ -41,8 +41,8 @@ class BankConnectResponseSecurity
         return $responseXml;
     }
 
-    /** Verify the pinned bank's business signature on an unencrypted response. */
-    public function verifyBusinessSignature(string $responseXml, string $expectedOperation): string
+    /** Verify the pinned bank's business signature after any transport decryption. */
+    public function verifyBusinessSignature(string $responseXml, string $expectedOperation, bool $allowEmpty = false): string
     {
         $this->validateStructure($responseXml);
         $doc = $this->loadDocument($responseXml);
@@ -58,6 +58,11 @@ class BankConnectResponseSecurity
         }
         $operation = $operations->item(0);
         $children = $xp->query('./*', $operation);
+        // Get operations have an empty response when the bank has no message.
+        // The SOAP Body has already been verified by WS-Security in this case.
+        if ($allowEmpty && $children->length === 0) {
+            return $responseXml;
+        }
         $messages = $xp->query('./bc:corporateMessage', $operation);
         $signatures = $xp->query('./ds:Signature', $operation);
         if ($children->length !== 2 || $messages->length !== 1 || $signatures->length !== 1) {

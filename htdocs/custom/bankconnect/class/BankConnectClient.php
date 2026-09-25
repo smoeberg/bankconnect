@@ -103,6 +103,21 @@ class BankConnectClient
                 $expectedResponse = $this->expectedResponseOperation($operation);
                 $verifiedResponse = $responseSecurity->verify($response);
                 $response = $responseSecurity->decrypt($verifiedResponse, $expectedResponse);
+                if ($operation !== self::OP_TRANSFER_PAYMENTS) {
+                    // The decrypted corporateMessage has its own bank signature.
+                    // Get operations may return an empty response with no message.
+                    $response = $responseSecurity->verifyBusinessSignature(
+                        $response,
+                        $expectedResponse,
+                        in_array($operation, [
+                            self::OP_GET_STATUS,
+                            self::OP_GET_CUSTOMER_STATEMENT,
+                            self::OP_GET_CUSTOMER_ACCOUNT_REPORT,
+                            self::OP_GET_DEBIT_CREDIT_NOTIFICATION,
+                            self::OP_GET_ALTERNATE,
+                        ], true)
+                    );
+                }
             }
             $duration = (int) ((microtime(true) - $start) * 1000);
             $this->logger->info('soap_call', [
