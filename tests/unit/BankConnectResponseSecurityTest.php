@@ -212,6 +212,20 @@ final class BankConnectResponseSecurityTest extends TestCase
         $this->assertSame('getStatusResponse', $nodes->item(0)->localName);
     }
 
+    public function testSignedPlaintextCannotBypassRequiredResponseEncryption(): void
+    {
+        $verified = $this->security()->verify($this->response(), 'getStatusResponse');
+        $this->expectException(BankConnectException::class);
+        $this->expectExceptionMessage('response encryption is required');
+        $this->security()->decrypt($verified, 'getStatusResponse');
+    }
+
+    public function testPlaintextCanBeAllowedOnlyForAnOperationWithoutResponseEncryption(): void
+    {
+        $verified = $this->security()->verify($this->response(), 'getStatusResponse');
+        $this->assertSame($verified, $this->security()->decrypt($verified, 'getStatusResponse', false));
+    }
+
     public function testVerifiedEncryptedResponseIsDecryptedAndValidated(): void
     {
         $encrypted = $this->encryptedResponse();

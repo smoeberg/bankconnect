@@ -199,10 +199,10 @@ class BankConnectResponseSecurity
      * Decrypt an already verified SOAP response when the body uses XML Encryption.
      *
      * The response MUST have passed verify() first. Decryption never establishes
-     * trust; it only unwraps the already authenticated encrypted body. Plaintext
-     * responses are accepted unchanged after structural/operation validation.
+     * trust; it only unwraps the already authenticated encrypted body. For
+     * operations requiring response encryption, plaintext must fail closed.
      */
-    public function decrypt(string $verifiedXml, ?string $expectedOperation = null): string
+    public function decrypt(string $verifiedXml, ?string $expectedOperation = null, bool $requireEncryption = true): string
     {
         $doc = $this->loadDocument($verifiedXml);
         $soapNs = 'http://schemas.xmlsoap.org/soap/envelope/';
@@ -234,6 +234,9 @@ class BankConnectResponseSecurity
         }
 
         if ($children[0]->namespaceURI !== $xencNs || $children[0]->localName !== 'EncryptedData') {
+            if ($requireEncryption) {
+                throw new BankConnectException('BankConnect response encryption is required');
+            }
             $this->validateDecryptedOperation($body, $bcNs, $expectedOperation);
             return $verifiedXml;
         }
