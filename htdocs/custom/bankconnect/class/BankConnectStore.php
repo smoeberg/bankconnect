@@ -8,8 +8,23 @@ require_once __DIR__.'/Candidate.php';
 class BankConnectStore
 {
     private $db;
+    private $prefix;
 
-    public function __construct($db) { $this->db = $db; }
+    public function __construct($db, ?string $prefix = null)
+    {
+        $this->db = $db;
+        $this->prefix = $prefix ?? (defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_');
+    }
+
+    /**
+     * Execute module SQL after resolving Dolibarr's configurable table prefix.
+     * Keeping the replacement at this persistence boundary also covers older
+     * queries while they are progressively converted to explicit table names.
+     */
+    private function query(string $sql)
+    {
+        return $this->db->query(str_replace('llx_', $this->prefix, $sql));
+    }
 
     public function upsertTransaction(array $t, int $fkBankAccount, string $sourceFile): int
     {
@@ -62,15 +77,15 @@ class BankConnectStore
             'unmatched',NOW())
             ON DUPLICATE KEY UPDATE rowid=rowid";
 
-        if (!$this->db->query($sql)) {
+        if (!$this->query($sql)) {
             throw new RuntimeException('BankConnect: transaction upsert failed: '.$this->db->lasterror());
         }
 
-        $affectedRes = $this->db->query('SELECT ROW_COUNT() AS affected');
+        $affectedRes = $this->query('SELECT ROW_COUNT() AS affected');
         $affected = $affectedRes ? $this->db->fetch_object($affectedRes) : false;
         $duplicate = $affected && (int)$affected->affected === 0;
 
-        $res = $this->db->query("SELECT rowid, fk_bankentry, bank_entry_state FROM llx_bankconnect_transaction WHERE hash='".$this->db->escape($hash)."' AND fk_bank_account=".(int)$fkBankAccount);
+        $res = $this->query("SELECT rowid, fk_bankentry, bank_entry_state FROM llx_bankconnect_transaction WHERE hash='".$this->db->escape($hash)."' AND fk_bank_account=".(int)$fkBankAccount);
         if (!$res || !($obj=$this->db->fetch_object($res))) {
             throw new RuntimeException('BankConnect: transaction upsert succeeded but row cannot be reloaded');
         }
@@ -113,7 +128,7 @@ class BankConnectStore
         $sql = "SELECT rowid, fk_bankentry, bank_entry_state FROM llx_bankconnect_transaction"
             ." WHERE fk_bank_account=".(int)$fkBankAccount
             ." AND acct_svcr_ref='".$this->db->escape($accountReference)."' LIMIT 1";
-        $res = $this->db->query($sql);
+        $res = $this->query($sql);
         $row = $res ? $this->db->fetch_object($res) : false;
         return $row ?: null;
     }
@@ -136,7 +151,7 @@ class BankConnectStore
      */
     public function claimBankEntry(int $transactionId): bool
     {
-        $res = $this->db->query('SELECT fk_bankentry, bank_entry_state FROM llx_bankconnect_transaction WHERE rowid='.(int)$transactionId);
+        $res = $this->query('SELECT fk_bankentry, bank_entry_state FROM llx_bankconnect_transaction WHERE rowid='.(int)$transactionId);
         $row = $res ? $this->db->fetch_object($res) : false;
         if (!$row || !empty($row->fk_bankentry) || !in_array((string)$row->bank_entry_state, ['pending', 'error', 'deferred'], true)) {
             return false;
@@ -149,11 +164,11 @@ class BankConnectStore
         $sql = "UPDATE llx_bankconnect_transaction SET bank_entry_state='creating', bank_entry_error=NULL"
             ." WHERE rowid=".(int)$transactionId
             ." AND fk_bankentry IS NULL AND bank_entry_state='".$this->db->escape($previousState)."'";
-        if (!$this->db->query($sql)) {
+        if (!$this->query($sql)) {
             throw new RuntimeException('BankConnect: bank entry reservation failed: '.$this->db->lasterror());
         }
 
-        $affectedRes = $this->db->query('SELECT ROW_COUNT() AS affected');
+        $affectedRes = $this->query('SELECT ROW_COUNT() AS affected');
         $affected = $affectedRes ? $this->db->fetch_object($affectedRes) : false;
         return $affected && (int)$affected->affected === 1;
     }
@@ -166,10 +181,10 @@ class BankConnectStore
         $sql = "UPDATE llx_bankconnect_transaction SET fk_bankentry=".(int)$bankEntryId
             .", bank_entry_state='linked', bank_entry_error=NULL"
             ." WHERE rowid=".(int)$transactionId." AND bank_entry_state='creating' AND fk_bankentry IS NULL";
-        if (!$this->db->query($sql)) {
+        if (!$this->query($sql)) {
             throw new RuntimeException('BankConnect: bank entry link failed: '.$this->db->lasterror());
         }
-		$affectedRes = $this->db->query('SELECT ROW_COUNT() AS affected');
+		$affectedRes = $this->query('SELECT ROW_COUNT() AS affected');
 		$affected = $affectedRes ? $this->db->fetch_object($affectedRes) : false;
 		if (!$affected || (int)$affected->affected !== 1) {
 			throw new RuntimeException('BankConnect: bank entry link lost its reservation');
@@ -185,7 +200,7 @@ class BankConnectStore
     {
         $sql = "UPDATE llx_bankconnect_transaction SET bank_entry_state='deferred', bank_entry_error=NULL"
             ." WHERE rowid=".(int)$transactionId." AND fk_bankentry IS NULL";
-        if (!$this->db->query($sql)) {
+        if (!$this->query($sql)) {
             throw new RuntimeException('BankConnect: reversal deferral could not be saved: '.$this->db->lasterror());
         }
     }
@@ -195,7 +210,7 @@ class BankConnectStore
         $error = substr($error, 0, 255);
         $sql = "UPDATE llx_bankconnect_transaction SET bank_entry_state='error', bank_entry_error='"
             .$this->db->escape($error)."' WHERE rowid=".(int)$transactionId." AND fk_bankentry IS NULL";
-        if (!$this->db->query($sql)) {
+        if (!$this->query($sql)) {
             throw new RuntimeException('BankConnect: bank entry failure state could not be saved: '.$this->db->lasterror());
         }
     }
@@ -212,9 +227,9 @@ class BankConnectStore
         $sql="INSERT INTO llx_bankconnect_match (fk_transaction,match_type,rule_name,fk_bankentry,score,reason)
               VALUES (".$txRowid.",'".$this->db->escape($matchType)."',".$this->nullable($ruleName).",
               ".$this->nullableInt($fkBankentry).",".(float)$score.",'".$this->db->escape($reason)."')";
-        if(!$this->db->query($sql)) throw new RuntimeException('BankConnect: save match failed: '.$this->db->lasterror());
+        if(!$this->query($sql)) throw new RuntimeException('BankConnect: save match failed: '.$this->db->lasterror());
 
-        $matchId = (int)$this->db->last_insert_id('llx_bankconnect_match');
+        $matchId = (int)$this->db->last_insert_id($this->prefix.'bankconnect_match');
         foreach ($suggested as $candidate) {
             $id = (string)($candidate['id'] ?? '');
             $type = (string)($candidate['type'] ?? '');
@@ -229,7 +244,7 @@ class BankConnectStore
                 VALUES (".$matchId.",'".$this->db->escape($id)."','".$this->db->escape($type)."',"
                 .$refSql.",".$amount.",0,NOW())
                 ON DUPLICATE KEY UPDATE candidate_ref=VALUES(candidate_ref), amount=VALUES(amount)";
-            if (!$this->db->query($candidateSql)) {
+            if (!$this->query($candidateSql)) {
                 throw new RuntimeException('BankConnect: save match candidate failed: '.$this->db->lasterror());
             }
         }
@@ -245,7 +260,7 @@ class BankConnectStore
                 FROM llx_bankconnect_match_candidate
                 WHERE fk_match = ".(int)$matchRowid."
                 ORDER BY rowid ASC";
-        $res = $this->db->query($sql);
+        $res = $this->query($sql);
         $out = [];
         while ($res && ($o = $this->db->fetch_object($res))) {
             $out[] = (array)$o;
@@ -256,7 +271,7 @@ class BankConnectStore
 	/** @return list<array<string,mixed>> */
 	public function proposedMatchesForAccount(int $bankAccountId): array
 	{
-		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$prefix = $this->prefix;
 		$sql = 'SELECT m.rowid AS match_rowid, m.match_type, m.rule_name, m.score, m.reason,'
 			.' t.rowid, t.tx_date, t.amount, t.currency, t.reference, t.counterparty, t.acct_svcr_ref,'
 			.' t.is_reversal, t.requires_manual_review, t.fk_bankentry, t.hash, t.statement_id, t.transaction_id'
@@ -264,7 +279,7 @@ class BankConnectStore
 			.' JOIN '.$prefix.'bankconnect_transaction t ON t.rowid=m.fk_transaction'
 			.' WHERE t.fk_bank_account='.(int)$bankAccountId." AND t.state='proposed' AND m.approved_by IS NULL"
 			.' ORDER BY t.tx_date DESC, m.rowid DESC';
-		$res = $this->db->query($sql);
+		$res = $this->query($sql);
 		$out = [];
 		while ($res && ($row = $this->db->fetch_object($res))) {
 			$item = (array)$row;
@@ -277,12 +292,12 @@ class BankConnectStore
 	/** @return array<string,mixed> */
 	public function transactionForMatch(int $matchRowid, int $bankAccountId): array
 	{
-		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$prefix = $this->prefix;
 		$sql = 'SELECT t.* FROM '.$prefix.'bankconnect_match m'
 			.' JOIN '.$prefix.'bankconnect_transaction t ON t.rowid=m.fk_transaction'
 			.' WHERE m.rowid='.(int)$matchRowid.' AND t.fk_bank_account='.(int)$bankAccountId
 			." AND t.state='proposed' AND m.approved_by IS NULL LIMIT 1";
-		$res = $this->db->query($sql);
+		$res = $this->query($sql);
 		$row = $res ? $this->db->fetch_object($res) : false;
 		if (!$row) {
 			throw new RuntimeException('BankConnect: proposed match does not belong to this bank account');
@@ -293,8 +308,8 @@ class BankConnectStore
 	/** @return array<string,mixed> */
 	public function transactionForAccount(int $transactionId, int $bankAccountId): array
 	{
-		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
-		$res = $this->db->query('SELECT * FROM '.$prefix.'bankconnect_transaction WHERE rowid='.(int)$transactionId.' AND fk_bank_account='.(int)$bankAccountId.' LIMIT 1');
+		$prefix = $this->prefix;
+		$res = $this->query('SELECT * FROM '.$prefix.'bankconnect_transaction WHERE rowid='.(int)$transactionId.' AND fk_bank_account='.(int)$bankAccountId.' LIMIT 1');
 		$row = $res ? $this->db->fetch_object($res) : false;
 		if (!$row) {
 			throw new RuntimeException('BankConnect: transaction does not belong to this bank account');
@@ -304,16 +319,16 @@ class BankConnectStore
 
 	public function ensureMatchCandidate(int $matchRowid, Candidate $candidate): int
 	{
-		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$prefix = $this->prefix;
 		$sql = 'INSERT INTO '.$prefix.'bankconnect_match_candidate'
 			.' (fk_match,candidate_id,candidate_type,candidate_ref,amount,selected,created_at) VALUES ('
 			.(int)$matchRowid.",'".$this->db->escape((string)$candidate->id)."','".$this->db->escape($candidate->type)."','"
 			.$this->db->escape($candidate->ref)."',".(float)$candidate->remaining.',0,NOW())'
 			.' ON DUPLICATE KEY UPDATE candidate_ref=VALUES(candidate_ref), amount=VALUES(amount)';
-		if (!$this->db->query($sql)) {
+		if (!$this->query($sql)) {
 			throw new RuntimeException('BankConnect: candidate could not be attached to match: '.$this->db->lasterror());
 		}
-		$res = $this->db->query('SELECT rowid FROM '.$prefix.'bankconnect_match_candidate'
+		$res = $this->query('SELECT rowid FROM '.$prefix.'bankconnect_match_candidate'
 			.' WHERE fk_match='.(int)$matchRowid." AND candidate_id='".$this->db->escape((string)$candidate->id)."'"
 			." AND candidate_type='".$this->db->escape($candidate->type)."' LIMIT 1");
 		$row = $res ? $this->db->fetch_object($res) : false;
@@ -326,13 +341,13 @@ class BankConnectStore
 	/** @return array<string,mixed> */
 	public function approvedMatchForLink(int $matchRowid, int $bankAccountId): array
 	{
-		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$prefix = $this->prefix;
 		$sql = 'SELECT m.rowid AS match_rowid, m.link_state, m.link_error, t.rowid AS transaction_rowid,'
 			.' t.fk_bank_account, t.tx_date, t.amount, t.currency, t.reference, t.counterparty, t.fk_bankentry, t.state'
 			.' FROM '.$prefix.'bankconnect_match m JOIN '.$prefix.'bankconnect_transaction t ON t.rowid=m.fk_transaction'
 			.' WHERE m.rowid='.(int)$matchRowid.' AND m.approved_by IS NOT NULL'
 			.' AND t.fk_bank_account='.(int)$bankAccountId." AND t.state IN ('approved','linked') LIMIT 1";
-		$res = $this->db->query($sql);
+		$res = $this->query($sql);
 		$row = $res ? $this->db->fetch_object($res) : false;
 		if (!$row) throw new RuntimeException('BankConnect: approved match does not belong to this bank account');
 		$result = (array)$row;
@@ -346,13 +361,13 @@ class BankConnectStore
 	/** @return list<array<string,mixed>> */
 	public function approvedMatchesAwaitingLink(int $bankAccountId): array
 	{
-		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$prefix = $this->prefix;
 		$sql = 'SELECT m.rowid AS match_rowid, m.link_state, m.link_error, t.rowid, t.tx_date, t.amount, t.currency,'
 			.' t.reference, t.counterparty, t.fk_bankentry FROM '.$prefix.'bankconnect_match m'
 			.' JOIN '.$prefix.'bankconnect_transaction t ON t.rowid=m.fk_transaction'
 			.' WHERE m.approved_by IS NOT NULL AND t.fk_bank_account='.(int)$bankAccountId
 			." AND t.state='approved' AND (m.link_state IN ('pending','error') OR (m.link_state='linking' AND m.linked_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE))) ORDER BY t.tx_date DESC";
-		$res = $this->db->query($sql);
+		$res = $this->query($sql);
 		$out = [];
 		while ($res && ($row = $this->db->fetch_object($res))) $out[] = (array)$row;
 		return $out;
@@ -361,13 +376,13 @@ class BankConnectStore
 	/** @return list<array<string,mixed>> */
 	public function linkedMatchesForAccount(int $bankAccountId): array
 	{
-		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$prefix = $this->prefix;
 		$sql = 'SELECT m.rowid AS match_rowid, m.linked_at, t.rowid, t.tx_date, t.amount, t.currency,'
 			.' t.reference, t.counterparty, t.fk_bankentry FROM '.$prefix.'bankconnect_match m'
 			.' JOIN '.$prefix.'bankconnect_transaction t ON t.rowid=m.fk_transaction'
 			.' WHERE m.approved_by IS NOT NULL AND m.link_state=\'linked\' AND t.fk_bank_account='.(int)$bankAccountId
 			." AND t.state='linked' ORDER BY t.tx_date DESC, m.rowid DESC LIMIT 100";
-		$res = $this->db->query($sql);
+		$res = $this->query($sql);
 		$out = [];
 		while ($res && ($row = $this->db->fetch_object($res))) $out[] = (array)$row;
 		return $out;
@@ -375,12 +390,12 @@ class BankConnectStore
 
 	public function claimMatchLink(int $matchRowid): string
 	{
-		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$prefix = $this->prefix;
 		$token = bin2hex(random_bytes(16));
 		$sql = 'UPDATE '.$prefix."bankconnect_match SET link_state='linking', link_token='".$this->db->escape($token)."', link_error=NULL, linked_at=NOW()"
 			.' WHERE rowid='.(int)$matchRowid." AND approved_by IS NOT NULL AND (link_state IN ('pending','error') OR (link_state='linking' AND linked_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE)))";
-		if (!$this->db->query($sql)) throw new RuntimeException('BankConnect: link claim failed: '.$this->db->lasterror());
-		$res = $this->db->query('SELECT link_token FROM '.$prefix.'bankconnect_match WHERE rowid='.(int)$matchRowid." AND link_state='linking' LIMIT 1");
+		if (!$this->query($sql)) throw new RuntimeException('BankConnect: link claim failed: '.$this->db->lasterror());
+		$res = $this->query('SELECT link_token FROM '.$prefix.'bankconnect_match WHERE rowid='.(int)$matchRowid." AND link_state='linking' LIMIT 1");
 		$row = $res ? $this->db->fetch_object($res) : false;
 		if (!$row || !hash_equals($token, (string)$row->link_token)) throw new RuntimeException('BankConnect: match is already being linked');
 		return $token;
@@ -388,13 +403,13 @@ class BankConnectStore
 
 	public function completeMatchLink(int $matchRowid, string $token, int $transactionId, int $userId, string $detail): void
 	{
-		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$prefix = $this->prefix;
 		$this->db->begin();
 		try {
 			$sql = 'UPDATE '.$prefix."bankconnect_match SET link_state='linked', link_token=NULL, link_error=NULL, linked_at=NOW()"
 				.' WHERE rowid='.(int)$matchRowid." AND link_state='linking' AND link_token='".$this->db->escape($token)."'";
-			if (!$this->db->query($sql)) throw new RuntimeException('BankConnect: link completion failed: '.$this->db->lasterror());
-			$res = $this->db->query('SELECT link_state FROM '.$prefix.'bankconnect_match WHERE rowid='.(int)$matchRowid.' LIMIT 1');
+			if (!$this->query($sql)) throw new RuntimeException('BankConnect: link completion failed: '.$this->db->lasterror());
+			$res = $this->query('SELECT link_state FROM '.$prefix.'bankconnect_match WHERE rowid='.(int)$matchRowid.' LIMIT 1');
 			$row = $res ? $this->db->fetch_object($res) : false;
 			if (!$row || (string)$row->link_state !== 'linked') throw new RuntimeException('BankConnect: link claim was lost before completion');
 			$this->setTransactionState($transactionId, 'linked');
@@ -412,11 +427,11 @@ class BankConnectStore
 
 	public function failMatchLink(int $matchRowid, string $token, string $error): void
 	{
-		$prefix = defined('MAIN_DB_PREFIX') ? MAIN_DB_PREFIX : 'llx_';
+		$prefix = $this->prefix;
 		$error = substr($error, 0, 255);
 		$sql = 'UPDATE '.$prefix."bankconnect_match SET link_state='error', link_token=NULL, link_error='".$this->db->escape($error)."'"
 			.' WHERE rowid='.(int)$matchRowid." AND link_state='linking' AND link_token='".$this->db->escape($token)."'";
-		if (!$this->db->query($sql)) throw new RuntimeException('BankConnect: link failure state could not be saved: '.$this->db->lasterror());
+		if (!$this->query($sql)) throw new RuntimeException('BankConnect: link failure state could not be saved: '.$this->db->lasterror());
 	}
 
     /**
@@ -432,12 +447,12 @@ class BankConnectStore
 
         $this->db->begin();
         try {
-            $matchRes = $this->db->query("SELECT fk_transaction FROM llx_bankconnect_match WHERE rowid=".(int)$matchRowid." LIMIT 1");
+            $matchRes = $this->query("SELECT fk_transaction FROM llx_bankconnect_match WHERE rowid=".(int)$matchRowid." LIMIT 1");
             if (!$matchRes || !($match = $this->db->fetch_object($matchRes))) {
                 throw new RuntimeException('BankConnect: match not found: '.$matchRowid);
             }
 
-            if (!$this->db->query("UPDATE llx_bankconnect_match_candidate SET selected=0 WHERE fk_match=".(int)$matchRowid)) {
+            if (!$this->query("UPDATE llx_bankconnect_match_candidate SET selected=0 WHERE fk_match=".(int)$matchRowid)) {
                 throw new RuntimeException('BankConnect: candidate reset failed: '.$this->db->lasterror());
             }
 
@@ -445,10 +460,10 @@ class BankConnectStore
                 $sql = "UPDATE llx_bankconnect_match_candidate
                         SET selected=1
                         WHERE rowid=".(int)$candidateRowId." AND fk_match=".(int)$matchRowid;
-                if (!$this->db->query($sql)) {
+                if (!$this->query($sql)) {
                     throw new RuntimeException('BankConnect: candidate selection failed: '.$this->db->lasterror());
                 }
-                $verify = $this->db->query("SELECT rowid FROM llx_bankconnect_match_candidate WHERE rowid=".(int)$candidateRowId." AND fk_match=".(int)$matchRowid." AND selected=1");
+                $verify = $this->query("SELECT rowid FROM llx_bankconnect_match_candidate WHERE rowid=".(int)$candidateRowId." AND fk_match=".(int)$matchRowid." AND selected=1");
                 if (!$verify || !$this->db->fetch_object($verify)) {
                     throw new RuntimeException('BankConnect: invalid match candidate '.$candidateRowId);
                 }
@@ -474,7 +489,7 @@ class BankConnectStore
     public function approveMatch(int $matchRowid,int $userId): void
     {
         $sql="UPDATE llx_bankconnect_match SET approved_by=".(int)$userId.",approved_at=NOW() WHERE rowid=".(int)$matchRowid;
-        if(!$this->db->query($sql)) throw new RuntimeException('BankConnect: approve failed: '.$this->db->lasterror());
+        if(!$this->query($sql)) throw new RuntimeException('BankConnect: approve failed: '.$this->db->lasterror());
         $txid=$this->txOfMatch($matchRowid);
         $this->setTransactionState($txid,'approved');
         $this->audit($userId,'match_approved','match rowid '.$matchRowid.' tx '.$txid);
@@ -490,12 +505,12 @@ class BankConnectStore
     public function setTransactionState(int $txRowid,string $state): void
     {
         $sql="UPDATE llx_bankconnect_transaction SET state='".$this->db->escape($state)."' WHERE rowid=".(int)$txRowid;
-        if(!$this->db->query($sql)) throw new RuntimeException('BankConnect: state update failed: '.$this->db->lasterror());
+        if(!$this->query($sql)) throw new RuntimeException('BankConnect: state update failed: '.$this->db->lasterror());
     }
 
     public function transactionState(int $txRowid): string
     {
-        $res=$this->db->query('SELECT state FROM llx_bankconnect_transaction WHERE rowid='.(int)$txRowid);
+        $res=$this->query('SELECT state FROM llx_bankconnect_transaction WHERE rowid='.(int)$txRowid);
         if($res && $o=$this->db->fetch_object($res)) return (string)$o->state;
         throw new RuntimeException('BankConnect: transaction not found: '.$txRowid);
     }
@@ -504,27 +519,27 @@ class BankConnectStore
     {
         $sql="INSERT INTO llx_bankconnect_audit (datetime_event,fk_user,event_type,detail)
               VALUES (NOW(),".(int)$userId.",'".$this->db->escape($eventType)."','".$this->db->escape($detail)."')";
-        if(!$this->db->query($sql)) throw new RuntimeException('BankConnect: audit insert failed: '.$this->db->lasterror());
+        if(!$this->query($sql)) throw new RuntimeException('BankConnect: audit insert failed: '.$this->db->lasterror());
     }
 
     public function unmatchedTransactions(int $fkBankAccount): array
     {
         $sql="SELECT rowid,tx_date,amount,currency,reference,counterparty,acct_svcr_ref,is_reversal,requires_manual_review,cam_file,fk_bankentry,bank_entry_state,bank_entry_error,hash,statement_id,transaction_id
               FROM llx_bankconnect_transaction WHERE fk_bank_account=".(int)$fkBankAccount." AND state='unmatched' ORDER BY tx_date DESC";
-        $res=$this->db->query($sql); $out=[];
+        $res=$this->query($sql); $out=[];
         while($res && $o=$this->db->fetch_object($res)) $out[]=(array)$o;
         return $out;
     }
 
     public function unmatchedCount(int $fkBankAccount): int
     {
-        $res=$this->db->query('SELECT COUNT(*) AS c FROM llx_bankconnect_transaction WHERE fk_bank_account='.(int)$fkBankAccount." AND state='unmatched'");
+        $res=$this->query('SELECT COUNT(*) AS c FROM llx_bankconnect_transaction WHERE fk_bank_account='.(int)$fkBankAccount." AND state='unmatched'");
         return $res ? (int)$this->db->fetch_object($res)->c : 0;
     }
 
     private function txOfMatch(int $matchRowid): int
     {
-        $res=$this->db->query('SELECT fk_transaction FROM llx_bankconnect_match WHERE rowid='.(int)$matchRowid);
+        $res=$this->query('SELECT fk_transaction FROM llx_bankconnect_match WHERE rowid='.(int)$matchRowid);
         if(!$res || !($o=$this->db->fetch_object($res))) throw new RuntimeException('BankConnect: match not found: '.$matchRowid);
         return (int)$o->fk_transaction;
     }
