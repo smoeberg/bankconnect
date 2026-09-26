@@ -144,6 +144,13 @@ $conf->global['BANKCONNECT_RULE_AMOUNT_TOLERANCE'] = 0.05;
 // Required before live TransferPayment. Controls the normative v3.7
 // transport-signature/encryption order: BANKDATA, NBS or BEC.
 $conf->global['BANKCONNECT_DATACENTER'] = 'BANKDATA';
+
+// Required before onboarding: use the trusted root CA for the selected
+// BankConnect datacenter AND environment from the official developer package.
+// Example for BANKDATA system test (never use the test CA in production):
+$conf->global['BANKCONNECT_TRUSTED_CA_PEM'] = file_get_contents(
+    '/secure/path/to/BD BankConnect CA-test .pem'
+);
 ```
 
 Bankdata systemtest uses `BANKDATA`. BEC production requires a different
@@ -174,7 +181,9 @@ draft -> validated -> approved -> sent -> accepted/rejected/unknown
   `sanitizeContext()`, så nøglenavne som `api_key` og `private_key`
   aldrig lander i klartekst.
 - Bankcertifikater hentes automatisk fra banken under onboarding
-  (`getBankCertificate`) og lagres krypteret — ingen manuel konfiguration.
+  (`getBankCertificate`) og lagres krypteret. Svarsignaturen og certifikatkæden
+  kontrolleres mod en eksplicit konfigureret BankConnect-root-CA før lagring;
+  CA-certifikatet skal komme fra en betroet kopi af den officielle pakke.
 - Respons-side: verificeret dekrypteringsgrænse før parsing.
 
 ## Tests

@@ -18,6 +18,7 @@ require_once __DIR__.'/BankConnectException.php';
 require_once __DIR__.'/BankConnectLogger.php';
 require_once __DIR__.'/BankConnectXmlSecurity.php';
 require_once __DIR__.'/BankConnectResponseSecurity.php';
+require_once __DIR__.'/BankConnectBootstrapVerifier.php';
 require_once __DIR__.'/BankConnectEndpointPolicy.php';
 
 if (!class_exists('Conf')) {
@@ -91,7 +92,7 @@ class BankConnectClient
             $response = $this->httpPost($envelope, $operation);
             $responseSecurity = new BankConnectResponseSecurity($this->conf);
             if ($operation === self::OP_GET_BANK_CERTIFICATE) {
-                $responseSecurity->validateStructure($response);
+                (new BankConnectBootstrapVerifier($this->conf))->verify($response);
             } elseif ($operation === self::OP_ACTIVATE_SERVICE_AGREEMENT) {
                 // Activation has no WS-Security signature or response encryption.
                 // Its corporateMessage carries the bank's business signature.
