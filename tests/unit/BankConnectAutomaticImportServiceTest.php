@@ -6,6 +6,67 @@ require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectAutomati
 
 class BankConnectAutomaticImportServiceTest extends TestCase
 {
+	public function testUnusableMappedBankAccountStopsBeforeNetworkAndKeepsCursor(): void
+	{
+		$agreements = new class extends AgreementStore {
+			public array $syncResults = [];
+			public bool $cursorAdvanced = false;
+			public function __construct() {}
+			public function getAgreement(int $id): ?array
+			{
+				return ['rowid' => $id, 'entity' => 1, 'status' => 'active'];
+			}
+			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void
+			{
+				$this->syncResults[] = [$agreementId, $summary, $error];
+			}
+			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void
+			{
+				$this->cursorAdvanced = true;
+			}
+		};
+		$mappings = new class extends BankAccountMappingStore {
+			public array $checked = [];
+			public function __construct() {}
+			public function listMappings(int $entity): array
+			{
+				return [['rowid' => 55, 'entity' => $entity, 'fk_agreement' => 9, 'fk_bank_account' => 1004]];
+			}
+			public function assertUsableBankAccount(int $entity, int $bankAccountId): void
+			{
+				$this->checked[] = [$entity, $bankAccountId];
+				throw new RuntimeException('BankConnect: bank account does not exist, is closed, or belongs to another entity');
+			}
+		};
+		$importer = new class extends ImportService {
+			public function __construct() {}
+			public function import(string $xml, int $fkBankAccount = 0, string $sourceFile = 'import', $user = null): array
+			{
+				throw new RuntimeException('unexpected import');
+			}
+		};
+		$clients = new class extends BankConnectClientFactory {
+			public bool $called = false;
+			public function __construct() {}
+			public function create(array $agreement): BankConnectClient
+			{
+				$this->called = true;
+				throw new RuntimeException('unexpected network call');
+			}
+		};
+
+		$result = (new BankConnectAutomaticImportService($agreements, $mappings, $importer, $clients))
+			->run(1, (object)['id' => 1]);
+		$error = 'BankConnect: bank account does not exist, is closed, or belongs to another entity';
+		$this->assertSame([[1, 1004]], $mappings->checked);
+		$this->assertSame(1, $result['agreements']);
+		$this->assertSame(0, $result['imported']);
+		$this->assertSame(['Agreement #9: '.$error], $result['errors']);
+		$this->assertSame([[9, '', $error]], $agreements->syncResults);
+		$this->assertFalse($agreements->cursorAdvanced);
+		$this->assertFalse($clients->called);
+	}
+
 	public function testForeignEntityAgreementIsRejectedBeforeNetworkOrStateChange(): void
 	{
 		$agreements = new class extends AgreementStore {
@@ -20,6 +81,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		};
 		$mappings = new class extends BankAccountMappingStore {
 			public function __construct() {}
+			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array
 			{
 				return [['rowid' => 55, 'entity' => $entity, 'fk_agreement' => 9, 'fk_bank_account' => 1004]];
@@ -79,6 +141,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		};
 		$mappings = new class extends BankAccountMappingStore {
 			public function __construct() {}
+			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array
 			{
 				return [
@@ -151,6 +214,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		};
 		$mappings = new class extends BankAccountMappingStore {
 			public function __construct() {}
+			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array
 			{
 				return [['fk_agreement' => 1, 'fk_bank_account' => 1004]];
@@ -195,6 +259,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		};
 		$mappings = new class extends BankAccountMappingStore {
 			public function __construct() {}
+			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array
 			{
 				return [['fk_agreement' => 1, 'fk_bank_account' => 1004]];
@@ -264,6 +329,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		};
 		$mappings = new class extends BankAccountMappingStore {
 			public function __construct() {}
+			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array
 			{
 				return [['fk_agreement' => 1, 'fk_bank_account' => 1004]];
@@ -315,6 +381,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		};
 		$mappings = new class extends BankAccountMappingStore {
 			public function __construct() {}
+			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array { return [['fk_agreement' => 1, 'fk_bank_account' => 1004]]; }
 		};
 		$importer = new class extends ImportService {
@@ -357,6 +424,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		};
 		$mappings = new class extends BankAccountMappingStore {
 			public function __construct() {}
+			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array { return [['fk_agreement' => 1, 'fk_bank_account' => 1004]]; }
 		};
 		$importer = new class extends ImportService {
@@ -409,6 +477,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		};
 		$mappings = new class extends BankAccountMappingStore {
 			public function __construct() {}
+			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array { return [['fk_agreement' => 1, 'fk_bank_account' => 1004]]; }
 		};
 		$importer = new class extends ImportService {
@@ -451,6 +520,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		};
 		$mappings = new class extends BankAccountMappingStore {
 			public function __construct() {}
+			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array { return [['fk_agreement' => 1, 'fk_bank_account' => 1004]]; }
 		};
 		$importer = new class extends ImportService {

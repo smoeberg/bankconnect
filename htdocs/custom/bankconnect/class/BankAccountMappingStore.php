@@ -129,6 +129,12 @@ class BankAccountMappingStore
         return $out;
     }
 
+    /** Recheck a mapped account before import; it may have been closed since mapping. */
+    public function assertUsableBankAccount(int $entity, int $bankAccountId): void
+    {
+        $this->assertBankAccount(max(1, $entity), $bankAccountId);
+    }
+
     private function assertAgreement(int $entity, int $agreementId): void
     {
         $sql = "SELECT rowid FROM llx_bankconnect_agreement"
