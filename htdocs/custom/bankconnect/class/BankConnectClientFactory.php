@@ -3,6 +3,7 @@ require_once __DIR__.'/BankConnectClient.php';
 require_once __DIR__.'/BankConnectCertificateManager.php';
 require_once __DIR__.'/BankCertificateService.php';
 require_once __DIR__.'/BankCertificateStore.php';
+require_once __DIR__.'/BankConnectBootstrapVerifier.php';
 
 /** Creates an agreement-scoped, certificate-backed BankConnect client. */
 class BankConnectClientFactory
@@ -49,9 +50,11 @@ class BankConnectClientFactory
 				(string)($global['BANKCONNECT_DATACENTER'] ?? 'BANKDATA'),
 				$environment
 			);
-			if ($stored !== null
-				&& $this->bankCertificates->isCertificateValid((string)$stored['certificate_pem'])) {
-				$global['BANKCONNECT_BANK_CERTIFICATE'] = (string)$stored['certificate_pem'];
+			if ($stored !== null) {
+				$verificationConf = new Conf();
+				$verificationConf->global = $global;
+				$verified = (new BankConnectBootstrapVerifier($verificationConf))->verifyCached($stored);
+				if ($verified !== null) $global['BANKCONNECT_BANK_CERTIFICATE'] = $verified;
 			}
 		}
 		if (empty($global['BANKCONNECT_BANK_CERTIFICATE'])) {

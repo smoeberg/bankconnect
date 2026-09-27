@@ -153,6 +153,13 @@ $conf->global['BANKCONNECT_TRUSTED_CA_PEM'] = file_get_contents(
 );
 ```
 
+Efter opgradering bliver tidligere cachede bankcertifikater uden den signerede
+bootstraprespons hentet igen ved næste onboarding. Almindelige forbindelser
+afviser sådanne cacheposter, indtil et verificeret certifikat er gemt. Sørg
+for, at den korrekte root-CA er konfigureret før opgraderingen og gennemfør
+certifikathentningen, før planlagt import eller betaling genoptages. Den gemte
+respons kontrolleres mod den aktuelle root-CA, hver gang cachen bruges.
+
 Bankdata systemtest uses `BANKDATA`. BEC production requires a different
 security order and must therefore be configured explicitly as `BEC`; unknown
 values are rejected before any payment request is sent.

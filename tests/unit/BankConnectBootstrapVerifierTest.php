@@ -3,9 +3,28 @@
 use PHPUnit\Framework\TestCase;
 
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectBootstrapVerifier.php';
+require_once __DIR__.'/BankCertificateFixture.php';
 
 final class BankConnectBootstrapVerifierTest extends TestCase
 {
+    public function testCachedProofIsRecheckedAgainstCurrentRootAndLeaf(): void
+    {
+        $fixture = BankCertificateFixture::create();
+        $conf = new Conf();
+        $conf->global['BANKCONNECT_TRUSTED_CA_PEM'] = $fixture['root'];
+        $verifier = new BankConnectBootstrapVerifier($conf);
+        $cached = ['certificate_pem' => $fixture['leaf'], 'verified_response_xml' => $fixture['response']];
+        $this->assertSame(
+            openssl_x509_fingerprint($fixture['leaf'], 'sha256'),
+            openssl_x509_fingerprint($verifier->verifyCached($cached), 'sha256')
+        );
+        $this->assertNull($verifier->verifyCached(['certificate_pem' => $fixture['leaf']]));
+        $this->assertNull($verifier->verifyCached(['certificate_pem' => $fixture['root'], 'verified_response_xml' => $fixture['response']]));
+        $this->assertNull($verifier->verifyCached(['certificate_pem' => $fixture['leaf'], 'verified_response_xml' => str_replace('BankCert', 'Tampered', $fixture['response'])]));
+        $conf->global['BANKCONNECT_TRUSTED_CA_PEM'] = $this->certificates()[2];
+        $this->assertNull($verifier->verifyCached($cached));
+    }
+
     /** @return array{string,string,string} root, bank leaf, unrelated root */
     private function certificates(): array
     {

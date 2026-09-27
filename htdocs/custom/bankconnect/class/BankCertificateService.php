@@ -14,6 +14,7 @@ require_once __DIR__.'/BankConnectCertificateManager.php';
 require_once __DIR__.'/BankCertificateStore.php';
 require_once __DIR__.'/ServiceHeaderBuilder.php';
 require_once __DIR__.'/BankConnectClient.php';
+require_once __DIR__.'/BankConnectBootstrapVerifier.php';
 
 if (!class_exists('Conf')) {
     class Conf
@@ -97,8 +98,9 @@ class BankCertificateService
         // Check if we already have a valid certificate cached
         if ($this->bankCertStore !== null) {
             $cachedCert = $this->bankCertStore->getBankCertificate($datacenter, $environment);
-            if ($cachedCert !== null && $this->bankCertStore->isCertificateValid($cachedCert['certificate_pem'])) {
-                return $cachedCert['certificate_pem'];
+            if ($cachedCert !== null) {
+                $verified = (new BankConnectBootstrapVerifier($this->conf))->verifyCached($cachedCert);
+                if ($verified !== null) return $verified;
             }
         }
 
@@ -124,15 +126,7 @@ class BankCertificateService
         // Fetch the certificate via getBankCertificate
         $rawResponse = $tempClient->getBankCertificate($header);
 
-        // Extract and validate the certificate
-        $pem = $this->certManager->extractCertificatesFromContent($rawResponse);
-        
-        if (empty($pem)) {
-            throw new BankConnectException('No certificate found in getBankCertificate response');
-        }
-
-        // Responses may contain an intermediate before the bank leaf.
-        $certificatePem = $this->certManager->selectBankCertificatePem($pem);
+        $certificatePem = (new BankConnectBootstrapVerifier($tempConf))->verify($rawResponse);
 
         // Store the certificate for future use
         if ($this->bankCertStore !== null) {
@@ -141,6 +135,7 @@ class BankCertificateService
                 'datacenter' => $datacenter,
                 'environment' => $environment,
                 'certificate_pem' => $certificatePem,
+                'verified_response_xml' => $rawResponse,
                 'fingerprint_sha256' => $meta['fingerprint_sha256'],
                 'valid_from' => $meta['valid_from'],
                 'valid_to' => $meta['valid_to'],
@@ -174,8 +169,9 @@ class BankCertificateService
         // Try to get from cache first
         if ($this->bankCertStore !== null) {
             $cachedCert = $this->bankCertStore->getBankCertificate($datacenter, $environment);
-            if ($cachedCert !== null && $this->bankCertStore->isCertificateValid($cachedCert['certificate_pem'])) {
-                return $cachedCert['certificate_pem'];
+            if ($cachedCert !== null) {
+                $verified = (new BankConnectBootstrapVerifier($this->conf))->verifyCached($cachedCert);
+                if ($verified !== null) return $verified;
             }
         }
 

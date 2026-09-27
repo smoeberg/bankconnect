@@ -31,6 +31,25 @@ class BankConnectBootstrapVerifier
         return $leaf;
     }
 
+    /** Recheck persisted evidence against the current trust anchor on every use. */
+    public function verifyCached(array $cached): ?string
+    {
+        $response = $cached['verified_response_xml'] ?? null;
+        if (!is_string($response) || $response === '') {
+            return null; // Legacy entries have no proof of their origin.
+        }
+        try {
+            $leaf = $this->verify($response);
+            $stored = (string) ($cached['certificate_pem'] ?? '');
+            if (openssl_x509_fingerprint($leaf, 'sha256') !== openssl_x509_fingerprint($stored, 'sha256')) {
+                return null;
+            }
+            return $leaf;
+        } catch (Throwable $e) {
+            return null;
+        }
+    }
+
     /** @param string[] $certificates PEM certificates in the signed corporateMessage. */
     public function verifyCertificateChain(array $certificates, string $leaf): void
     {

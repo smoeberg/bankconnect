@@ -164,6 +164,12 @@ class modBankConnect extends DolibarrModules
 			if (!$exists && !$this->db->query('ALTER TABLE '.$agreementTable.' ADD COLUMN '.$column.' '.$definition)) return -1;
 		}
 
+		$bankCertificateTable = MAIN_DB_PREFIX.'bankconnect_bank_certificate';
+		$description = $this->db->DDLDescTable($bankCertificateTable, 'verified_response_xml');
+		if (!$description || !$this->db->fetch_object($description)) {
+			if (!$this->db->query('ALTER TABLE '.$bankCertificateTable.' ADD COLUMN verified_response_xml MEDIUMTEXT DEFAULT NULL')) return -1;
+		}
+
 		return $this->_init(array(), $options);
 	}
 

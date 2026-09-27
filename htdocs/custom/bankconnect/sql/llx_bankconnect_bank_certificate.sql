@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS llx_bankconnect_bank_certificate (
 	datacenter varchar(16) NOT NULL,
 	environment varchar(16) NOT NULL DEFAULT 'test',
 	certificate_pem text NOT NULL,
+	verified_response_xml mediumtext DEFAULT NULL,
 	fingerprint_sha256 varchar(64) NOT NULL,
 	valid_from datetime DEFAULT NULL,
 	valid_to datetime DEFAULT NULL,

@@ -88,6 +88,7 @@ class BankCertificateStoreTest extends PHPUnit\Framework\TestCase
         $retrieved = $this->store->getBankCertificate('BANKDATA', 'test');
         $this->assertNotNull($retrieved);
         $this->assertEquals($this->testCertPem, $retrieved['certificate_pem']);
+        $this->assertNull($retrieved['verified_response_xml']);
     }
 
     public function testGetActiveBankCertificate()
