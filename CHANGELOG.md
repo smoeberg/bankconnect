@@ -32,6 +32,8 @@
   klientfejl med ekstra indhold bliver erstattet af en generisk besked.
 - Automatisk import gemmer og rapporterer kun kendte, faste fejltekster for
   den enkelte aftale; rå klient- og statusfejl bliver generiske beskeder.
+- Fejl før importens aftaleløkke bliver nu også afgrænset i cron og på siden
+  for manuel synkronisering, så rå databasefejl ikke vises.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat

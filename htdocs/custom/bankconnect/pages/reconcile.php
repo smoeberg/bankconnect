@@ -100,7 +100,7 @@ if ($action === 'import' && $user->hasRight('bankconnect', 'write')) {
 			setEventMessages($langs->trans('BankConnectSyncOk', $syncResult['imported'], $syncResult['duplicates']), null);
 		}
 	} catch (Throwable $e) {
-		setEventMessages($langs->trans('BankConnectSyncFailed').': '.$e->getMessage(), null, 'errors');
+		setEventMessages($langs->trans('BankConnectSyncFailed').': '.BankConnectAutomaticImportService::safeImportError($e), null, 'errors');
 	 }
 } elseif ($action === 'match' && $user->hasRight('bankconnect', 'write')) {
 	$engine = new ReconciliationEngine($conf);

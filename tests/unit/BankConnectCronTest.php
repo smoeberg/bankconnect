@@ -42,6 +42,13 @@ class BankConnectCronTest extends TestCase
 			$this->assertSame([], $cron->errors);
 			$this->assertSame('', $cron->output);
 			$this->assertStringContainsString('requires the Dolibarr database', $cron->error);
+
+			$GLOBALS['user'] = (object)['id' => 7];
+			$db->failNextQueryContaining('FROM llx_bankconnect_account_mapping', 'database unavailable; password=secret');
+			$this->assertSame(-1, $cron->importStatements());
+			$this->assertSame('BankConnect automatic import failed', $cron->error);
+			$this->assertSame([], $cron->errors);
+			$this->assertSame('', $cron->output);
 		} finally {
 			foreach ($previous as $key => [$exists, $value]) {
 				if ($exists) {
