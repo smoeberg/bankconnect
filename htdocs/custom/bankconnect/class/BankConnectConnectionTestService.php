@@ -25,7 +25,9 @@ class BankConnectConnectionTestService
 			if ($agreement === null || (int)($agreement['entity'] ?? 0) !== $entity) throw new RuntimeException('BankConnect agreement does not belong to this entity');
 			if ((string)($agreement['status'] ?? '') !== 'active') throw new RuntimeException('BankConnect agreement is not active');
 			if ($this->agreements->getActiveCertificate($agreementId) === null) throw new RuntimeException('BankConnect agreement has no active customer certificate');
-			if ($this->mappings->findByAgreement($entity, $agreementId) === null) throw new RuntimeException('BankConnect agreement is not mapped to a Dolibarr bank account');
+			$mapping = $this->mappings->findByAgreement($entity, $agreementId);
+			if ($mapping === null) throw new RuntimeException('BankConnect agreement is not mapped to a Dolibarr bank account');
+			$this->mappings->assertUsableBankAccount($entity, (int)$mapping['fk_bank_account']);
 			$header = (new ServiceHeaderBuilder())
 				->setOrganisation((string)$agreement['main_registration_number'], 'DK')
 				->setFunctionIdentification((string)$agreement['bank_connect_id'])
@@ -42,6 +44,7 @@ class BankConnectConnectionTestService
 	private function safeError(Throwable $error): string
 	{
 		$message = $error->getMessage();
+		if ($message === 'BankConnect: bank account does not exist, is closed, or belongs to another entity') return $message;
 		foreach (['not active', 'no active customer certificate', 'not mapped', 'does not belong to this entity'] as $safe) {
 			if (str_contains($message, $safe)) return $message;
 		}

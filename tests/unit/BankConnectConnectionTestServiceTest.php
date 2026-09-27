@@ -16,6 +16,7 @@ class BankConnectConnectionTestServiceTest extends TestCase
 		$service->test(7, 2);
 
 		$this->assertTrue($client->called);
+		$this->assertSame([[2, 4]], $mappings->checked);
 		$this->assertStringContainsString('<functionIdentification>BC-7</functionIdentification>', $client->header);
 		$this->assertSame([7, true, ''], $agreements->recorded);
 	}
@@ -35,6 +36,24 @@ class BankConnectConnectionTestServiceTest extends TestCase
 			$this->assertFalse($agreements->recorded[1]);
 		}
 	}
+
+	public function testClosedMappedBankAccountFailsBeforeNetworkAndRecordsSafeReason(): void
+	{
+		$agreements = new ConnectionAgreementStore();
+		$mappings = new ConnectionMappingStore(true, false);
+		$client = new ConnectionClient();
+		$service = new BankConnectConnectionTestService($agreements, $mappings, new ConnectionClientFactory($client));
+
+		$this->expectException(RuntimeException::class);
+		$this->expectExceptionMessage('bank account does not exist, is closed');
+		try {
+			$service->test(7, 2);
+		} finally {
+			$this->assertSame([[2, 4]], $mappings->checked);
+			$this->assertFalse($client->called);
+			$this->assertSame([7, false, 'BankConnect: bank account does not exist, is closed, or belongs to another entity'], $agreements->recorded);
+		}
+	}
 }
 
 class ConnectionAgreementStore extends AgreementStore
@@ -52,8 +71,15 @@ class ConnectionAgreementStore extends AgreementStore
 class ConnectionMappingStore extends BankAccountMappingStore
 {
 	private bool $mapped;
-	public function __construct(bool $mapped) { $this->mapped = $mapped; }
+	private bool $usable;
+	public array $checked = [];
+	public function __construct(bool $mapped, bool $usable = true) { $this->mapped = $mapped; $this->usable = $usable; }
 	public function findByAgreement(int $entity, int $agreementId): ?array { return $this->mapped ? ['fk_bank_account' => 4] : null; }
+	public function assertUsableBankAccount(int $entity, int $bankAccountId): void
+	{
+		$this->checked[] = [$entity, $bankAccountId];
+		if (!$this->usable) throw new RuntimeException('BankConnect: bank account does not exist, is closed, or belongs to another entity');
+	}
 }
 
 class ConnectionClientFactory extends BankConnectClientFactory
