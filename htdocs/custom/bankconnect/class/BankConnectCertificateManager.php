@@ -658,20 +658,19 @@ class BankConnectCertificateManager
         string $mainReg,
         string $functionId
     ): ?string {
+        $cached = $this->bankCertificateStore?->getBankCertificate($datacenter, $environment);
+        $verifier = new BankConnectBootstrapVerifier($this->conf);
         $envCert = getenv('BANKCONNECT_BANK_CERTIFICATE');
         if ($envCert !== false && trim($envCert) !== '') {
-            return trim($envCert);
+            return $verifier->verifyConfigured(trim($envCert), $cached);
         }
         $g = (array) ($this->conf->global ?? []);
         if (!empty($g['BANKCONNECT_BANK_CERTIFICATE'])) {
-            return $g['BANKCONNECT_BANK_CERTIFICATE'];
+            return $verifier->verifyConfigured((string)$g['BANKCONNECT_BANK_CERTIFICATE'], $cached);
         }
-        if ($this->bankCertificateStore !== null) {
-            $cached = $this->bankCertificateStore->getBankCertificate($datacenter, $environment);
-            if ($cached !== null) {
-                $verified = (new BankConnectBootstrapVerifier($this->conf))->verifyCached($cached);
-                if ($verified !== null) return $verified;
-            }
+        if ($cached !== null) {
+            $verified = $verifier->verifyCached($cached);
+            if ($verified !== null) return $verified;
         }
         try {
             $header = (new ServiceHeaderBuilder())

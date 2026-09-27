@@ -44,16 +44,20 @@ class BankConnectClientFactory
 				$global['BANKCONNECT_BANK_CERTIFICATE'] = $environmentCertificate;
 			}
 		}
-		if (empty($global['BANKCONNECT_BANK_CERTIFICATE']) && $this->bankCertificates !== null) {
-			$environment = (string)($global['BANKCONNECT_ENVIRONMENT'] ?? 'test');
-			$stored = $this->bankCertificates->getBankCertificate(
+		$stored = $this->bankCertificates?->getBankCertificate(
 				(string)($global['BANKCONNECT_DATACENTER'] ?? 'BANKDATA'),
-				$environment
+				(string)($global['BANKCONNECT_ENVIRONMENT'] ?? 'test')
 			);
+		$verificationConf = new Conf();
+		$verificationConf->global = $global;
+		$verifier = new BankConnectBootstrapVerifier($verificationConf);
+		if (!empty($global['BANKCONNECT_BANK_CERTIFICATE'])) {
+			$global['BANKCONNECT_BANK_CERTIFICATE'] = $verifier->verifyConfigured(
+				(string)$global['BANKCONNECT_BANK_CERTIFICATE'], $stored
+			);
+		} else {
 			if ($stored !== null) {
-				$verificationConf = new Conf();
-				$verificationConf->global = $global;
-				$verified = (new BankConnectBootstrapVerifier($verificationConf))->verifyCached($stored);
+				$verified = $verifier->verifyCached($stored);
 				if ($verified !== null) $global['BANKCONNECT_BANK_CERTIFICATE'] = $verified;
 			}
 		}
