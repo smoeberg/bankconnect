@@ -123,7 +123,10 @@ class BankAccountMappingStore
             . " ORDER BY rowid DESC";
         $res = $this->prefixQuery($sql);
         $out = [];
-        while ($res && ($obj = $this->db->fetch_object($res))) {
+        if ($res === false) {
+            throw new RuntimeException('BankConnect: listMappings failed: '.$this->db->lasterror());
+        }
+        while ($obj = $this->db->fetch_object($res)) {
             $out[] = (array) $obj;
         }
         return $out;

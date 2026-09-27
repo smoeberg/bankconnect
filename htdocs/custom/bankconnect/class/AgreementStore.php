@@ -147,8 +147,8 @@ class AgreementStore
     {
         $sql = "SELECT * FROM llx_bankconnect_agreement WHERE rowid = ".(int) $id;
         $res = $this->prefixQuery($sql);
-        if (!$res) {
-            return null;
+        if ($res === false) {
+            throw new BankConnectException('getAgreement failed: '.$this->db->lasterror());
         }
         $obj = $this->db->fetch_object($res);
         return $obj ? (array) $obj : null;

@@ -106,6 +106,16 @@ class BankAccountMappingStoreTest extends TestCase
         $this->assertNull($this->store->findByAgreement(1, $this->agreementId));
     }
 
+    public function testEmptyMappingListIsDistinctFromReadFailure(): void
+    {
+        $this->assertSame([], $this->store->listMappings(1));
+
+        $this->db->failNextQueryContaining('FROM llx_bankconnect_account_mapping', 'database unavailable');
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('listMappings failed: database unavailable');
+        $this->store->listMappings(1);
+    }
+
     public function testMappingUsesConfiguredDolibarrDatabasePrefix(): void
     {
         $db = new MockDoliDB();
