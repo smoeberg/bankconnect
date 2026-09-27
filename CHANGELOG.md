@@ -14,6 +14,8 @@
   entity, før BankConnect kontaktes eller aftalens status ændres.
 - Automatisk import kontrollerer igen, at den mappede bankkonto er åben og
   tilhører samme entity, før et BankConnect-kald sendes.
+- Databasefejl ved opslag af mappings eller aftaler afbryder nu automatisk
+  import med fejl i stedet for at rapportere en vellykket kørsel uden import.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat
