@@ -50,6 +50,19 @@ class BankConnectBootstrapVerifier
         }
     }
 
+    /** A manually pinned leaf needs either signed bootstrap proof or a direct chain to the configured root. */
+    public function verifyConfigured(string $pem, ?array $cached = null): string
+    {
+        if ($cached !== null) {
+            $verified = $this->verifyCached($cached);
+            if ($verified !== null && openssl_x509_fingerprint($verified, 'sha256') === openssl_x509_fingerprint($pem, 'sha256')) {
+                return $verified;
+            }
+        }
+        $this->verifyCertificateChain([$pem], $pem);
+        return $pem;
+    }
+
     /** @param string[] $certificates PEM certificates in the signed corporateMessage. */
     public function verifyCertificateChain(array $certificates, string $leaf): void
     {

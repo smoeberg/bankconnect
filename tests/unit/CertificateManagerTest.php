@@ -195,6 +195,25 @@ class CertificateManagerTest extends TestCase
         $this->assertNotNull((new BankConnectBootstrapVerifier($this->conf))->verifyCached($stored));
     }
 
+    public function testConfiguredOnboardingCertificateRequiresTrustedRoot(): void
+    {
+        $fixture = BankCertificateFixture::create();
+        $this->conf->global['BANKCONNECT_BANK_CERTIFICATE'] = $fixture['leaf'];
+        $this->conf->global['BANKCONNECT_TRUSTED_CA_PEM'] = $fixture['root'];
+        $method = (new ReflectionClass(BankConnectCertificateManager::class))->getMethod('fetchBankCertificateIfNeeded');
+        $manager = new BankConnectCertificateManager($this->conf);
+        $previous = getenv('BANKCONNECT_BANK_CERTIFICATE');
+        putenv('BANKCONNECT_BANK_CERTIFICATE');
+        try {
+            $this->assertSame($fixture['leaf'], $method->invoke($manager, 'BANKDATA', 'test', '8079', 'bank-id'));
+            unset($this->conf->global['BANKCONNECT_TRUSTED_CA_PEM']);
+            $this->expectException(BankConnectException::class);
+            $method->invoke($manager, 'BANKDATA', 'test', '8079', 'bank-id');
+        } finally {
+            if ($previous !== false) putenv('BANKCONNECT_BANK_CERTIFICATE='.$previous);
+        }
+    }
+
     public function testGetBankCertificateSelectsLeafAfterIntermediate(): void
     {
         [$intermediate, $leaf] = $this->createBankCertificateChain();

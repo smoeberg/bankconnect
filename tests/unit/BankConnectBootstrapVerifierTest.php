@@ -25,6 +25,33 @@ final class BankConnectBootstrapVerifierTest extends TestCase
         $this->assertNull($verifier->verifyCached($cached));
     }
 
+    public function testConfiguredCertificateNeedsTrustedRootOrMatchingSignedCache(): void
+    {
+        $fixture = BankCertificateFixture::create();
+        $conf = new Conf();
+        $conf->global['BANKCONNECT_TRUSTED_CA_PEM'] = $fixture['root'];
+        $verifier = new BankConnectBootstrapVerifier($conf);
+        $this->assertSame($fixture['leaf'], $verifier->verifyConfigured($fixture['leaf']));
+
+        // The signed cache proof is also accepted for this same leaf.
+        $cached = ['certificate_pem' => $fixture['leaf'], 'verified_response_xml' => $fixture['response']];
+        $this->assertNotNull($verifier->verifyConfigured($fixture['leaf'], $cached));
+
+        $conf->global['BANKCONNECT_TRUSTED_CA_PEM'] = $this->certificates()[2];
+        $this->expectException(BankConnectException::class);
+        $verifier->verifyConfigured($fixture['leaf'], $cached);
+    }
+
+    public function testConfiguredCertificateCannotBorrowDifferentCachedProof(): void
+    {
+        $fixture = BankCertificateFixture::create();
+        $conf = new Conf();
+        $conf->global['BANKCONNECT_TRUSTED_CA_PEM'] = $fixture['root'];
+        $cached = ['certificate_pem' => $fixture['leaf'], 'verified_response_xml' => $fixture['response']];
+        $this->expectException(BankConnectException::class);
+        (new BankConnectBootstrapVerifier($conf))->verifyConfigured($fixture['root'], $cached);
+    }
+
     /** @return array{string,string,string} root, bank leaf, unrelated root */
     private function certificates(): array
     {

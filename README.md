@@ -153,6 +153,11 @@ $conf->global['BANKCONNECT_TRUSTED_CA_PEM'] = file_get_contents(
 );
 ```
 
+Et manuelt konfigureret `BANKCONNECT_BANK_CERTIFICATE` skal enten være
+udstedt direkte af denne root-CA eller svare til et certifikat, der allerede
+er hentet med en verificeret, signeret bootstraprespons. Certifikater via
+intermediate-CA bør hentes automatisk, så hele kæden kan kontrolleres.
+
 Efter opgradering bliver tidligere cachede bankcertifikater uden den signerede
 bootstraprespons hentet igen ved næste onboarding. Almindelige forbindelser
 afviser sådanne cacheposter, indtil et verificeret certifikat er gemt. Sørg
