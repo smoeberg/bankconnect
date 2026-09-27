@@ -238,27 +238,24 @@ class BankCertificateService
     public function refreshAllCertificates(): array
     {
         $results = [];
-        $datacenters = ['BANKDATA', 'NBS', 'BEC'];
-        $environments = ['test', 'production'];
-
-        foreach ($datacenters as $datacenter) {
-            foreach ($environments as $environment) {
-                try {
-                    $cert = $this->fetchBankCertificate($datacenter, $environment, '8079', null, true);
-                    $results[] = [
-                        'datacenter' => $datacenter,
-                        'environment' => $environment,
-                        'status' => 'success',
-                        'fingerprint' => $this->certManager->certificateFingerprint($cert),
-                    ];
-                } catch (Throwable $e) {
-                    $results[] = [
-                        'datacenter' => $datacenter,
-                        'environment' => $environment,
-                        'status' => 'failed',
-                        'error' => $e->getMessage(),
-                    ];
-                }
+        foreach ($this->bankCertStore?->listBankCertificates() ?? [] as $cached) {
+            $datacenter = (string)$cached['datacenter'];
+            $environment = (string)$cached['environment'];
+            try {
+                $cert = $this->fetchBankCertificate($datacenter, $environment, '8079', null, true);
+                $results[] = [
+                    'datacenter' => $datacenter,
+                    'environment' => $environment,
+                    'status' => 'success',
+                    'fingerprint' => $this->certManager->certificateFingerprint($cert),
+                ];
+            } catch (Throwable $e) {
+                $results[] = [
+                    'datacenter' => $datacenter,
+                    'environment' => $environment,
+                    'status' => 'failed',
+                    'error' => $e->getMessage(),
+                ];
             }
         }
 

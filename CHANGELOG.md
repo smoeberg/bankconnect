@@ -4,6 +4,8 @@
 - Certifikatopdatering henter nu et nyt signeret bankcertifikat, selv når et
   tidligere verificeret certifikat stadig er gyldigt i cachen. Et fejlet
   opdateringsforsøg overskriver ikke det eksisterende certifikat.
+- Masseopdatering forsøger kun datacentre og miljøer med gemte certifikater
+  i den aktuelle entity; den kontakter ikke ubrugte produktionsendpoints.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat
