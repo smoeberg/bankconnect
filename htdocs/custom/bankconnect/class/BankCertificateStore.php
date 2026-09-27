@@ -101,22 +101,16 @@ class BankCertificateStore
     }
 
     /**
-     * Get active bank certificate for a datacenter (prefers production, falls back to test).
+     * Get the stored bank certificate for an explicitly selected environment.
      *
      * @return ?array{rowid:int, entity:int, datacenter:string, environment:string, certificate_pem:string, ...}
      */
-    public function getActiveBankCertificate(string $datacenter): ?array
+    public function getActiveBankCertificate(string $datacenter, string $environment): ?array
     {
-        $datacenter = $this->db->escape(strtoupper($datacenter));
-        
-        // Try production first
-        $cert = $this->getBankCertificate($datacenter, 'production');
-        if ($cert !== null) {
-            return $cert;
+        if (!in_array($environment, ['test', 'production'], true)) {
+            throw new BankConnectException('Unknown BankConnect certificate environment');
         }
-        
-        // Fall back to test
-        return $this->getBankCertificate($datacenter, 'test');
+        return $this->getBankCertificate($datacenter, $environment);
     }
 
     /**
