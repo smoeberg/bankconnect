@@ -202,8 +202,8 @@ class AgreementStore
              . " WHERE fk_agreement = ".(int) $agreementId." AND is_active = 1"
              . " ORDER BY rowid DESC LIMIT 1";
         $res = $this->prefixQuery($sql);
-        if (!$res) {
-            return null;
+        if ($res === false) {
+            throw new BankConnectException('getActiveCertificate failed: '.$this->db->lasterror());
         }
         $obj = $this->db->fetch_object($res);
         return $obj ? (array) $obj : null;
@@ -215,7 +215,10 @@ class AgreementStore
         $sql = "SELECT * FROM llx_bankconnect_agreement WHERE entity = ".(int) $entity." ORDER BY rowid DESC";
         $res = $this->prefixQuery($sql);
         $out = [];
-        while ($res && ($obj = $this->db->fetch_object($res))) {
+        if ($res === false) {
+            throw new BankConnectException('listAgreements failed: '.$this->db->lasterror());
+        }
+        while ($obj = $this->db->fetch_object($res)) {
             $out[] = (array) $obj;
         }
         return $out;
