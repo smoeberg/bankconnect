@@ -152,6 +152,16 @@ class BankCertificateServiceTest extends PHPUnit\Framework\TestCase
             'certificate_pem' => $fixture['leaf'],
             'verified_response_xml' => $fixture['response'],
         ]);
+        $store->saveBankCertificate([
+            'datacenter' => 'BANKDATA', 'environment' => 'production',
+            'certificate_pem' => $fixture['leaf'],
+            'verified_response_xml' => $fixture['response'],
+        ]);
+        (new BankCertificateStore($db, 2))->saveBankCertificate([
+            'datacenter' => 'BEC', 'environment' => 'production',
+            'certificate_pem' => $fixture['leaf'],
+            'verified_response_xml' => $fixture['response'],
+        ]);
         $service = new class($this->conf, $store, $fixture['response']) extends BankCertificateService {
             public int $fetches = 0;
             public string $response;
@@ -194,8 +204,12 @@ class BankCertificateServiceTest extends PHPUnit\Framework\TestCase
 
         $service->response = $fixture['response'];
         $results = $service->refreshAllCertificates();
-        $this->assertCount(6, $results);
-        $this->assertSame(8, $service->fetches);
+        $this->assertCount(2, $results);
+        $this->assertSame(4, $service->fetches);
+        $environments = array_column($results, 'environment');
+        sort($environments);
+        $this->assertSame(['production', 'test'], $environments);
         $this->assertSame([], array_filter($results, static fn($result) => $result['status'] !== 'success'));
+        $this->assertSame([], (new BankCertificateService($this->conf))->refreshAllCertificates());
     }
 }
