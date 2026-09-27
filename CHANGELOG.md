@@ -8,6 +8,8 @@
   i den aktuelle entity; den kontakter ikke ubrugte produktionsendpoints.
 - Certifikatlagerets liste- og sletteoperationer er nu afgrænset til den
   entity, som lageret er oprettet for.
+- Opslag af et aktivt bankcertifikat kræver nu et eksplicit miljø og falder
+  aldrig tilbage fra produktion til systemtest.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat

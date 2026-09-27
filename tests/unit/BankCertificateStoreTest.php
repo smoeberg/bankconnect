@@ -105,9 +105,23 @@ class BankCertificateStoreTest extends PHPUnit\Framework\TestCase
             'valid_to' => $meta['valid_to'],
         ]);
 
-        $cert = $this->store->getActiveBankCertificate('BANKDATA');
+        $cert = $this->store->getActiveBankCertificate('BANKDATA', 'test');
         $this->assertNotNull($cert);
         $this->assertEquals('BANKDATA', $cert['datacenter']);
+        $this->assertNull($this->store->getActiveBankCertificate('BANKDATA', 'production'));
+
+        $this->store->saveBankCertificate([
+            'datacenter' => 'BANKDATA',
+            'environment' => 'production',
+            'certificate_pem' => $this->testCertPem,
+        ]);
+        $this->assertSame('production', $this->store->getActiveBankCertificate('BANKDATA', 'production')['environment']);
+    }
+
+    public function testGetActiveBankCertificateRejectsUnknownEnvironment(): void
+    {
+        $this->expectException(BankConnectException::class);
+        $this->store->getActiveBankCertificate('BANKDATA', 'staging');
     }
 
     public function testListBankCertificates()
