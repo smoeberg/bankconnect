@@ -126,8 +126,10 @@ class BankCertificateStore
      */
     public function listBankCertificates(int $entity = null): array
     {
-        $entity = $entity ?? $this->entity;
-        $sql = "SELECT * FROM llx_bankconnect_bank_certificate WHERE entity = ".(int)$entity." ORDER BY datacenter, environment, rowid DESC";
+        if ($entity !== null && $entity !== $this->entity) {
+            throw new BankConnectException('Bank certificate store cannot list another entity');
+        }
+        $sql = "SELECT * FROM llx_bankconnect_bank_certificate WHERE entity = ".$this->entity." ORDER BY datacenter, environment, rowid DESC";
         $res = $this->prefixQuery($sql);
         $out = [];
         while ($res && ($obj = $this->db->fetch_object($res))) {
@@ -141,7 +143,7 @@ class BankCertificateStore
      */
     public function deleteBankCertificate(int $id): void
     {
-        $sql = "DELETE FROM llx_bankconnect_bank_certificate WHERE rowid = ".(int)$id;
+        $sql = "DELETE FROM llx_bankconnect_bank_certificate WHERE rowid = ".(int)$id." AND entity = ".$this->entity;
         if (!$this->prefixQuery($sql)) {
             throw new BankConnectException('Delete bank certificate failed: '.$this->db->lasterror());
         }
