@@ -19,6 +19,7 @@ require_once __DIR__.'/AgreementStore.php';
 require_once __DIR__.'/ServiceHeaderBuilder.php';
 require_once __DIR__.'/BankConnectSecretStore.php';
 require_once __DIR__.'/BankCertificateStore.php';
+require_once __DIR__.'/BankConnectBootstrapVerifier.php';
 
 if (!class_exists('Conf')) {
     class Conf
@@ -203,12 +204,15 @@ class BankConnectCertificateManager
 
     public function getBankCertificate(string $serviceHeaderXml): string
     {
+        return $this->fetchVerifiedBankCertificate($serviceHeaderXml)['certificate'];
+    }
+
+    /** @return array{certificate:string, response:string} */
+    public function fetchVerifiedBankCertificate(string $serviceHeaderXml): array
+    {
         $raw = $this->client->getBankCertificate($serviceHeaderXml);
-        $pem = $this->extractCertificatesFromContent($raw);
-        if (empty($pem)) {
-            throw new BankConnectException('Bank certificate response did not contain a certificate');
-        }
-        return $this->selectBankCertificatePem($pem);
+        $certificate = (new BankConnectBootstrapVerifier($this->conf))->verify($raw);
+        return ['certificate' => $certificate, 'response' => $raw];
     }
 
     /**
@@ -664,9 +668,9 @@ class BankConnectCertificateManager
         }
         if ($this->bankCertificateStore !== null) {
             $cached = $this->bankCertificateStore->getBankCertificate($datacenter, $environment);
-            if ($cached !== null
-                && $this->bankCertificateStore->isCertificateValid((string)$cached['certificate_pem'])) {
-                return (string)$cached['certificate_pem'];
+            if ($cached !== null) {
+                $verified = (new BankConnectBootstrapVerifier($this->conf))->verifyCached($cached);
+                if ($verified !== null) return $verified;
             }
         }
         try {
@@ -674,13 +678,15 @@ class BankConnectCertificateManager
                 ->setOrganisation($mainReg, 'DK')
                 ->setFunctionIdentification($functionId)
                 ->build();
-            $certificatePem = $this->getBankCertificate($header);
+            $fetched = $this->fetchVerifiedBankCertificate($header);
+            $certificatePem = $fetched['certificate'];
             if ($this->bankCertificateStore !== null) {
                 $meta = $this->bankCertificateStore->validateCertificatePem($certificatePem);
                 $this->bankCertificateStore->saveBankCertificate([
                     'datacenter' => $datacenter,
                     'environment' => $environment,
                     'certificate_pem' => $certificatePem,
+                    'verified_response_xml' => $fetched['response'],
                     'fingerprint_sha256' => $meta['fingerprint_sha256'],
                     'valid_from' => $meta['valid_from'],
                     'valid_to' => $meta['valid_to'],

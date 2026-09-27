@@ -8,6 +8,7 @@ require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectLogger.p
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/AgreementStore.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/ServiceHeaderBuilder.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectCertificateManager.php';
+require_once __DIR__.'/BankCertificateFixture.php';
 
 class CertificateManagerTest extends TestCase
 {
@@ -159,12 +160,18 @@ class CertificateManagerTest extends TestCase
 
     public function testOnboardingInstallsAndStoresFetchedBankCertificateBeforeActivation(): void
     {
-        [, $bankCertificatePem] = $this->createBankCertificateChain();
+        $fixture = BankCertificateFixture::create();
+        $bankCertificatePem = $fixture['leaf'];
+        $this->conf->global['BANKCONNECT_TRUSTED_CA_PEM'] = $fixture['root'];
 
         $db = new MockDoliDB();
         $db->tables['llx_bankconnect_bank_certificate'] = [];
         $bankStore = new BankCertificateStore($db, 1);
-        $client = new CertificateBootstrapProbeClient($this->conf, $bankCertificatePem);
+        $bankStore->saveBankCertificate([
+            'datacenter' => 'BANKDATA', 'environment' => 'test',
+            'certificate_pem' => $bankCertificatePem,
+        ]); // Legacy cache must not bypass the signed fetch.
+        $client = new CertificateBootstrapProbeClient($this->conf, $fixture['response']);
         $manager = new BankConnectCertificateManager($this->conf, $client, null, null, $bankStore);
 
         try {
@@ -184,6 +191,8 @@ class CertificateManagerTest extends TestCase
         $stored = $bankStore->getBankCertificate('BANKDATA', 'test');
         $this->assertNotNull($stored);
         $this->assertSame(rtrim($bankCertificatePem), rtrim((string)$stored['certificate_pem']));
+        $this->assertSame($fixture['response'], $stored['verified_response_xml']);
+        $this->assertNotNull((new BankConnectBootstrapVerifier($this->conf))->verifyCached($stored));
     }
 
     public function testGetBankCertificateSelectsLeafAfterIntermediate(): void
@@ -200,8 +209,9 @@ class CertificateManagerTest extends TestCase
         };
         $manager = new BankConnectCertificateManager($this->conf, $client);
 
-        $this->assertSame(rtrim($leaf), rtrim($manager->getBankCertificate('<activationHeader/>')));
         $this->assertSame($leaf, $manager->selectBankCertificatePem([$intermediate, $leaf]));
+        $this->expectException(BankConnectException::class);
+        $manager->getBankCertificate('<activationHeader/>'); // unsigned mock response
     }
 
     public function testBankCertificateSelectionRejectsCaAndAmbiguousLeaves(): void
@@ -537,17 +547,17 @@ class RenewalMismatchClient extends BankConnectClient
 class CertificateBootstrapProbeClient extends BankConnectClient
 {
     public bool $bankCertificateInstalled = false;
-    private string $bankCertificatePem;
+    private string $response;
 
-    public function __construct(Conf $conf, string $bankCertificatePem)
+    public function __construct(Conf $conf, string $response)
     {
         parent::__construct($conf);
-        $this->bankCertificatePem = $bankCertificatePem;
+        $this->response = $response;
     }
 
     public function getBankCertificate(string $activationHeaderXml): string
     {
-        return $this->bankCertificatePem;
+        return $this->response;
     }
 
     public function setBankCertificate(string $certificatePem): void

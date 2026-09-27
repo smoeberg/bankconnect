@@ -29,13 +29,15 @@ class BankCertificateStore
      *
      * @param array{
      *   datacenter:string, certificate_pem:string, valid_from?:?string, valid_to?:?string,
-     *   fingerprint_sha256?:string, environment?:string
+     *   fingerprint_sha256?:string, environment?:string, verified_response_xml?:string
      * } $data
      */
     public function saveBankCertificate(array $data): int
     {
         $datacenter = $this->db->escape(strtoupper($data['datacenter'] ?? 'BANKDATA'));
         $pem = $this->db->escape($data['certificate_pem']);
+        $evidence = isset($data['verified_response_xml'])
+            ? "'".$this->db->escape($data['verified_response_xml'])."'" : 'NULL';
         $environment = $this->db->escape($data['environment'] ?? 'test');
         $fingerprint = isset($data['fingerprint_sha256']) 
             ? "'".$this->db->escape($data['fingerprint_sha256'])."'" : 'NULL';
@@ -51,6 +53,7 @@ class BankCertificateStore
             // Update existing
             $sql = "UPDATE llx_bankconnect_bank_certificate SET"
                  . " certificate_pem = '$pem',"
+                 . " verified_response_xml = $evidence,"
                  . " fingerprint_sha256 = $fingerprint,"
                  . " valid_from = $from,"
                  . " valid_to = $to,"
@@ -65,9 +68,9 @@ class BankCertificateStore
 
         // Insert new
         $sql = "INSERT INTO llx_bankconnect_bank_certificate"
-             . " (entity, datacenter, environment, certificate_pem, fingerprint_sha256, valid_from, valid_to, date_creation)"
+             . " (entity, datacenter, environment, certificate_pem, verified_response_xml, fingerprint_sha256, valid_from, valid_to, date_creation)"
              . " VALUES ("
-             . $this->entity.", '$datacenter', '$environment', '$pem', $fingerprint, $from, $to, NOW())";
+             . $this->entity.", '$datacenter', '$environment', '$pem', $evidence, $fingerprint, $from, $to, NOW())";
 
         if (!$this->prefixQuery($sql)) {
             throw new BankConnectException('Save bank certificate failed: '.$this->db->lasterror());
