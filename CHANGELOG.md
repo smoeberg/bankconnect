@@ -20,6 +20,8 @@
   importen af andre aftaler; begge fejl rapporteres til cron.
 - Cron-jobbet nulstiller resultat og fejl ved hver kørsel, så en tidligere
   fejl ikke vises efter en senere vellykket import.
+- Databasefejl ved opslag eller listevisning af gemte bankcertifikater
+  rapporteres nu som fejl frem for at ligne manglende certifikater.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat

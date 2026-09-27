@@ -212,4 +212,27 @@ class BankCertificateServiceTest extends PHPUnit\Framework\TestCase
         $this->assertSame([], array_filter($results, static fn($result) => $result['status'] !== 'success'));
         $this->assertSame([], (new BankCertificateService($this->conf))->refreshAllCertificates());
     }
+
+    public function testCacheReadFailureStopsBeforeCertificateFetch(): void
+    {
+        $db = new MockDoliDB();
+        $store = new BankCertificateStore($db);
+        $service = new class($this->conf, null, $store) extends BankCertificateService {
+            public bool $fetchClientCreated = false;
+            protected function createFetchClient(Conf $conf): BankConnectClient
+            {
+                $this->fetchClientCreated = true;
+                throw new RuntimeException('unexpected bank call');
+            }
+        };
+        $db->failNextQueryContaining('FROM llx_bankconnect_bank_certificate', 'database unavailable');
+
+        try {
+            $service->getOrFetchBankCertificate('BANKDATA', 'test');
+            $this->fail('A failed cache read must stop before fetching from BankConnect');
+        } catch (BankConnectException $e) {
+            $this->assertStringContainsString('Get bank certificate failed: database unavailable', $e->getMessage());
+        }
+        $this->assertFalse($service->fetchClientCreated);
+    }
 }
