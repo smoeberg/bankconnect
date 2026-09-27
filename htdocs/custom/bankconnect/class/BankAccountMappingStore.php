@@ -35,7 +35,9 @@ class BankAccountMappingStore
             return (int) $existing['rowid'];
         }
 
-        $this->db->begin();
+        if (!$this->db->begin()) {
+            throw new RuntimeException('BankConnect: mapping transaction could not start: '.$this->db->lasterror());
+        }
         try {
             // A bank account can only belong to one BankConnect agreement in an
             // entity. Remove the previous mapping only after all references have

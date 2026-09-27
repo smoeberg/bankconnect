@@ -34,6 +34,8 @@
   den enkelte aftale; rå klient- og statusfejl bliver generiske beskeder.
 - Fejl før importens aftaleløkke bliver nu også afgrænset i cron og på siden
   for manuel synkronisering, så rå databasefejl ikke vises.
+- Remapping afbrydes nu, hvis databasetransaktionen ikke kan startes, før
+  den eksisterende tilknytning slettes.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat
