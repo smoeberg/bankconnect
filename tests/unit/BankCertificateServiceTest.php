@@ -6,6 +6,8 @@
 require_once __DIR__.'/bootstrap.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankCertificateService.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectCertificateManager.php';
+require_once __DIR__.'/MockDoliDB.php';
+require_once __DIR__.'/BankCertificateFixture.php';
 
 class BankCertificateServiceTest extends PHPUnit\Framework\TestCase
 {
@@ -137,5 +139,63 @@ class BankCertificateServiceTest extends PHPUnit\Framework\TestCase
         // Test that BEC uses its own certificate
         // This is a design test - in reality it would fetch from the service
         $this->assertTrue(true); // Placeholder for actual test with mocked client
+    }
+
+    public function testRefreshFetchesDespiteValidCacheAndPreservesItOnFailure(): void
+    {
+        $fixture = BankCertificateFixture::create();
+        $this->conf->global['BANKCONNECT_TRUSTED_CA_PEM'] = $fixture['root'];
+        $db = new MockDoliDB();
+        $store = new BankCertificateStore($db);
+        $store->saveBankCertificate([
+            'datacenter' => 'BANKDATA', 'environment' => 'test',
+            'certificate_pem' => $fixture['leaf'],
+            'verified_response_xml' => $fixture['response'],
+        ]);
+        $service = new class($this->conf, $store, $fixture['response']) extends BankCertificateService {
+            public int $fetches = 0;
+            public string $response;
+            public function __construct(Conf $conf, BankCertificateStore $store, string $response)
+            {
+                parent::__construct($conf, null, $store);
+                $this->response = $response;
+            }
+            protected function createFetchClient(Conf $conf): BankConnectClient
+            {
+                return new class($conf, $this) extends BankConnectClient {
+                    private BankCertificateService $probe;
+                    public function __construct(Conf $conf, BankCertificateService $probe)
+                    {
+                        parent::__construct($conf);
+                        $this->probe = $probe;
+                    }
+                    public function getBankCertificate(string $activationHeaderXml): string
+                    {
+                        $this->probe->fetches++;
+                        return $this->probe->response;
+                    }
+                };
+            }
+        };
+
+        $service->fetchBankCertificate('BANKDATA');
+        $this->assertSame(0, $service->fetches);
+        $service->fetchBankCertificate('BANKDATA', 'test', '8079', null, true);
+        $this->assertSame(1, $service->fetches);
+        $this->assertSame($fixture['response'], $store->getBankCertificate('BANKDATA', 'test')['verified_response_xml']);
+
+        $service->response = str_replace('BankCert', 'Tampered', $fixture['response']);
+        try {
+            $service->fetchBankCertificate('BANKDATA', 'test', '8079', null, true);
+            $this->fail('A failed forced fetch must not replace the verified cache');
+        } catch (BankConnectException $e) {
+            $this->assertSame($fixture['response'], $store->getBankCertificate('BANKDATA', 'test')['verified_response_xml']);
+        }
+
+        $service->response = $fixture['response'];
+        $results = $service->refreshAllCertificates();
+        $this->assertCount(6, $results);
+        $this->assertSame(8, $service->fetches);
+        $this->assertSame([], array_filter($results, static fn($result) => $result['status'] !== 'success'));
     }
 }

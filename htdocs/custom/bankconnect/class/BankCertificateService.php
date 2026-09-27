@@ -76,13 +76,15 @@ class BankCertificateService
      * @param string $environment One of: test, production
      * @param string $mainRegistrationNumber The CVR number for the service header
      * @param string $functionIdentification The BankConnect ID (optional for certificate fetch)
+     * @param bool $forceRefresh Fetch and verify a fresh response even if the cache is valid
      * @return string The PEM-encoded bank certificate
      */
     public function fetchBankCertificate(
         string $datacenter,
         string $environment = 'test',
         string $mainRegistrationNumber = '8079',
-        ?string $functionIdentification = null
+        ?string $functionIdentification = null,
+        bool $forceRefresh = false
     ): string {
         $datacenter = strtoupper(trim($datacenter));
         $environment = strtolower(trim($environment));
@@ -96,7 +98,7 @@ class BankCertificateService
         }
 
         // Check if we already have a valid certificate cached
-        if ($this->bankCertStore !== null) {
+        if (!$forceRefresh && $this->bankCertStore !== null) {
             $cachedCert = $this->bankCertStore->getBankCertificate($datacenter, $environment);
             if ($cachedCert !== null) {
                 $verified = (new BankConnectBootstrapVerifier($this->conf))->verifyCached($cachedCert);
@@ -121,7 +123,7 @@ class BankCertificateService
         $tempGlobals['BANKCONNECT_DATACENTER'] = $datacenter;
         
         $tempConf->global = $tempGlobals;
-        $tempClient = new BankConnectClient($tempConf);
+        $tempClient = $this->createFetchClient($tempConf);
 
         // Fetch the certificate via getBankCertificate
         $rawResponse = $tempClient->getBankCertificate($header);
@@ -143,6 +145,11 @@ class BankCertificateService
         }
 
         return $certificatePem;
+    }
+
+    protected function createFetchClient(Conf $conf): BankConnectClient
+    {
+        return new BankConnectClient($conf);
     }
 
     /**
@@ -237,7 +244,7 @@ class BankCertificateService
         foreach ($datacenters as $datacenter) {
             foreach ($environments as $environment) {
                 try {
-                    $cert = $this->fetchBankCertificate($datacenter, $environment);
+                    $cert = $this->fetchBankCertificate($datacenter, $environment, '8079', null, true);
                     $results[] = [
                         'datacenter' => $datacenter,
                         'environment' => $environment,

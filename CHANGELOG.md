@@ -1,5 +1,10 @@
 ## 1.2.0 (unreleased)
 
+### Fixed
+- Certifikatopdatering henter nu et nyt signeret bankcertifikat, selv når et
+  tidligere verificeret certifikat stadig er gyldigt i cachen. Et fejlet
+  opdateringsforsøg overskriver ikke det eksisterende certifikat.
+
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat
   CI-workflow, failure-injection (UNKNOWN er terminal), idempotent
