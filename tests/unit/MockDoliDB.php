@@ -267,7 +267,7 @@ class MockDoliDB
 					if (strtoupper($v) === 'NOW()') $v = "'".date('Y-m-d H:i:s')."'";
 					if ($v === 'NULL') $this->tables[$table][$k][$m[1]] = null;
 					elseif (is_numeric($v)) $this->tables[$table][$k][$m[1]] = str_contains($v, '.') ? (float)$v : (int)$v;
-					else $this->tables[$table][$k][$m[1]] = trim($v, "'");
+					else $this->tables[$table][$k][$m[1]] = stripslashes(trim($v, "'"));
 				}
 				$changed++;
 			}

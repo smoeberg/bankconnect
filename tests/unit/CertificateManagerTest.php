@@ -192,6 +192,7 @@ class CertificateManagerTest extends TestCase
         $this->assertNotNull($stored);
         $this->assertSame(rtrim($bankCertificatePem), rtrim((string)$stored['certificate_pem']));
         $this->assertSame($fixture['response'], $stored['verified_response_xml']);
+        $this->assertNotNull((new BankConnectBootstrapVerifier($this->conf))->verifyCached($stored));
     }
 
     public function testGetBankCertificateSelectsLeafAfterIntermediate(): void
