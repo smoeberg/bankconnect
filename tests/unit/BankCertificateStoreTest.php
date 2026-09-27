@@ -212,4 +212,24 @@ class BankCertificateStoreTest extends PHPUnit\Framework\TestCase
         $retrieved = $this->store->getBankCertificate('BANKDATA', 'test');
         $this->assertNull($retrieved);
     }
+
+    public function testStoreCannotListOrDeleteAnotherEntity(): void
+    {
+        $otherStore = new BankCertificateStore($this->db, 2);
+        $id = $otherStore->saveBankCertificate([
+            'datacenter' => 'BANKDATA',
+            'environment' => 'test',
+            'certificate_pem' => $this->testCertPem,
+        ]);
+
+        $this->assertSame([], $this->store->listBankCertificates());
+        $this->assertCount(1, $otherStore->listBankCertificates());
+        $this->store->deleteBankCertificate($id);
+        $this->assertNotNull($otherStore->getBankCertificate('BANKDATA', 'test'));
+        $otherStore->deleteBankCertificate($id);
+        $this->assertNull($otherStore->getBankCertificate('BANKDATA', 'test'));
+
+        $this->expectException(BankConnectException::class);
+        $this->store->listBankCertificates(2);
+    }
 }
