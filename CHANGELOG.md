@@ -10,6 +10,8 @@
   entity, som lageret er oprettet for.
 - Opslag af et aktivt bankcertifikat kræver nu et eksplicit miljø og falder
   aldrig tilbage fra produktion til systemtest.
+- Automatisk import afviser en mapping, hvis dens aftale tilhører en anden
+  entity, før BankConnect kontaktes eller aftalens status ændres.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat

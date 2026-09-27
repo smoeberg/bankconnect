@@ -49,6 +49,10 @@ class BankConnectAutomaticImportService
 			if ($agreement === null || (string)($agreement['status'] ?? '') !== 'active') {
 				continue;
 			}
+			if ((int)($agreement['entity'] ?? 0) !== $entity) {
+				$result['errors'][] = 'BankConnect mapping #'.(int)$mapping['rowid'].' references an agreement outside this entity';
+				continue;
+			}
 			$result['agreements']++;
 			try {
 				$one = $this->runAgreement($agreement, (int)$mapping['fk_bank_account'], $user);
