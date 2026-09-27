@@ -15,6 +15,9 @@ class BankConnectCron
 	public function importStatements(): int
 	{
 		global $db, $conf, $user;
+		$this->error = '';
+		$this->errors = [];
+		$this->output = '';
 		if (!is_object($db) || !is_object($conf) || !is_object($user) || empty($user->id)) {
 			$this->error = 'BankConnect cron requires the Dolibarr database, configuration and cron user';
 			return -1;
