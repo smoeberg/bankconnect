@@ -36,18 +36,20 @@ class BankConnectConnectionTestService
 			$this->clients->create($agreement)->getStatus($header);
 			$this->agreements->recordConnectionTest($agreementId, true);
 		} catch (Throwable $e) {
-			if ($agreement !== null && (int)($agreement['entity'] ?? 0) === $entity) $this->agreements->recordConnectionTest($agreementId, false, $this->safeError($e));
+			if ($agreement !== null && (int)($agreement['entity'] ?? 0) === $entity) $this->agreements->recordConnectionTest($agreementId, false, self::safeError($e));
 			throw $e;
 		}
 	}
 
-	private function safeError(Throwable $error): string
+	public static function safeError(Throwable $error): string
 	{
 		$message = $error->getMessage();
-		if ($message === 'BankConnect: bank account does not exist, is closed, or belongs to another entity') return $message;
-		foreach (['not active', 'no active customer certificate', 'not mapped', 'does not belong to this entity'] as $safe) {
-			if (str_contains($message, $safe)) return $message;
-		}
-		return 'Signed BankConnect getStatus call failed';
+		return in_array($message, [
+			'BankConnect agreement does not belong to this entity',
+			'BankConnect agreement is not active',
+			'BankConnect agreement has no active customer certificate',
+			'BankConnect agreement is not mapped to a Dolibarr bank account',
+			'BankConnect: bank account does not exist, is closed, or belongs to another entity',
+		], true) ? $message : 'Signed BankConnect getStatus call failed';
 	}
 }

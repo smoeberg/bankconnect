@@ -33,7 +33,31 @@ class BankConnectConnectionTestServiceTest extends TestCase
 			$service->test(7, 2);
 		} finally {
 			$this->assertFalse($client->called);
-			$this->assertFalse($agreements->recorded[1]);
+			$this->assertSame([7, false, 'BankConnect agreement is not mapped to a Dolibarr bank account'], $agreements->recorded);
+		}
+	}
+
+	public function testClientErrorContainingSafePhraseIsRedactedInStoredStatus(): void
+	{
+		$agreements = new ConnectionAgreementStore();
+		$client = new class extends ConnectionClient {
+			public function getStatus(string $serviceHeaderXml): string
+			{
+				$this->called = true;
+				throw new RuntimeException('BankConnect agreement is not mapped to a Dolibarr bank account; private-key=secret');
+			}
+		};
+		$service = new BankConnectConnectionTestService($agreements, new ConnectionMappingStore(true), new ConnectionClientFactory($client));
+
+		$this->expectException(RuntimeException::class);
+		$this->expectExceptionMessage('private-key=secret');
+		try {
+			$service->test(7, 2);
+		} finally {
+			$this->assertTrue($client->called);
+			$this->assertSame([7, false, 'Signed BankConnect getStatus call failed'], $agreements->recorded);
+			$this->assertSame('Signed BankConnect getStatus call failed',
+				BankConnectConnectionTestService::safeError(new RuntimeException('BankConnect agreement is not mapped to a Dolibarr bank account; private-key=secret')));
 		}
 	}
 
