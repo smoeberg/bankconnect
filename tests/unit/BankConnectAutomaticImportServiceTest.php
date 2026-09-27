@@ -6,6 +6,88 @@ require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectAutomati
 
 class BankConnectAutomaticImportServiceTest extends TestCase
 {
+	public function testSyncFailureWriteErrorDoesNotStopOtherAgreements(): void
+	{
+		$agreements = new class extends AgreementStore {
+			public array $recorded = [];
+			public array $advanced = [];
+			public function __construct() {}
+			public function getAgreement(int $id): ?array
+			{
+				return ['rowid' => $id, 'entity' => 1, 'status' => 'active',
+					'main_registration_number' => '8079', 'bank_connect_id' => 'BC'.$id];
+			}
+			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void
+			{
+				if ($agreementId === 1) {
+					throw new RuntimeException('status write failed');
+				}
+				$this->recorded[] = [$agreementId, $summary, $error];
+			}
+			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void
+			{
+				$this->advanced[] = $agreementId;
+			}
+		};
+		$mappings = new class extends BankAccountMappingStore {
+			public function __construct() {}
+			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
+			public function listMappings(int $entity): array
+			{
+				return [
+					['fk_agreement' => 1, 'fk_bank_account' => 1004],
+					['fk_agreement' => 2, 'fk_bank_account' => 1005],
+				];
+			}
+		};
+		$importer = new class extends ImportService {
+			public function __construct() {}
+			public function import(string $xml, int $fkBankAccount = 0, string $sourceFile = 'import', $user = null): array
+			{
+				throw new RuntimeException('unexpected import');
+			}
+		};
+		$emptyClient = new class extends BankConnectClient {
+			public function __construct() {}
+			public function getCustomerStatement(string $serviceHeaderXml): string
+			{
+				return '<Envelope><Body><getCustomerStatementResponse/></Body></Envelope>';
+			}
+			public function getCustomerAccountReport(string $serviceHeaderXml): string
+			{
+				return '<Envelope><Body><getCustomerAccountReportResponse/></Body></Envelope>';
+			}
+			public function getDebitCreditNotification(string $serviceHeaderXml): string
+			{
+				return '<Envelope><Body><getDebitCreditNotificationResponse/></Body></Envelope>';
+			}
+		};
+		$clients = new class($emptyClient) extends BankConnectClientFactory {
+			private BankConnectClient $emptyClient;
+			public array $created = [];
+			public function __construct(BankConnectClient $emptyClient) { $this->emptyClient = $emptyClient; }
+			public function create(array $agreement): BankConnectClient
+			{
+				$this->created[] = (int)$agreement['rowid'];
+				if ((int)$agreement['rowid'] === 1) {
+					throw new RuntimeException('bank call failed');
+				}
+				return $this->emptyClient;
+			}
+		};
+
+		$result = (new BankConnectAutomaticImportService($agreements, $mappings, $importer, $clients))
+			->run(1, (object)['id' => 1]);
+
+		$this->assertSame(2, $result['agreements']);
+		$this->assertSame([1, 2], $clients->created);
+		$this->assertSame(['Agreement #1: bank call failed',
+			'Agreement #1: could not record sync failure: status write failed'], $result['errors']);
+		$this->assertSame([2], $agreements->advanced);
+		$this->assertCount(1, $agreements->recorded);
+		$this->assertSame(2, $agreements->recorded[0][0]);
+	}
+
 	public function testUnusableMappedBankAccountStopsBeforeNetworkAndKeepsCursor(): void
 	{
 		$agreements = new class extends AgreementStore {

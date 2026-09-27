@@ -71,8 +71,13 @@ class BankConnectAutomaticImportService
 					gmdate('Y-m-d H:i:s')
 				);
 			} catch (Throwable $e) {
-				$this->agreements->recordSyncResult((int)$agreement['rowid'], '', $e->getMessage());
 				$result['errors'][] = 'Agreement #'.(int)$agreement['rowid'].': '.$e->getMessage();
+				try {
+					$this->agreements->recordSyncResult((int)$agreement['rowid'], '', $e->getMessage());
+				} catch (Throwable $recordError) {
+					$result['errors'][] = 'Agreement #'.(int)$agreement['rowid']
+						.': could not record sync failure: '.$recordError->getMessage();
+				}
 			}
 		}
 		return $result;
