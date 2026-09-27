@@ -20,7 +20,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void
 			{
 				if ($agreementId === 1) {
-					throw new RuntimeException('status write failed');
+					throw new RuntimeException('status write failed; password=secret');
 				}
 				$this->recorded[] = [$agreementId, $summary, $error];
 			}
@@ -81,8 +81,8 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 
 		$this->assertSame(2, $result['agreements']);
 		$this->assertSame([1, 2], $clients->created);
-		$this->assertSame(['Agreement #1: bank call failed',
-			'Agreement #1: could not record sync failure: status write failed'], $result['errors']);
+		$this->assertSame(['Agreement #1: BankConnect automatic import failed',
+			'Agreement #1: could not record sync failure'], $result['errors']);
 		$this->assertSame([2], $agreements->advanced);
 		$this->assertCount(1, $agreements->recorded);
 		$this->assertSame(2, $agreements->recorded[0][0]);
@@ -431,7 +431,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 			public function getCustomerStatement(string $serviceHeaderXml): string
 			{
 				$this->attempts++;
-				throw new RuntimeException('invalid credentials for agreement');
+				throw new RuntimeException('invalid credentials for agreement; private-key=secret');
 			}
 		};
 		$clients = new class($client) extends BankConnectClientFactory {
@@ -445,7 +445,8 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 
 		$this->assertSame(1, $client->attempts, 'non-transient errors are not retried');
 		$this->assertSame(1, $result['agreements']);
-		$this->assertStringContainsString('invalid credentials', $agreements->lastError);
+		$this->assertSame('BankConnect automatic import failed', $agreements->lastError);
+		$this->assertSame(['Agreement #1: BankConnect automatic import failed'], $result['errors']);
 	}
 
 	public function testInvalidOptionalCamtFailsRunWithoutAdvancingCursor(): void

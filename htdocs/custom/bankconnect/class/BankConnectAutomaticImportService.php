@@ -71,16 +71,35 @@ class BankConnectAutomaticImportService
 					gmdate('Y-m-d H:i:s')
 				);
 			} catch (Throwable $e) {
-				$result['errors'][] = 'Agreement #'.(int)$agreement['rowid'].': '.$e->getMessage();
+				$safeError = $this->safeImportError($e);
+				$result['errors'][] = 'Agreement #'.(int)$agreement['rowid'].': '.$safeError;
 				try {
-					$this->agreements->recordSyncResult((int)$agreement['rowid'], '', $e->getMessage());
+					$this->agreements->recordSyncResult((int)$agreement['rowid'], '', $safeError);
 				} catch (Throwable $recordError) {
 					$result['errors'][] = 'Agreement #'.(int)$agreement['rowid']
-						.': could not record sync failure: '.$recordError->getMessage();
+						.': could not record sync failure';
 				}
 			}
 		}
 		return $result;
+	}
+
+	private function safeImportError(Throwable $error): string
+	{
+		$message = $error->getMessage();
+		return in_array($message, [
+			'BankConnect: bank account does not exist, is closed, or belongs to another entity',
+			'BankConnect statement response is malformed XML',
+			'BankConnect response contains multiple corporate messages',
+			'BankConnect response has no unique severalMessages flag',
+			'BankConnect response has an invalid severalMessages flag',
+			'BankConnect response contains multiple CAMT documents',
+			'BankConnect statement gzip payload is invalid',
+			'BankConnect response contains no CAMT statement',
+			'BankConnect response contains multiple CAMT statements',
+			'BankConnect signals more messages without a CAMT document',
+			'BankConnect still signals more messages after 100 responses',
+		], true) ? $message : 'BankConnect automatic import failed';
 	}
 
 	/** @param array<string,mixed> $agreement

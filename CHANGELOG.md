@@ -30,6 +30,8 @@
   mislykket opslag ikke kan føre til overskrivning af en eksisterende mapping.
 - Forbindelsestesten gemmer og viser kun præcise, kendte lokale fejltekster;
   klientfejl med ekstra indhold bliver erstattet af en generisk besked.
+- Automatisk import gemmer og rapporterer kun kendte, faste fejltekster for
+  den enkelte aftale; rå klient- og statusfejl bliver generiske beskeder.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat
