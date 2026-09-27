@@ -24,6 +24,8 @@
   rapporteres nu som fejl frem for at ligne manglende certifikater.
 - Forbindelsestesten afviser en mapping til en lukket eller fremmed bankkonto
   før et signeret BankConnect-kald og gemmer en tydelig, begrænset fejlstatus.
+- Databasefejl ved opslag af aktive kundecertifikater eller aftalelister
+  rapporteres nu som fejl i stedet for at ligne manglende data.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat
