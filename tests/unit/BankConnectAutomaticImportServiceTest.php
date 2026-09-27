@@ -6,6 +6,16 @@ require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectAutomati
 
 class BankConnectAutomaticImportServiceTest extends TestCase
 {
+	public function testSharedImportErrorFilterRejectsAppendedClientDetails(): void
+	{
+		$this->assertSame('BankConnect automatic import failed', BankConnectAutomaticImportService::safeImportError(
+			new RuntimeException('BankConnect statement response is malformed XML; private-key=secret')
+		));
+		$this->assertSame('BankConnect statement response is malformed XML', BankConnectAutomaticImportService::safeImportError(
+			new BankConnectException('BankConnect statement response is malformed XML')
+		));
+	}
+
 	public function testSyncFailureWriteErrorDoesNotStopOtherAgreements(): void
 	{
 		$agreements = new class extends AgreementStore {

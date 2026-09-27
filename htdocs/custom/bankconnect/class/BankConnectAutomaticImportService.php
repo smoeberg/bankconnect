@@ -71,7 +71,7 @@ class BankConnectAutomaticImportService
 					gmdate('Y-m-d H:i:s')
 				);
 			} catch (Throwable $e) {
-				$safeError = $this->safeImportError($e);
+				$safeError = self::safeImportError($e);
 				$result['errors'][] = 'Agreement #'.(int)$agreement['rowid'].': '.$safeError;
 				try {
 					$this->agreements->recordSyncResult((int)$agreement['rowid'], '', $safeError);
@@ -84,7 +84,7 @@ class BankConnectAutomaticImportService
 		return $result;
 	}
 
-	private function safeImportError(Throwable $error): string
+	public static function safeImportError(Throwable $error): string
 	{
 		$message = $error->getMessage();
 		return in_array($message, [

@@ -48,7 +48,7 @@ class BankConnectCron
 			}
 			return 0;
 		} catch (Throwable $e) {
-			$this->error = $e->getMessage();
+			$this->error = BankConnectAutomaticImportService::safeImportError($e);
 			return -1;
 		}
 	}
