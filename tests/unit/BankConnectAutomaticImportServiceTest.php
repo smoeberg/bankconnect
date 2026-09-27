@@ -6,6 +6,50 @@ require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectAutomati
 
 class BankConnectAutomaticImportServiceTest extends TestCase
 {
+	public function testForeignEntityAgreementIsRejectedBeforeNetworkOrStateChange(): void
+	{
+		$agreements = new class extends AgreementStore {
+			public bool $recorded = false;
+			public function __construct() {}
+			public function getAgreement(int $id): ?array
+			{
+				return ['rowid' => $id, 'entity' => 2, 'status' => 'active'];
+			}
+			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void { $this->recorded = true; }
+			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void { $this->recorded = true; }
+		};
+		$mappings = new class extends BankAccountMappingStore {
+			public function __construct() {}
+			public function listMappings(int $entity): array
+			{
+				return [['rowid' => 55, 'entity' => $entity, 'fk_agreement' => 9, 'fk_bank_account' => 1004]];
+			}
+		};
+		$importer = new class extends ImportService {
+			public function __construct() {}
+			public function import(string $xml, int $fkBankAccount = 0, string $sourceFile = 'import', $user = null): array
+			{
+				throw new RuntimeException('foreign account was imported');
+			}
+		};
+		$clients = new class extends BankConnectClientFactory {
+			public bool $called = false;
+			public function __construct() {}
+			public function create(array $agreement): BankConnectClient
+			{
+				$this->called = true;
+				throw new RuntimeException('foreign agreement was used');
+			}
+		};
+
+		$result = (new BankConnectAutomaticImportService($agreements, $mappings, $importer, $clients))
+			->run(1, (object)['id' => 1]);
+		$this->assertSame(0, $result['agreements']);
+		$this->assertSame(['BankConnect mapping #55 references an agreement outside this entity'], $result['errors']);
+		$this->assertFalse($clients->called);
+		$this->assertFalse($agreements->recorded);
+	}
+
 	public function testImportsOnlyActiveMappedAgreementsThroughSharedImporter(): void
 	{
 		$agreements = new class extends AgreementStore {
@@ -14,7 +58,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 			public function getAgreement(int $id): ?array
 			{
 				return $id === 1
-					? ['rowid' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1']
+					? ['rowid' => 1, 'entity' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1']
 					: ['rowid' => 2, 'status' => 'draft', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC2'];
 			}
 			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void
@@ -143,7 +187,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 			public function __construct() {}
 			public function getAgreement(int $id): ?array
 			{
-				return ['rowid' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1'];
+				return ['rowid' => 1, 'entity' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1'];
 			}
 			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void {}
 			public function getImportCursor(int $agreementId): ?string { return null; }
@@ -208,7 +252,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 			public function __construct() {}
 			public function getAgreement(int $id): ?array
 			{
-				return ['rowid' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1'];
+				return ['rowid' => 1, 'entity' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1'];
 			}
 			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void
 			{
@@ -264,7 +308,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 			public function __construct() {}
 			public function getAgreement(int $id): ?array
 			{
-				return ['rowid' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1'];
+				return ['rowid' => 1, 'entity' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1'];
 			}
 			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void { $this->lastError = $error; }
 			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void { $this->advanced = true; }
@@ -307,7 +351,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		$agreements = new class extends AgreementStore {
 			public int $advanced = 0;
 			public function __construct() {}
-			public function getAgreement(int $id): ?array { return ['rowid' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1']; }
+			public function getAgreement(int $id): ?array { return ['rowid' => 1, 'entity' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1']; }
 			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void {}
 			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void { $this->advanced++; }
 		};
@@ -359,7 +403,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		$agreements = new class extends AgreementStore {
 			public bool $advanced = false;
 			public function __construct() {}
-			public function getAgreement(int $id): ?array { return ['rowid' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1']; }
+			public function getAgreement(int $id): ?array { return ['rowid' => 1, 'entity' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1']; }
 			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void {}
 			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void { $this->advanced = true; }
 		};
@@ -401,7 +445,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		$agreements = new class extends AgreementStore {
 			public int $advanced = 0;
 			public function __construct() {}
-			public function getAgreement(int $id): ?array { return ['rowid' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1']; }
+			public function getAgreement(int $id): ?array { return ['rowid' => 1, 'entity' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1']; }
 			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void {}
 			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void { $this->advanced++; }
 		};
