@@ -22,6 +22,8 @@
   fejl ikke vises efter en senere vellykket import.
 - Databasefejl ved opslag eller listevisning af gemte bankcertifikater
   rapporteres nu som fejl frem for at ligne manglende certifikater.
+- Forbindelsestesten afviser en mapping til en lukket eller fremmed bankkonto
+  før et signeret BankConnect-kald og gemmer en tydelig, begrænset fejlstatus.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat
