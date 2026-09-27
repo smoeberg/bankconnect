@@ -124,6 +124,26 @@ class BankCertificateStoreTest extends PHPUnit\Framework\TestCase
         $this->store->getActiveBankCertificate('BANKDATA', 'staging');
     }
 
+    public function testMissingCertificateIsDistinctFromReadFailure(): void
+    {
+        $this->assertNull($this->store->getBankCertificate('BANKDATA', 'test'));
+        $this->db->failNextQueryContaining('FROM llx_bankconnect_bank_certificate', 'database unavailable');
+
+        $this->expectException(BankConnectException::class);
+        $this->expectExceptionMessage('Get bank certificate failed: database unavailable');
+        $this->store->getBankCertificate('BANKDATA', 'test');
+    }
+
+    public function testEmptyCertificateListIsDistinctFromReadFailure(): void
+    {
+        $this->assertSame([], $this->store->listBankCertificates());
+        $this->db->failNextQueryContaining('FROM llx_bankconnect_bank_certificate', 'database unavailable');
+
+        $this->expectException(BankConnectException::class);
+        $this->expectExceptionMessage('List bank certificates failed: database unavailable');
+        $this->store->listBankCertificates();
+    }
+
     public function testListBankCertificates()
     {
         $meta = $this->store->validateCertificatePem($this->testCertPem);

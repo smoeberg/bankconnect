@@ -93,8 +93,8 @@ class BankCertificateStore
              . " ORDER BY rowid DESC LIMIT 1";
         
         $res = $this->prefixQuery($sql);
-        if (!$res) {
-            return null;
+        if ($res === false) {
+            throw new BankConnectException('Get bank certificate failed: '.$this->db->lasterror());
         }
         $obj = $this->db->fetch_object($res);
         return $obj ? (array) $obj : null;
@@ -126,7 +126,10 @@ class BankCertificateStore
         $sql = "SELECT * FROM llx_bankconnect_bank_certificate WHERE entity = ".$this->entity." ORDER BY datacenter, environment, rowid DESC";
         $res = $this->prefixQuery($sql);
         $out = [];
-        while ($res && ($obj = $this->db->fetch_object($res))) {
+        if ($res === false) {
+            throw new BankConnectException('List bank certificates failed: '.$this->db->lasterror());
+        }
+        while ($obj = $this->db->fetch_object($res)) {
             $out[] = (array) $obj;
         }
         return $out;
