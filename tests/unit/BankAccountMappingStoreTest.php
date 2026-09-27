@@ -45,6 +45,27 @@ class BankAccountMappingStoreTest extends TestCase
         $this->store->map(1, $this->agreementId, $closedId);
     }
 
+    public function testMappedBankAccountClosedLaterIsRejectedBeforeImport(): void
+    {
+        $this->store->map(1, $this->agreementId, $this->bankAccountId);
+        $this->store->assertUsableBankAccount(1, $this->bankAccountId);
+        $this->db->query('UPDATE llx_bank_account SET clos = 1 WHERE rowid = '.$this->bankAccountId);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('does not exist, is closed');
+        $this->store->assertUsableBankAccount(1, $this->bankAccountId);
+    }
+
+    public function testMappedBankAccountMovedToAnotherEntityIsRejectedBeforeImport(): void
+    {
+        $this->store->map(1, $this->agreementId, $this->bankAccountId);
+        $this->db->query('UPDATE llx_bank_account SET entity = 2 WHERE rowid = '.$this->bankAccountId);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('belongs to another entity');
+        $this->store->assertUsableBankAccount(1, $this->bankAccountId);
+    }
+
     public function testCrossEntityAgreementCannotBeMapped(): void
     {
         $otherAgreement = $this->seedAgreement(2, 'BC-11');

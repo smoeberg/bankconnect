@@ -12,6 +12,8 @@
   aldrig tilbage fra produktion til systemtest.
 - Automatisk import afviser en mapping, hvis dens aftale tilhører en anden
   entity, før BankConnect kontaktes eller aftalens status ændres.
+- Automatisk import kontrollerer igen, at den mappede bankkonto er åben og
+  tilhører samme entity, før et BankConnect-kald sendes.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat

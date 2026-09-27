@@ -55,6 +55,7 @@ class BankConnectAutomaticImportService
 			}
 			$result['agreements']++;
 			try {
+				$this->mappings->assertUsableBankAccount($entity, (int)$mapping['fk_bank_account']);
 				$one = $this->runAgreement($agreement, (int)$mapping['fk_bank_account'], $user);
 				$result['imported'] += $one['imported'];
 				$result['duplicates'] += $one['duplicates'];
