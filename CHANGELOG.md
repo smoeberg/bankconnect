@@ -18,6 +18,8 @@
   import med fejl i stedet for at rapportere en vellykket kørsel uden import.
 - Fejl ved lagring af en aftales synkroniseringsfejl afbryder ikke længere
   importen af andre aftaler; begge fejl rapporteres til cron.
+- Cron-jobbet nulstiller resultat og fejl ved hver kørsel, så en tidligere
+  fejl ikke vises efter en senere vellykket import.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat
