@@ -98,6 +98,39 @@ class BankAccountMappingStoreTest extends TestCase
         $this->assertCount(1, $this->store->listMappings(1));
     }
 
+    public function testFailedTransactionStartKeepsExistingMapping(): void
+    {
+        $db = new class extends MockDoliDB {
+            public bool $failBegin = false;
+            public function begin(): bool
+            {
+                if ($this->failBegin) {
+                    $this->failNext('transaction unavailable');
+                    return false;
+                }
+                return parent::begin();
+            }
+        };
+        $db->query("INSERT INTO llx_bankconnect_agreement (entity, label, bank_connect_id, status) VALUES (1, 'Agreement', 'BC-10', 'active')");
+        $db->query("INSERT INTO llx_bank_account (entity, label, clos) VALUES (1, 'Original', 0)");
+        $db->query("INSERT INTO llx_bank_account (entity, label, clos) VALUES (1, 'Replacement', 0)");
+        $store = new BankAccountMappingStore($db);
+        $mappingId = $store->map(1, 1, 1);
+
+        $db->failBegin = true;
+        try {
+            $store->map(1, 1, 2);
+            $this->fail('Remapping must not delete the original row without a transaction');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('mapping transaction could not start: transaction unavailable', $e->getMessage());
+        }
+
+        $mapping = $store->findByAgreement(1, 1);
+        $this->assertSame($mappingId, (int)$mapping['rowid']);
+        $this->assertSame(1, (int)$mapping['fk_bank_account']);
+        $this->assertCount(1, $store->listMappings(1));
+    }
+
     public function testRemappingLeavesExistingMappingOnLookupFailure(): void
     {
         $replacementId = $this->seedBankAccount(1, 'Replacement', 0);
