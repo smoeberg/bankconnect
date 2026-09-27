@@ -16,6 +16,8 @@
   tilhører samme entity, før et BankConnect-kald sendes.
 - Databasefejl ved opslag af mappings eller aftaler afbryder nu automatisk
   import med fejl i stedet for at rapportere en vellykket kørsel uden import.
+- Fejl ved lagring af en aftales synkroniseringsfejl afbryder ikke længere
+  importen af andre aftaler; begge fejl rapporteres til cron.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat
