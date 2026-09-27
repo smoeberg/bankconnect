@@ -28,6 +28,8 @@
   rapporteres nu som fejl i stedet for at ligne manglende data.
 - Mapping-opslag skelner nu SQL-fejl fra manglende tilknytninger, så et
   mislykket opslag ikke kan føre til overskrivning af en eksisterende mapping.
+- Forbindelsestesten gemmer og viser kun præcise, kendte lokale fejltekster;
+  klientfejl med ekstra indhold bliver erstattet af en generisk besked.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat

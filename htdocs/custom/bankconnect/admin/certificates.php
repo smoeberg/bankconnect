@@ -114,7 +114,7 @@ if ($action === 'onboard') {
 		$tester->test(GETPOSTINT('agreement_id'), (int)$conf->entity);
 		setEventMessages($langs->trans('BankConnectConnectionOk'), null);
 	} catch (Throwable $e) {
-		setEventMessages($langs->trans('BankConnectConnectionFailed').': '.$e->getMessage(), null, 'errors');
+		setEventMessages($langs->trans('BankConnectConnectionFailed').': '.BankConnectConnectionTestService::safeError($e), null, 'errors');
 	}
 }
 
