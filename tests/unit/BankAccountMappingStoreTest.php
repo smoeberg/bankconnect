@@ -98,6 +98,35 @@ class BankAccountMappingStoreTest extends TestCase
         $this->assertCount(1, $this->store->listMappings(1));
     }
 
+    public function testRemappingLeavesExistingMappingOnLookupFailure(): void
+    {
+        $replacementId = $this->seedBankAccount(1, 'Replacement', 0);
+        $mappingId = $this->store->map(1, $this->agreementId, $this->bankAccountId);
+        $this->db->failNextQueryContaining('FROM llx_bankconnect_account_mapping', 'database unavailable');
+
+        try {
+            $this->store->map(1, $this->agreementId, $replacementId);
+            $this->fail('A failed mapping lookup must not proceed with remapping');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('mapping lookup by agreement failed: database unavailable', $e->getMessage());
+        }
+
+        $mapping = $this->store->findByAgreement(1, $this->agreementId);
+        $this->assertSame($mappingId, (int)$mapping['rowid']);
+        $this->assertSame($this->bankAccountId, (int)$mapping['fk_bank_account']);
+        $this->assertCount(1, $this->store->listMappings(1));
+    }
+
+    public function testBankAccountLookupDistinguishesMissingMappingFromReadFailure(): void
+    {
+        $this->assertNull($this->store->findByBankAccount(1, $this->bankAccountId));
+        $this->db->failNextQueryContaining('FROM llx_bankconnect_account_mapping', 'database unavailable');
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('mapping lookup by bank account failed: database unavailable');
+        $this->store->findByBankAccount(1, $this->bankAccountId);
+    }
+
     public function testUnmapRemovesMapping(): void
     {
         $this->store->map(1, $this->agreementId, $this->bankAccountId);

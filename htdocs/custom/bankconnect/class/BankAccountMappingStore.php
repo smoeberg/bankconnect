@@ -92,8 +92,8 @@ class BankAccountMappingStore
             . " AND fk_agreement = ".(int) $agreementId
             . " LIMIT 1";
         $res = $this->prefixQuery($sql);
-        if (!$res) {
-            return null;
+        if ($res === false) {
+            throw new RuntimeException('BankConnect: mapping lookup by agreement failed: '.$this->db->lasterror());
         }
         $obj = $this->db->fetch_object($res);
         return $obj ? (array) $obj : null;
@@ -107,8 +107,8 @@ class BankAccountMappingStore
             . " AND fk_bank_account = ".(int) $bankAccountId
             . " LIMIT 1";
         $res = $this->prefixQuery($sql);
-        if (!$res) {
-            return null;
+        if ($res === false) {
+            throw new RuntimeException('BankConnect: mapping lookup by bank account failed: '.$this->db->lasterror());
         }
         $obj = $this->db->fetch_object($res);
         return $obj ? (array) $obj : null;

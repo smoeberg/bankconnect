@@ -26,6 +26,8 @@
   før et signeret BankConnect-kald og gemmer en tydelig, begrænset fejlstatus.
 - Databasefejl ved opslag af aktive kundecertifikater eller aftalelister
   rapporteres nu som fejl i stedet for at ligne manglende data.
+- Mapping-opslag skelner nu SQL-fejl fra manglende tilknytninger, så et
+  mislykket opslag ikke kan føre til overskrivning af en eksisterende mapping.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat
