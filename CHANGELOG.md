@@ -36,6 +36,8 @@
   for manuel synkronisering, så rå databasefejl ikke vises.
 - Remapping afbrydes nu, hvis databasetransaktionen ikke kan startes, før
   den eksisterende tilknytning slettes.
+- Databasefejl under validering af aftale og bankkonto ved mapping får nu
+  egne, begrænsede fejlbeskeder i stedet for at ligne manglende data.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat

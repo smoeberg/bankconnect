@@ -45,6 +45,32 @@ class BankAccountMappingStoreTest extends TestCase
         $this->store->map(1, $this->agreementId, $closedId);
     }
 
+    public function testAgreementValidationQueryFailureStopsMapping(): void
+    {
+        $this->db->failNextQueryContaining('FROM llx_bankconnect_agreement', 'database unavailable; password=secret');
+
+        try {
+            $this->store->map(1, $this->agreementId, $this->bankAccountId);
+            $this->fail('A failed agreement validation must stop mapping');
+        } catch (RuntimeException $e) {
+            $this->assertSame('BankConnect: agreement validation query failed', $e->getMessage());
+        }
+        $this->assertSame(0, $this->db->countRows('llx_bankconnect_account_mapping'));
+    }
+
+    public function testBankAccountValidationQueryFailureStopsMapping(): void
+    {
+        $this->db->failNextQueryContaining('FROM llx_bank_account', 'database unavailable; password=secret');
+
+        try {
+            $this->store->map(1, $this->agreementId, $this->bankAccountId);
+            $this->fail('A failed bank account validation must stop mapping');
+        } catch (RuntimeException $e) {
+            $this->assertSame('BankConnect: bank account validation query failed', $e->getMessage());
+        }
+        $this->assertSame(0, $this->db->countRows('llx_bankconnect_account_mapping'));
+    }
+
     public function testMappedBankAccountClosedLaterIsRejectedBeforeImport(): void
     {
         $this->store->map(1, $this->agreementId, $this->bankAccountId);
