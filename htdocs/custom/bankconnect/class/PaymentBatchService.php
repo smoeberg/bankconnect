@@ -306,25 +306,35 @@ class PaymentBatchService
             throw new BankConnectException('Bank status response does not identify the unknown batch; status remains unknown');
         }
 
-        $updated = 0;
+        // Check every reported payment before changing any local line or batch status.
+        if (empty($parsed['transactions'])) {
+            $this->logger->error('unknown_batch_reconciliation_no_transactions', ['batch_id' => $batchId]);
+            throw new BankConnectException('Bank status response identifies the batch but contains no transaction status; status remains unknown');
+        }
         foreach ($parsed['transactions'] as $tx) {
             $endToEndId = trim((string) ($tx['end_to_end_id'] ?? ''));
             if ($endToEndId === '') {
-                continue;
+                throw new BankConnectException('Bank status response contains a payment outside the unknown batch; status remains unknown');
             }
-            $internal = Pain002Parser::mapToInternalStatus($tx['status']);
-            $reason = trim(($tx['reason_code'] ?? '').' '.($tx['reason_text'] ?? ''));
-            if ($this->updateBatchLineByEndToEnd($batchId, $endToEndId, $internal, $tx['status'], $reason !== '' ? $reason : null)) {
-                $updated++;
+            $match = $this->prefixQuery('SELECT rowid FROM llx_bankconnect_batch_line WHERE fk_batch = '.(int)$batchId
+                ." AND end_to_end_id = '".$this->db->escape($endToEndId)."'");
+            if ($match === false) {
+                throw new BankConnectException('Unable to check payment lines for unknown batch; status remains unknown');
+            }
+            if (!$this->db->fetch_object($match)) {
+                throw new BankConnectException('Bank status response contains a payment outside the unknown batch; status remains unknown');
             }
         }
 
-        // A matching original message id is necessary, but transaction evidence is also
-        // required when the bank supplies transaction-level records. Do not manufacture
-        // a successful state from an empty/unrelated transaction list.
-        if ($updated === 0 && empty($parsed['transactions'])) {
-            $this->logger->error('unknown_batch_reconciliation_no_transactions', ['batch_id' => $batchId]);
-            throw new BankConnectException('Bank status response identifies the batch but contains no transaction status; status remains unknown');
+        $updated = 0;
+        foreach ($parsed['transactions'] as $tx) {
+            $endToEndId = trim((string) $tx['end_to_end_id']);
+            $internal = Pain002Parser::mapToInternalStatus($tx['status']);
+            $reason = trim(($tx['reason_code'] ?? '').' '.($tx['reason_text'] ?? ''));
+            if (!$this->updateBatchLineByEndToEnd($batchId, $endToEndId, $internal, $tx['status'], $reason !== '' ? $reason : null)) {
+                throw new BankConnectException('Unable to update payment line for unknown batch; status remains unknown');
+            }
+            $updated++;
         }
 
         $batchStatus = $this->deriveBatchStatus($parsed['group_status'], $parsed['transactions']);

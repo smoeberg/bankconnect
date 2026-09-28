@@ -431,6 +431,35 @@ XML;
         $this->assertSame('accepted', $line->status);
     }
 
+    public function testResolveUnknownBatchRejectsUnrelatedPaymentBeforeUpdatingAnyLine(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->db->query("UPDATE llx_bankconnect_batch SET status = 'unknown' WHERE rowid = ".(int)$created['batch_id']);
+
+        foreach ([
+            '<TxInfAndSts><OrgnlEndToEndId>OTHER</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts>',
+            '<TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts>'
+                .'<TxInfAndSts><OrgnlEndToEndId>OTHER</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts>',
+        ] as $transactions) {
+            $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03">'
+                .'<CstmrPmtStsRpt><GrpHdr><MsgId>ST5</MsgId></GrpHdr>'
+                .'<OrgnlGrpInfAndSts><OrgnlMsgId>'.$created['msg_id'].'</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>'
+                .'<OrgnlPmtInfAndSts>'.$transactions.'</OrgnlPmtInfAndSts></CstmrPmtStsRpt></Document>';
+
+            try {
+                $this->svc->resolveUnknownBatch($created['batch_id'], null, $pain002);
+                $this->fail('Unrelated payment must not reconcile the unknown batch');
+            } catch (BankConnectException $e) {
+                $this->assertStringContainsString('outside the unknown batch', $e->getMessage());
+            }
+
+            $batch = $this->db->findFirst('llx_bankconnect_batch', 'rowid', $created['batch_id']);
+            $line = $this->db->findFirst('llx_bankconnect_batch_line', 'fk_batch', $created['batch_id']);
+            $this->assertSame('unknown', $batch['status']);
+            $this->assertSame('draft', $line['status']);
+        }
+    }
+
     public function testResolveUnknownBatchUsesGetStatusWhenNoFixtureProvided(): void
     {
         $created = $this->svc->createBatch($this->sampleBuilder(), 1);

@@ -1,6 +1,8 @@
 ## 1.2.0 (unreleased)
 
 ### Fixed
+- Afstemning af batches med ukendt udfald kontrollerer nu, at alle betalings-id'er
+  findes i batchen, før bankens status kan ændre batch eller linjer.
 - Statusopdatering af betalingsbatches kræver nu, at pain.002 angiver samme
   oprindelige besked-id som batchen, før linjer og batchstatus ændres.
 - Oprettelse af betalingsbatches stopper nu ved fejlet transaktionsstart og
