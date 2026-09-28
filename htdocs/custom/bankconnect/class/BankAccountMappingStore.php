@@ -147,7 +147,10 @@ class BankAccountMappingStore
             . " AND entity = ".max(1, $entity)
             . " LIMIT 1";
         $res = $this->prefixQuery($sql);
-        if (!$res || !$this->db->fetch_object($res)) {
+        if ($res === false) {
+            throw new RuntimeException('BankConnect: agreement validation query failed');
+        }
+        if (!$this->db->fetch_object($res)) {
             throw new RuntimeException('BankConnect: agreement does not exist in this entity');
         }
     }
@@ -160,7 +163,10 @@ class BankAccountMappingStore
             . " AND clos = 0"
             . " LIMIT 1";
         $res = $this->prefixQuery($sql);
-        if (!$res || !$this->db->fetch_object($res)) {
+        if ($res === false) {
+            throw new RuntimeException('BankConnect: bank account validation query failed');
+        }
+        if (!$this->db->fetch_object($res)) {
             throw new RuntimeException('BankConnect: bank account does not exist, is closed, or belongs to another entity');
         }
     }
