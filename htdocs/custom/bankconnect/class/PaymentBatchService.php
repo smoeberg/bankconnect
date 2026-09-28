@@ -74,7 +74,7 @@ class PaymentBatchService
             ];
         } catch (Throwable $e) {
             $this->rollback();
-            throw new BankConnectException('Failed to create payment batch: '.$e->getMessage(), 0, $e);
+            throw new BankConnectException('Failed to create payment batch', 0, $e);
         }
     }
 
@@ -414,8 +414,20 @@ class PaymentBatchService
     }
 
 
-    private function begin(): void { if (method_exists($this->db, 'begin')) $this->db->begin(); }
-    private function commit(): void { if (method_exists($this->db, 'commit')) $this->db->commit(); }
+    private function begin(): void
+    {
+        if (!method_exists($this->db, 'begin') || !method_exists($this->db, 'commit')
+            || !method_exists($this->db, 'rollback') || !$this->db->begin()) {
+            throw new BankConnectException('Payment batch transaction could not start');
+        }
+    }
+
+    private function commit(): void
+    {
+        if (!$this->db->commit()) {
+            throw new BankConnectException('Payment batch transaction could not commit');
+        }
+    }
     private function rollback(): void { if (method_exists($this->db, 'rollback')) $this->db->rollback(); }
 
     private function insertBatch(array $d): int

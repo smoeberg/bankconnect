@@ -51,6 +51,64 @@ class PaymentBatchServiceTest extends TestCase
         $this->assertSame('draft', $line->status);
     }
 
+    public function testCreateBatchStopsBeforeInsertingWhenTransactionCannotStart(): void
+    {
+        $db = new class extends MockDoliDB {
+            public function begin(): bool
+            {
+                return false;
+            }
+        };
+        $svc = new PaymentBatchService($db, $this->conf, null);
+
+        try {
+            $svc->createBatch($this->sampleBuilder(), 1);
+            $this->fail('Expected transaction start to fail');
+        } catch (BankConnectException $e) {
+            $this->assertSame('Payment batch transaction could not start', $e->getMessage());
+        }
+
+        $this->assertSame(0, $db->countRows('llx_bankconnect_batch'));
+        $this->assertSame(0, $db->countRows('llx_bankconnect_batch_line'));
+    }
+
+    public function testCreateBatchRollsBackHeaderAndLinesWhenCommitFails(): void
+    {
+        $db = new class extends MockDoliDB {
+            public function commit(): bool
+            {
+                return false;
+            }
+        };
+        $svc = new PaymentBatchService($db, $this->conf, null);
+
+        try {
+            $svc->createBatch($this->sampleBuilder(), 1);
+            $this->fail('Expected transaction commit to fail');
+        } catch (BankConnectException $e) {
+            $this->assertSame('Failed to create payment batch', $e->getMessage());
+            $this->assertSame('Payment batch transaction could not commit', $e->getPrevious()->getMessage());
+        }
+
+        $this->assertSame(0, $db->countRows('llx_bankconnect_batch'));
+        $this->assertSame(0, $db->countRows('llx_bankconnect_batch_line'));
+    }
+
+    public function testCreateBatchRollsBackOnLineInsertFailureWithoutExposingDatabaseError(): void
+    {
+        $this->db->failNextQueryContaining('INSERT INTO llx_bankconnect_batch_line', 'sensitive database detail');
+
+        try {
+            $this->svc->createBatch($this->sampleBuilder(), 1);
+            $this->fail('Expected line insertion to fail');
+        } catch (BankConnectException $e) {
+            $this->assertSame('Failed to create payment batch', $e->getMessage());
+        }
+
+        $this->assertSame(0, $this->db->countRows('llx_bankconnect_batch'));
+        $this->assertSame(0, $this->db->countRows('llx_bankconnect_batch_line'));
+    }
+
     public function testSendWithoutClientFailsClosedAndLeavesDraft(): void
     {
         $created = $this->svc->createBatch($this->sampleBuilder(), 1);

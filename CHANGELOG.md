@@ -1,6 +1,8 @@
 ## 1.2.0 (unreleased)
 
 ### Fixed
+- Oprettelse af betalingsbatches stopper nu ved fejlet transaktionsstart og
+  ruller batch og linjer tilbage ved fejlet commit; databasefejl vises ikke råt.
 - Certifikatopdatering henter nu et nyt signeret bankcertifikat, selv når et
   tidligere verificeret certifikat stadig er gyldigt i cachen. Et fejlet
   opdateringsforsøg overskriver ikke det eksisterende certifikat.
