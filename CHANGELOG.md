@@ -1,6 +1,8 @@
 ## 1.2.0 (unreleased)
 
 ### Fixed
+- Statusopdatering af betalingsbatches kræver nu, at pain.002 angiver samme
+  oprindelige besked-id som batchen, før linjer og batchstatus ændres.
 - Oprettelse af betalingsbatches stopper nu ved fejlet transaktionsstart og
   ruller batch og linjer tilbage ved fejlet commit; databasefejl vises ikke råt.
 - Certifikatopdatering henter nu et nyt signeret bankcertifikat, selv når et

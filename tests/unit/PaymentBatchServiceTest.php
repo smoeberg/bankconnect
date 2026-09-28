@@ -338,12 +338,28 @@ XML;
         $this->assertSame(1, (int)$line->requires_manual_review);
     }
 
-    public function testPain002ForAnotherBatchIsRejected(): void
+    public function testPain002WithoutMatchingOriginalMessageIdCannotChangeBatchOrLines(): void
     {
         $created = $this->svc->createBatch($this->sampleBuilder(), 1);
-        $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03"><CstmrPmtStsRpt><GrpHdr><MsgId>ST3</MsgId></GrpHdr><OrgnlGrpInfAndSts><OrgnlMsgId>OTHER</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts></CstmrPmtStsRpt></Document>';
-        $this->expectException(BankConnectException::class);
-        $this->svc->refreshStatus($created['batch_id'], null, $pain002);
+        foreach (['<OrgnlMsgId>OTHER</OrgnlMsgId>', ''] as $originalMessageId) {
+            $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03">'
+                .'<CstmrPmtStsRpt><GrpHdr><MsgId>ST3</MsgId></GrpHdr>'
+                .'<OrgnlGrpInfAndSts>'.$originalMessageId.'<GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>'
+                .'<OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId>'
+                .'<TxSts>ACCP</TxSts></TxInfAndSts></OrgnlPmtInfAndSts></CstmrPmtStsRpt></Document>';
+
+            try {
+                $this->svc->refreshStatus($created['batch_id'], null, $pain002);
+                $this->fail('Status report without the matching message id must be rejected');
+            } catch (BankConnectException $e) {
+                $this->assertSame('pain.002 does not belong to the requested payment batch', $e->getMessage());
+            }
+
+            $batch = $this->db->findFirst('llx_bankconnect_batch', 'rowid', $created['batch_id']);
+            $line = $this->db->findFirst('llx_bankconnect_batch_line', 'fk_batch', $created['batch_id']);
+            $this->assertSame('draft', $batch['status']);
+            $this->assertSame('draft', $line['status']);
+        }
     }
 
     public function testSendUnknownBatchThrows(): void

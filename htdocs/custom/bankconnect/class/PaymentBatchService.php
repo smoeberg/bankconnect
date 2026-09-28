@@ -206,7 +206,7 @@ class PaymentBatchService
 
         $originalMessageId = trim((string)($parsed['original_msg_id'] ?? ''));
         $batchMsgId = trim((string)($batch['msg_id'] ?? ''));
-        if ($originalMessageId !== '' && $batchMsgId !== '' && !hash_equals($batchMsgId, $originalMessageId)) {
+        if ($originalMessageId === '' || $batchMsgId === '' || !hash_equals($batchMsgId, $originalMessageId)) {
             throw new BankConnectException('pain.002 does not belong to the requested payment batch');
         }
 
