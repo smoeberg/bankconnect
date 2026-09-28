@@ -158,6 +158,26 @@ class CertificateManagerTest extends TestCase
         $this->assertSame('0010888100007', $agr['bank_connect_id']);
     }
 
+    public function testOnboardFailsClosedWithoutMainRegistrationNumber(): void
+    {
+        $db = new MockDoliDB();
+        $db->tables['llx_bankconnect_agreement'] = [];
+        $store = new AgreementStore($db);
+        $mgr = new BankConnectCertificateManager($this->conf, null, null, $store);
+
+        try {
+            $mgr->onboard([
+                'activation_code' => '1234-5678-9012',
+                'function_identification' => '0010888100007',
+            ]);
+            $this->fail('Missing main_registration_number must fail closed');
+        } catch (BankConnectException $e) {
+            $this->assertStringContainsString('main_registration_number', $e->getMessage());
+        }
+
+        $this->assertSame([], $db->tables['llx_bankconnect_agreement'], 'Nothing may be persisted when the registration number is missing');
+    }
+
     public function testOnboardingInstallsAndStoresFetchedBankCertificateBeforeActivation(): void
     {
         $fixture = BankCertificateFixture::create();
