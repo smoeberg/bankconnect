@@ -142,6 +142,12 @@ $conf->global['BANKCONNECT_RULE_AMOUNT_TOLERANCE'] = 0.05;
 // process-miljøet (production secret boundary); conf-værdien ovenfor
 // er kun legacy-fallback. Admin-siden gemmer eller viser aldrig nøglen.
 // BANKCONNECT_SECRET_KEY, BANKCONNECT_MISTRAL_API_KEY m.fl.
+//
+// BankConnect customer private key is ALWAYS read from the process
+// environment as BANKCONNECT_CUSTOMER_PRIVATE_KEY. Never put the private
+// key in $conf->global or Dolibarr constants. Public certificates may be
+// stored in $conf->global: BANKCONNECT_CUSTOMER_CERTIFICATE and
+// BANKCONNECT_BANK_CERTIFICATE.
 
 // Required before live TransferPayment. Controls the normative v3.7
 // transport-signature/encryption order: BANKDATA, NBS or BEC.
@@ -193,8 +199,11 @@ draft -> validated -> prepared -> submitting -> submitted -> accepted/rejected
 - Signering/krypteringsrækkefølge pr. datacenter (BANKDATA/NBS vs BEC).
 - Certifikat-livscyklus: atomisk renewal, per-agreement serialisering,
   CSRF på onboarding.
-- Secret-håndtering via miljøvariabler; ingen secrets i DB eller logs
-  (redaction i logger). `BankConnectLogger::write()` kalder altid
+- Secret-håndtering via miljøvariabler. Kundens private nøgle har en særskilt
+  secret-boundary via `BANKCONNECT_CUSTOMER_PRIVATE_KEY` og må aldrig ligge i
+  `conf->global`, DB eller logs. Kundecertifikat og bankcertifikat er public
+  material og kan ligge i `conf->global`; de skal stadig valideres mod den
+  konfigurerede BankConnect-root-CA. `BankConnectLogger::write()` kalder altid
   `sanitizeContext()`, så nøglenavne som `api_key` og `private_key`
   aldrig lander i klartekst.
 - Bankcertifikater hentes automatisk fra banken under onboarding
