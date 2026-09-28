@@ -60,9 +60,15 @@ class CamtParser
                     $amounts[]=abs((float)(string)$amt);
                 }
                 if($explicit&&$sameCurrency&&$this->amountsReconcile($amounts,$ntryAmount)){
+                    $split = count($txDtls) > 1;
+                    $usedIds = [];
                     foreach($txDtls as $index=>$tx){
-                        $txId=$this->transactionIdentity($tx,$ntry,$index);
-                        $txs[]=$this->buildFromTxDtls($tx,$date,$creditDebit,$ntryAmount,$ntryCcy,$ntryRef,$isReversal,$ntry,$statementId,$txId);
+                        $txId=$this->transactionIdentity($tx,$ntry,$index,$entryIndex);
+                        if (isset($usedIds[$txId])) $txId .= ':detail:'.$index;
+                        $usedIds[$txId] = true;
+                        $detail=$this->buildFromTxDtls($tx,$date,$creditDebit,$ntryAmount,$ntryCcy,$ntryRef,$isReversal,$ntry,$statementId,$txId);
+                        $detail->isSplitDetail = $split;
+                        $txs[]=$detail;
                     }
                 }else{
                     $txs[]=$this->buildFromNtryOnly($ntry,$date,$creditDebit,$ntryAmount,$ntryCcy,$ntryRef,$isReversal,true,$statementId,$ntryRef!==''?$ntryRef:'entry:'.$entryIndex);
@@ -82,14 +88,15 @@ class CamtParser
         return '';
     }
 
-    private function transactionIdentity($tx,$ntry,int $index): string {
+    private function transactionIdentity($tx,$ntry,int $index,int $entryIndex): string {
         foreach(['./*[local-name()="Refs"]/*[local-name()="AcctSvcrRef"]','./*[local-name()="Refs"]/*[local-name()="InstrId"]','./*[local-name()="Refs"]/*[local-name()="EndToEndId"]'] as $path){
             $v=$this->first($tx,$path);
             if($v!==null&&trim((string)$v)!=='') return trim((string)$v);
         }
         $v=$this->first($tx,'.//*[local-name()="AcctSvcrRef"]');
         if($v!==null&&trim((string)$v)!=='') return trim((string)$v);
-        return trim((string)($this->first($ntry,'./*[local-name()="AcctSvcrRef"]')??$this->first($ntry,'./*[local-name()="NtryRef"]')??'')).':'.$index;
+        $parent = trim((string)($this->first($ntry,'./*[local-name()="AcctSvcrRef"]')??$this->first($ntry,'./*[local-name()="NtryRef"]')??''));
+        return ($parent !== '' ? $parent : 'entry:'.$entryIndex).':'.$index;
     }
 
     private function buildFromTxDtls($txDtls,string $date,string $creditDebit,float $ntryAmount,string $ntryCcy,string $ntryAcctSvcrRef,bool $isReversal,$ntry,string $statementId,string $transactionId): BankTransaction {
