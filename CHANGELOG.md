@@ -38,6 +38,8 @@
   den eksisterende tilknytning slettes.
 - Databasefejl under validering af aftale og bankkonto ved mapping får nu
   egne, begrænsede fejlbeskeder i stedet for at ligne manglende data.
+- Betalingsbatches gemmer nu faste fejlbeskeder ved fejlet forberedelse og
+  ukendt transportresultat i stedet for rå undtagelsestekst.
 
 ### Added
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat
