@@ -31,8 +31,11 @@ the build script produces the layout expected by Dolibarr.
 
 ## Current accounting boundary
 
-The package installs the BankConnect transport, import and reconciliation UI.
-Direct transfer of approved matches to Dolibarr accounting is intentionally not
-enabled yet. That operation must use Dolibarr's normal bank-entry/payment and bank
-financial-journal flow; the legacy direct SQL posting class is not exposed by the
-module UI.
+The package installs the BankConnect transport, import, reconciliation and
+supplier-payment UI. Approved matches may be linked to Dolibarr payments and
+existing bank entries; transferring those entries to accounting still uses
+Dolibarr's bank financial journal. The module does not post ledger entries.
+
+Payment submission uses an active BankConnect agreement with its mapped open
+bank account and verified certificates. Before any live payment, complete the
+Dolibarr and BankConnect system-test gates in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).

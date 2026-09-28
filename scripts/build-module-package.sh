@@ -42,6 +42,8 @@ cp -R "$module_dir/." "$stage_dir/bankconnect/"
 # part of an installable release. It remains in the repository until the
 # standard Dolibarr Account/Paiement adapter replaces it.
 cp "$project_dir/README.md" "$stage_dir/bankconnect/README.md"
+cp "$project_dir/INSTALL.md" "$stage_dir/bankconnect/INSTALL.md"
+cp "$project_dir/RELEASE_CHECKLIST.md" "$stage_dir/bankconnect/RELEASE_CHECKLIST.md"
 cp "$project_dir/CHANGELOG.md" "$stage_dir/bankconnect/CHANGELOG.md"
 
 package="$dist_dir/module_bankconnect-${version}.zip"

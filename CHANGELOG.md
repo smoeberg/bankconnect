@@ -1,6 +1,10 @@
 ## 1.2.0 (unreleased)
 
 ### Fixed
+- Betalingssiden anvender nu den valgte aktive aftale og dens mappede bankkonto,
+  kontrollerer fakturaens entity og restbeløb og kan sende via aftalens klient.
+- Kladder kan ikke modtage pain.002-status; betalte batches kan hente bankstatus,
+  og ukendte udfald kan afstemmes særskilt i betalingsoversigten.
 - Afstemning af batches med ukendt udfald kontrollerer nu, at alle betalings-id'er
   findes i batchen, før bankens status kan ændre batch eller linjer.
 - Statusopdatering af betalingsbatches kræver nu, at pain.002 angiver samme
@@ -48,6 +52,7 @@
   ukendt transportresultat i stedet for rå undtagelsestekst.
 
 ### Added
+- Betalingsmenu, status- og afstemningshandlinger samt ZIP-kontrol i CI.
 - Kvalifikationssuiten (issue #43) er nu dokumenteret i README: separat
   CI-workflow, failure-injection (UNKNOWN er terminal), idempotent
   duplikat-import og performance-qualification (500 x 12 kandidater).

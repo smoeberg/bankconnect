@@ -111,6 +111,21 @@ class modBankConnect extends DolibarrModules
 			'target' => '',
 			'user' => 0,
 		);
+		$this->menu[1] = array(
+			'fk_mainmenu' => 'bank',
+			'fk_leftmenu' => '',
+			'type' => 'left',
+			'titre' => 'BankConnectPayments',
+			'mainmenu' => 'bank',
+			'leftmenu' => 'bankconnect_payments',
+			'url' => '/bankconnect/pages/payments.php',
+			'langs' => 'bankconnect@bankconnect',
+			'position' => 501,
+			'enabled' => 'isModEnabled("bankconnect")',
+			'perms' => '$user->hasRight("bankconnect", "write")',
+			'target' => '',
+			'user' => 0,
+		);
 	}
 
 	/** @param string $options Options when enabling module
