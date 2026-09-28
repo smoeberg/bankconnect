@@ -33,7 +33,7 @@ class BankConnectXmlSecurity
     public const XENC_NS = 'http://www.w3.org/2001/04/xmlenc#';
     public const AES256_CBC = 'http://www.w3.org/2001/04/xmlenc#aes256-cbc';
     public const RSA_OAEP_MGF1P = 'http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p';
-    public const RSA_1_5 = 'http://www.w3.org/2001/04/xmlenc#rsa_1_5';
+    public const RSA_1_5 = 'http://www.w3.org/2001/04/xmlenc#rsa-1_5';
     public const WSSE_NS = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd';
     public const WSU_NS = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd';
 
@@ -232,7 +232,7 @@ class BankConnectXmlSecurity
         $ed->appendChild($this->xmlElement($doc,$xenc,'xenc:EncryptionMethod',null,['Algorithm'=>'http://www.w3.org/2001/04/xmlenc#aes256-cbc']));
         $eki=$doc->createElementNS($ds,'ds:KeyInfo');
         $estr=$doc->createElementNS($wsse,'wsse:SecurityTokenReference');
-        $estr->setAttributeNS($wsse11Real,'wsse11:TokenType','http://docs.oasis-open.org/wss/oasis-wss-wssecurity-secext-1.1.xsd#EncryptedKey');
+        $estr->setAttributeNS($wsse11Real,'wsse11:TokenType','http://docs.oasis-open.org/wss/oasis-wss-soap-message-security-1.1#EncryptedKey');
         $er=$doc->createElementNS($wsse,'wsse:Reference'); $er->setAttribute('URI','#'.$ekId);
         $estr->appendChild($er); $eki->appendChild($estr); $ed->appendChild($eki);
         $ecd=$doc->createElementNS($xenc,'xenc:CipherData');
