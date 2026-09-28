@@ -108,7 +108,7 @@ XML;
         $this->assertSame(0, $second['imported']);
         $this->assertSame(2, $second['duplicates']);
         $this->assertSame(2, $this->db->countRows('llx_bankconnect_transaction'));
-        $this->assertSame(3000.0, array_sum(array_column($this->db->tables['llx_bankconnect_transaction'], 'amount')));
+        $this->assertSame(3000.0, (float) array_sum(array_column($this->db->tables['llx_bankconnect_transaction'], 'amount')));
     }
 
     public function testSameBankReferenceOnDifferentAccountsDoesNotCollide(): void
