@@ -99,6 +99,12 @@ class BankConnectAutomaticImportService
 			'BankConnect response contains multiple CAMT statements',
 			'BankConnect signals more messages without a CAMT document',
 			'BankConnect still signals more messages after 100 responses',
+			'BankConnect: unable to check mapped bank account',
+			'BankConnect: mapped bank account needs a valid IBAN',
+			'BankConnect: invalid CAMT account document',
+			'BankConnect: CAMT account identity is missing',
+			'BankConnect: CAMT account identity is missing or ambiguous',
+			'BankConnect: CAMT account differs from mapped Dolibarr account',
 		], true) ? $message : 'BankConnect automatic import failed';
 	}
 
@@ -160,6 +166,9 @@ class BankConnectAutomaticImportService
 					break;
 				}
 				$source = 'bankconnect:'.(int)$agreement['rowid'].':'.$header->getEndToEndMessageId();
+				$this->mappings->assertStatementMatchesAccount(
+					(int)$agreement['entity'], $bankAccountId, $camt
+				);
 				$one = $this->importer->import($camt, $bankAccountId, $source, $user);
 				$sum['imported'] += $one['imported'];
 				$sum['duplicates'] += $one['duplicates'];

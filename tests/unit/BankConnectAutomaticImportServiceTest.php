@@ -4,8 +4,71 @@ use PHPUnit\Framework\TestCase;
 
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectAutomaticImportService.php';
 
+// Existing transport tests use abbreviated CAMT fixtures. Account verification
+// has dedicated tests with real account identifiers below.
+class TransportTestMappingStore extends BankAccountMappingStore
+{
+	public function assertStatementMatchesAccount(int $entity, int $bankAccountId, string $camtXml): void {}
+}
+
 class BankConnectAutomaticImportServiceTest extends TestCase
 {
+	public function testAccountMismatchStopsBeforeImportAndKeepsCursor(): void
+	{
+		$agreements = new class extends AgreementStore {
+			public bool $advanced = false;
+			public function __construct() {}
+			public function getAgreement(int $id): ?array
+			{
+				return ['rowid' => $id, 'entity' => 1, 'status' => 'active',
+					'main_registration_number' => '12345678', 'bank_connect_id' => 'BC1'];
+			}
+			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void {}
+			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void { $this->advanced = true; }
+		};
+		$mappings = new class extends TransportTestMappingStore {
+			public function __construct() {}
+			public function listMappings(int $entity): array
+			{
+				return [['rowid' => 1, 'entity' => $entity, 'fk_agreement' => 1, 'fk_bank_account' => 7]];
+			}
+			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
+			public function assertStatementMatchesAccount(int $entity, int $bankAccountId, string $camtXml): void
+			{
+				throw new RuntimeException('BankConnect: CAMT account differs from mapped Dolibarr account');
+			}
+		};
+		$importer = new class extends ImportService {
+			public bool $called = false;
+			public function __construct() {}
+			public function import(string $xml, int $fkBankAccount = 0, string $sourceFile = 'import', $user = null): array
+			{
+				$this->called = true;
+				return ['imported' => 1, 'duplicates' => 0, 'total' => 1];
+			}
+		};
+		$client = new class extends BankConnectClient {
+			public function __construct() {}
+			public function getCustomerStatement(string $header): string
+			{
+				$camt = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"><BkToCstmrStmt/></Document>';
+				return '<Envelope><content>'.base64_encode($camt).'</content></Envelope>';
+			}
+		};
+		$clients = new class($client) extends BankConnectClientFactory {
+			private BankConnectClient $client;
+			public function __construct(BankConnectClient $client) { $this->client = $client; }
+			public function create(array $agreement): BankConnectClient { return $this->client; }
+		};
+
+		$result = (new BankConnectAutomaticImportService($agreements, $mappings, $importer, $clients))
+			->run(1, (object)['id' => 1]);
+		$this->assertFalse($importer->called);
+		$this->assertFalse($agreements->advanced);
+		$this->assertSame(0, $result['imported']);
+		$this->assertSame(['Agreement #1: BankConnect: CAMT account differs from mapped Dolibarr account'], $result['errors']);
+	}
+
 	public function testSharedImportErrorFilterRejectsAppendedClientDetails(): void
 	{
 		$this->assertSame('BankConnect automatic import failed', BankConnectAutomaticImportService::safeImportError(
@@ -39,7 +102,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 				$this->advanced[] = $agreementId;
 			}
 		};
-		$mappings = new class extends BankAccountMappingStore {
+		$mappings = new class extends TransportTestMappingStore {
 			public function __construct() {}
 			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array
@@ -117,7 +180,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 				$this->cursorAdvanced = true;
 			}
 		};
-		$mappings = new class extends BankAccountMappingStore {
+		$mappings = new class extends TransportTestMappingStore {
 			public array $checked = [];
 			public function __construct() {}
 			public function listMappings(int $entity): array
@@ -171,7 +234,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void { $this->recorded = true; }
 			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void { $this->recorded = true; }
 		};
-		$mappings = new class extends BankAccountMappingStore {
+		$mappings = new class extends TransportTestMappingStore {
 			public function __construct() {}
 			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array
@@ -231,7 +294,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 				$this->cursor = $dateTimeUtc;
 			}
 		};
-		$mappings = new class extends BankAccountMappingStore {
+		$mappings = new class extends TransportTestMappingStore {
 			public function __construct() {}
 			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array
@@ -304,7 +367,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 			public function getImportCursor(int $agreementId): ?string { return null; }
 			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void {}
 		};
-		$mappings = new class extends BankAccountMappingStore {
+		$mappings = new class extends TransportTestMappingStore {
 			public function __construct() {}
 			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array
@@ -349,7 +412,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 			public function getImportCursor(int $agreementId): ?string { return null; }
 			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void {}
 		};
-		$mappings = new class extends BankAccountMappingStore {
+		$mappings = new class extends TransportTestMappingStore {
 			public function __construct() {}
 			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array
@@ -419,7 +482,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 			public function getImportCursor(int $agreementId): ?string { return null; }
 			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void {}
 		};
-		$mappings = new class extends BankAccountMappingStore {
+		$mappings = new class extends TransportTestMappingStore {
 			public function __construct() {}
 			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array
@@ -472,7 +535,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void { $this->lastError = $error; }
 			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void { $this->advanced = true; }
 		};
-		$mappings = new class extends BankAccountMappingStore {
+		$mappings = new class extends TransportTestMappingStore {
 			public function __construct() {}
 			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array { return [['fk_agreement' => 1, 'fk_bank_account' => 1004]]; }
@@ -515,7 +578,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void {}
 			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void { $this->advanced++; }
 		};
-		$mappings = new class extends BankAccountMappingStore {
+		$mappings = new class extends TransportTestMappingStore {
 			public function __construct() {}
 			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array { return [['fk_agreement' => 1, 'fk_bank_account' => 1004]]; }
@@ -568,7 +631,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void {}
 			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void { $this->advanced = true; }
 		};
-		$mappings = new class extends BankAccountMappingStore {
+		$mappings = new class extends TransportTestMappingStore {
 			public function __construct() {}
 			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array { return [['fk_agreement' => 1, 'fk_bank_account' => 1004]]; }
@@ -611,7 +674,7 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void {}
 			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void { $this->advanced++; }
 		};
-		$mappings = new class extends BankAccountMappingStore {
+		$mappings = new class extends TransportTestMappingStore {
 			public function __construct() {}
 			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
 			public function listMappings(int $entity): array { return [['fk_agreement' => 1, 'fk_bank_account' => 1004]]; }

@@ -5,6 +5,7 @@ use PHPUnit\Framework\TestCase;
 require_once __DIR__.'/bootstrap.php';
 require_once __DIR__.'/MockDoliDB.php';
 require_once __DIR__.'/../../htdocs/custom/bankconnect/class/BankConnectStore.php';
+require_once __DIR__.'/../../htdocs/custom/bankconnect/class/ImportService.php';
 
 class BankConnectStoreTest extends TestCase
 {
@@ -87,6 +88,27 @@ class BankConnectStoreTest extends TestCase
         $this->assertTrue($second['duplicate']);
         $this->assertSame($first['rowid'], $second['rowid']);
         $this->assertSame(1, $this->db->countRows('llx_bankconnect_transaction'));
+    }
+
+    public function testSeparateDetailsWithSharedEntryReferenceAreBothImportedAndReplayedOnce(): void
+    {
+        $xml = <<<'XML'
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"><BkToCstmrStmt><Stmt><Id>STMT-1</Id><Ntry>
+<Amt Ccy="DKK">3000.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><BookgDt><Dt>2026-09-14</Dt></BookgDt><AcctSvcrRef>BATCH-001</AcctSvcrRef>
+<NtryDtls><TxDtls><Amt Ccy="DKK">1000.00</Amt><Refs><EndToEndId>INV-1</EndToEndId></Refs></TxDtls>
+<TxDtls><Amt Ccy="DKK">2000.00</Amt><Refs><EndToEndId>INV-2</EndToEndId></Refs></TxDtls></NtryDtls>
+</Ntry></Stmt></BkToCstmrStmt></Document>
+XML;
+        $importer = new ImportService($this->store);
+        $first = $importer->import($xml, 1);
+        $second = $importer->import($xml, 1);
+
+        $this->assertSame(2, $first['imported']);
+        $this->assertSame(0, $first['duplicates']);
+        $this->assertSame(0, $second['imported']);
+        $this->assertSame(2, $second['duplicates']);
+        $this->assertSame(2, $this->db->countRows('llx_bankconnect_transaction'));
+        $this->assertSame(3000.0, array_sum(array_column($this->db->tables['llx_bankconnect_transaction'], 'amount')));
     }
 
     public function testSameBankReferenceOnDifferentAccountsDoesNotCollide(): void
