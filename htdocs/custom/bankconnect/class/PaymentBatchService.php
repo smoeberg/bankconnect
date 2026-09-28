@@ -195,11 +195,13 @@ class PaymentBatchService
     {
         $batch = $this->fetchBatch($batchId);
         if (!$batch) throw new BankConnectException("Batch {$batchId} not found");
+        if (!in_array((string)$batch['status'], ['submitted', 'pending', 'partial'], true)) {
+            throw new BankConnectException('Payment batch status cannot be refreshed from its current state');
+        }
 
         if ($pain002Xml === null) {
             if ($this->client === null) throw new BankConnectException('No BankConnectClient and no pain.002 XML provided');
-            if (!$serviceHeaderXml) throw new BankConnectException('ServiceHeader XML is required for getStatus');
-            $pain002Xml = $this->client->getStatus($serviceHeaderXml);
+            $pain002Xml = $this->client->getStatus($serviceHeaderXml ?: $this->buildServiceHeaderForBatch($batch));
         }
 
         $parsed = (new Pain002Parser())->parse($pain002Xml);
@@ -277,11 +279,8 @@ class PaymentBatchService
             if ($this->client === null) {
                 throw new BankConnectException('BankConnectClient is required to reconcile an unknown batch');
             }
-            if (!$serviceHeaderXml) {
-                throw new BankConnectException('ServiceHeader XML is required to reconcile an unknown batch');
-            }
             try {
-                $pain002Xml = $this->client->getStatus($serviceHeaderXml);
+                $pain002Xml = $this->client->getStatus($serviceHeaderXml ?: $this->buildServiceHeaderForBatch($batch));
             } catch (Throwable $e) {
                 // Keep UNKNOWN: a failed status lookup provides no evidence about the remote payment.
                 $this->logger->error('unknown_batch_reconciliation_failed', [

@@ -20,12 +20,14 @@ BankConnect -> import/dedup -> Dolibarr-bankkonto og bankpost
 
 Betalingsflow (pain.001):
 
-Godkendt match -> payment batch (draft -> validated -> approved)
+Valgt leverandørfaktura -> payment batch (draft -> validated -> prepared)
      -> Pain001Builder (pain.001.001.03)
      -> BankConnectXmlSecurity (sign/krypter pr. datacenter)
      -> BankConnectClient (SOAP CorporateService)
-     -> Pain002Parser (status) -> accepted/rejected/unknown
-     -> ApprovedMatchLinkService -> Dolibarr-betaling + bankpost
+     -> Pain002Parser (status) -> submitted/accepted/rejected/unknown
+
+Separat afstemningsflow: godkendt match -> ApprovedMatchLinkService
+     -> Dolibarr-betaling + eksisterende bankpost
 ```
 
 Modulets egne tabeller er sidecar-data til BankConnect-identitet, importstatus,
@@ -172,13 +174,16 @@ values are rejected before any payment request is sent.
 ## Livscyklus (payment batch)
 
 ```
-draft -> validated -> approved -> sent -> accepted/rejected/unknown
-                        \-> cancelled
+draft -> validated -> prepared -> submitting -> submitted -> accepted/rejected
+                                        \-> unknown -> afstemning fra pain.002
 ```
 
 - Idempotens-nøgle forhindrer dobbeltforsendelse.
 - `unknown` recoveres sikkert via pain.002-opslag; status mappes semantisk,
   bankens verbatim-status bevares altid.
+- Betalingssiden bruger kun aktive aftaler med mappet, åben bankkonto og
+  beregner restbeløb på valgte leverandørfakturaer. Status hentes manuelt fra
+  banken; et ukendt udfald må ikke sendes igen.
 - CAMT-import: dedup via ImportService; provenance bevares end-to-end.
 
 ## Sikkerhed
@@ -222,7 +227,10 @@ med `doc_type='bank'` og bankpostens id som `fk_doc`. Brugeren sendes derefter
 til Dolibarrs standard **Bank Financial Journal**, som alene udfører overførslen
 til finans. BankConnect-modulet skriver ikke direkte i bogføringen.
 
-## Videre udvikling
+## Før live brug
 
-- Live XML crypto (kræver officiel BankConnect developer package).
-- OIOUBL/EAN-fakturering (dkmodul-dolibarr-repoet).
+Se [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for installation i Dolibarr 24,
+BankConnect-systemtest med officielle certifikater, fejlscenarier og releasebevis.
+Den isolerede CI-suite og XML-kryptografiens enhedstests dokumenterer ikke en
+gennemført test mod bankens systemtestmiljø. Betalingsfunktionen skal ikke
+bruges til live udbetalinger, før de relevante releaseporte er dokumenteret.

@@ -1,205 +1,135 @@
 <?php
-/**
- * BankConnect – send payments (pain.001) from unpaid supplier invoices.
- */
-
+/** Supplier payments and status reconciliation for the current entity. */
 require '../../../main.inc.php';
-require_once dol_buildpath('/bankconnect/class/Pain001Builder.php', 0);
-require_once dol_buildpath('/bankconnect/class/PaymentBatchService.php', 0);
-require_once dol_buildpath('/bankconnect/class/BankConnectException.php', 0);
+require_once dol_buildpath('/bankconnect/class/PaymentPageService.php', 0);
 
-if (!$user->hasRight('bankconnect', 'write') && empty($user->admin)) {
-    accessforbidden();
-}
-
+if (!$user->hasRight('bankconnect', 'write') && empty($user->admin)) accessforbidden();
 $langs->load('bankconnect@bankconnect');
+$entity = (int)$conf->entity;
 $action = GETPOST('action', 'aZ09');
-$fkAgreement = GETPOSTINT('fk_agreement') ?: 1;
+$payments = new PaymentPageService($db, $conf);
 
-/*
- * Actions
- */
-if ($action === 'create_batch' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!checkToken()) {
-        accessforbidden();
-    }
-    $selected = GETPOST('invoice', 'array');
-    if (empty($selected) || !is_array($selected)) {
-        setEventMessages($langs->trans('BankConnectNoInvoicesSelected'), null, 'warnings');
-    } else {
-        try {
-            $builder = new Pain001Builder();
-            $builder->setInitiatingParty($mysoc->name ?: 'Company');
-
-            // Debtor from first bank account with IBAN (simplified)
-            $debtorIban = '';
-            $debtorBic  = '';
-            $sqlBank = "SELECT iban_prefix, number, bic, label FROM ".MAIN_DB_PREFIX."bank_account"
-                     . " WHERE entity IN (".getEntity('bank_account').") AND clos = 0 ORDER BY rowid ASC LIMIT 1";
-            $resBank = $db->query($sqlBank);
-            if ($resBank && ($b = $db->fetch_object($resBank))) {
-                $debtorIban = ($b->iban_prefix ?: '').($b->number ?: '');
-                $debtorBic  = $b->bic ?: '';
-            }
-            if ($debtorIban === '') {
-                throw new BankConnectException('No open bank account with IBAN configured');
-            }
-            $builder->setDebtor($mysoc->name ?: 'Company', $debtorIban, $debtorBic);
-
-            $execDate = GETPOST('execution_date', 'alpha');
-            if ($execDate) {
-                $builder->setExecutionDate(new DateTimeImmutable($execDate));
-            }
-
-            $payType = GETPOST('payment_type', 'aZ09') ?: 'dk_transfer';
-            $builder->setPaymentType(
-                $payType === 'sepa' ? Pain001Builder::TYPE_SEPA : Pain001Builder::TYPE_DK_TRANSFER
+if (in_array($action, ['create_batch', 'send_batch', 'refresh_status', 'resolve_unknown'], true)) {
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST' || !checkToken()) accessforbidden();
+    try {
+        if ($action === 'create_batch') {
+            $result = $payments->create(
+                $entity, GETPOSTINT('fk_agreement'), (array)GETPOST('invoice', 'array'),
+                (string)($mysoc->name ?: 'Company'), GETPOST('execution_date', 'alpha'),
+                GETPOST('payment_type', 'aZ09') ?: 'dk_transfer', (bool)GETPOSTINT('send_now')
             );
-
-            foreach ($selected as $facId) {
-                $facId = (int) $facId;
-                $sql = "SELECT f.rowid, f.ref, f.total_ttc, f.multicurrency_code, s.nom, s.iban, s.bic"
-                     . " FROM ".MAIN_DB_PREFIX."facture_fourn AS f"
-                     . " LEFT JOIN ".MAIN_DB_PREFIX."societe AS s ON s.rowid = f.fk_soc"
-                     . " WHERE f.rowid = ".$facId
-                     . " AND f.fk_statut = 1 AND f.paye = 0"; // validated, unpaid
-                $res = $db->query($sql);
-                $fac = $res ? $db->fetch_object($res) : null;
-                if (!$fac || empty($fac->iban)) {
-                    continue;
-                }
-
-                $endToEndId = substr(preg_replace('/[^A-Za-z0-9]/', '', $fac->ref), 0, 35);
-                if ($endToEndId === '') {
-                    $endToEndId = 'FF'.$fac->rowid;
-                }
-
-                $builder->addTransaction([
-                    'endToEndId'       => $endToEndId,
-                    'amount'           => (float) $fac->total_ttc,
-                    'currency'         => $fac->multicurrency_code ?: 'DKK',
-                    'creditorName'     => $fac->nom,
-                    'creditorIban'     => $fac->iban,
-                    'creditorBic'      => $fac->bic ?: '',
-                    'remittance'       => $fac->ref,
-                    'fk_facture_fourn' => (int) $fac->rowid,
-                ]);
-            }
-
-            if (count($builder->getTransactions()) === 0) {
-                throw new BankConnectException($langs->trans('BankConnectNoValidInvoices'));
-            }
-
-            $svc = new PaymentBatchService($db, $conf);
-            $result = $svc->createBatch($builder, $fkAgreement, $conf->entity);
-
-            // Optionally send immediately
-            if (GETPOST('send_now', 'int')) {
-                $sent = $svc->sendBatch($result['batch_id']);
-                setEventMessages(
-                    $langs->trans('BankConnectBatchSent', $result['batch_id'], $result['nb_of_txs'], price($result['control_sum'])),
-                    null
-                );
-            } else {
-                setEventMessages(
-                    $langs->trans('BankConnectBatchCreated', $result['batch_id'], $result['nb_of_txs'], price($result['control_sum'])),
-                    null
-                );
-            }
-        } catch (BankConnectException $e) {
-            setEventMessages($e->getMessage(), null, 'errors');
-        } catch (Throwable $e) {
-            setEventMessages('Unexpected error: '.$e->getMessage(), null, 'errors');
+            setEventMessages($langs->trans(GETPOSTINT('send_now') ? 'BankConnectBatchSent' : 'BankConnectBatchCreated',
+                $result['batch_id'], $result['nb_of_txs'], price($result['control_sum'])), null);
+        } elseif ($action === 'send_batch') {
+            $payments->send($entity, GETPOSTINT('batch_id'));
+            setEventMessages($langs->trans('BankConnectBatchSubmitted'), null);
+        } elseif ($action === 'resolve_unknown') {
+            $payments->resolveUnknown($entity, GETPOSTINT('batch_id'));
+            setEventMessages($langs->trans('BankConnectStatusUpdated'), null);
+        } else {
+            $payments->refresh($entity, GETPOSTINT('batch_id'));
+            setEventMessages($langs->trans('BankConnectStatusUpdated'), null);
         }
+    } catch (Throwable $e) {
+        // The underlying exception can contain bank payloads, credentials or SQL.
+        setEventMessages($langs->trans('BankConnectPaymentActionFailed'), null, 'errors');
     }
 }
 
-/*
- * View – unpaid supplier invoices
- */
 llxHeader('', 'BankConnect — '.$langs->trans('BankConnectPayments'));
-
 print load_fiche_titre($langs->trans('BankConnectPayments'), '', 'payment');
-
-print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
-print '<input type="hidden" name="token" value="'.newToken().'">';
-print '<input type="hidden" name="action" value="create_batch">';
-print '<input type="hidden" name="fk_agreement" value="'.((int) $fkAgreement).'">';
-
-print '<div class="div-table-responsive">';
-print '<table class="tagtable liste">';
-print '<tr class="liste_titre">';
-print '<th><input type="checkbox" id="checkall" onclick="jQuery(\'.checkforselect\').prop(\'checked\', this.checked);"></th>';
-print '<th>'.$langs->trans('Ref').'</th>';
-print '<th>'.$langs->trans('ThirdParty').'</th>';
-print '<th class="right">'.$langs->trans('AmountTTC').'</th>';
-print '<th>IBAN</th>';
-print '<th>'.$langs->trans('Date').'</th>';
-print '</tr>';
-
-$sql = "SELECT f.rowid, f.ref, f.total_ttc, f.datef, f.multicurrency_code, s.nom, s.iban"
-     . " FROM ".MAIN_DB_PREFIX."facture_fourn AS f"
-     . " LEFT JOIN ".MAIN_DB_PREFIX."societe AS s ON s.rowid = f.fk_soc"
-     . " WHERE f.entity IN (".getEntity('facture_fourn').")"
-     . " AND f.fk_statut = 1 AND f.paye = 0"
-     . " ORDER BY f.datef DESC, f.rowid DESC"
-     . " LIMIT 200";
-$res = $db->query($sql);
-$n = 0;
-while ($res && ($obj = $db->fetch_object($res))) {
-    $n++;
-    $disabled = empty($obj->iban) ? ' disabled title="Mangler IBAN"' : '';
-    print '<tr class="oddeven">';
-    print '<td><input type="checkbox" class="checkforselect" name="invoice[]" value="'.$obj->rowid.'"'.$disabled.'></td>';
-    print '<td>'.dol_escape_htmltag($obj->ref).'</td>';
-    print '<td>'.dol_escape_htmltag($obj->nom).'</td>';
-    print '<td class="right">'.price($obj->total_ttc).' '.dol_escape_htmltag($obj->multicurrency_code ?: 'DKK').'</td>';
-    print '<td>'.dol_escape_htmltag($obj->iban ?: '—').'</td>';
-    print '<td>'.dol_print_date($db->jdate($obj->datef), 'day').'</td>';
-    print '</tr>';
+try {
+    $available = $payments->availableAgreements($entity);
+} catch (Throwable $e) {
+    $available = [];
+    setEventMessages($langs->trans('BankConnectPaymentActionFailed'), null, 'errors');
 }
-if ($n === 0) {
-    print '<tr><td colspan="6">'.$langs->trans('BankConnectNoUnpaidInvoices').'</td></tr>';
+if (!$available) {
+    print '<div class="warning">'.$langs->trans('BankConnectPaymentSetupRequired').'</div>';
+} else {
+    print '<form method="POST" action="'.dol_escape_htmltag($_SERVER['PHP_SELF']).'">';
+    print '<input type="hidden" name="token" value="'.newToken().'">';
+    print '<input type="hidden" name="action" value="create_batch">';
+    print '<label>'.$langs->trans('BankConnectPaymentAgreement').' <select name="fk_agreement" required>';
+    foreach ($available as $option) {
+        $agreement = $option['agreement'];
+        $account = $option['account'];
+        print '<option value="'.(int)$agreement['rowid'].'">'
+            .dol_escape_htmltag($agreement['label'].' — '.$account['label'].' ('.$account['iban'].')').'</option>';
+    }
+    print '</select></label>';
+
+    print '<div class="div-table-responsive"><table class="tagtable liste">';
+    print '<tr class="liste_titre"><th></th><th>'.$langs->trans('Ref').'</th><th>'.$langs->trans('ThirdParty')
+        .'</th><th class="right">'.$langs->trans('AmountTTC').'</th><th>IBAN</th><th>'.$langs->trans('Date').'</th></tr>';
+    $prefix = MAIN_DB_PREFIX;
+    $sql = 'SELECT f.rowid, f.ref, f.total_ttc, f.multicurrency_total_ttc, f.datef, f.multicurrency_code, s.nom, s.iban,'
+        .' COALESCE((SELECT SUM(pf.amount) FROM '.$prefix.'paiementfourn_facturefourn pf WHERE pf.fk_facturefourn=f.rowid),0) AS paid_main,'
+        .' COALESCE((SELECT SUM(pf.multicurrency_amount) FROM '.$prefix.'paiementfourn_facturefourn pf WHERE pf.fk_facturefourn=f.rowid),0) AS paid_multi'
+        .' FROM '.$prefix.'facture_fourn f JOIN '.$prefix.'societe s ON s.rowid=f.fk_soc'
+        .' WHERE f.entity='.$entity.' AND f.fk_statut=1 AND f.paye=0 ORDER BY f.datef DESC, f.rowid DESC LIMIT 200';
+    $res = $db->query($sql);
+    if ($res === false) setEventMessages($langs->trans('BankConnectPaymentActionFailed'), null, 'errors');
+    $count = 0;
+    while ($res && ($invoice = $db->fetch_object($res))) {
+        $currency = strtoupper((string)($invoice->multicurrency_code ?: ($conf->currency ?? 'DKK')));
+        $multi = $currency !== strtoupper((string)($conf->currency ?? 'DKK'));
+        $remaining = round((float)($multi ? $invoice->multicurrency_total_ttc : $invoice->total_ttc)
+            - (float)($multi ? $invoice->paid_multi : $invoice->paid_main), 2);
+        if ($remaining <= 0) continue;
+        $count++;
+        $disabled = empty($invoice->iban) ? ' disabled' : '';
+        print '<tr class="oddeven"><td><input type="checkbox" name="invoice[]" value="'.(int)$invoice->rowid.'"'.$disabled.'></td>';
+        print '<td>'.dol_escape_htmltag($invoice->ref).'</td><td>'.dol_escape_htmltag($invoice->nom).'</td>';
+        print '<td class="right">'.price($remaining).' '.dol_escape_htmltag($currency).'</td>';
+        print '<td>'.dol_escape_htmltag($invoice->iban ?: '—').'</td>';
+        print '<td>'.dol_print_date($db->jdate($invoice->datef), 'day').'</td></tr>';
+    }
+    if (!$count) print '<tr><td colspan="6">'.$langs->trans('BankConnectNoUnpaidInvoices').'</td></tr>';
+    print '</table></div><br>';
+    print '<label>'.$langs->trans('BankConnectExecutionDate').' <input type="date" name="execution_date" value="'
+        .dol_print_date(dol_now(), '%Y-%m-%d').'"></label> ';
+    print '<label>'.$langs->trans('BankConnectPaymentType').' <select name="payment_type">';
+    print '<option value="dk_transfer">'.$langs->trans('BankConnectTypeDkTransfer').'</option>';
+    print '<option value="sepa">'.$langs->trans('BankConnectTypeSepa').'</option></select></label> ';
+    print '<label><input type="checkbox" name="send_now" value="1"> '.$langs->trans('BankConnectSendNow').'</label> ';
+    print '<input type="submit" class="button button-save" value="'.$langs->trans('BankConnectCreateBatch').'">';
+    print '</form>';
 }
-print '</table>';
-print '</div>';
 
-print '<br>';
-print '<label>'.$langs->trans('BankConnectExecutionDate').' </label>';
-print '<input type="date" name="execution_date" value="'.dol_print_date(dol_now(), '%Y-%m-%d').'"> ';
-print '<label>'.$langs->trans('BankConnectPaymentType').' </label>';
-print '<select name="payment_type">';
-print '<option value="dk_transfer">'.$langs->trans('BankConnectTypeDkTransfer').'</option>';
-print '<option value="sepa">'.$langs->trans('BankConnectTypeSepa').'</option>';
-print '</select> ';
-print '<label><input type="checkbox" name="send_now" value="1"> '.$langs->trans('BankConnectSendNow').'</label> ';
-print '<input type="submit" class="button button-save" value="'.$langs->trans('BankConnectCreateBatch').'">';
-print '</form>';
-
-// Recent batches
 print '<br><h3>'.$langs->trans('BankConnectRecentBatches').'</h3>';
-print '<table class="noborder centpercent">';
-print '<tr class="liste_titre"><th>ID</th><th>MsgId</th><th>Status</th><th class="right">Txs</th><th class="right">Sum</th><th>Sent</th></tr>';
-$sqlB = "SELECT rowid, msg_id, status, nb_of_txs, control_sum, date_sent"
-      . " FROM ".MAIN_DB_PREFIX."bankconnect_batch"
-      . " WHERE entity = ".((int) $conf->entity)
-      . " ORDER BY rowid DESC LIMIT 20";
-$resB = $db->query($sqlB);
-$anyB = false;
-while ($resB && ($b = $db->fetch_object($resB))) {
-    $anyB = true;
-    print '<tr class="oddeven">';
-    print '<td>'.$b->rowid.'</td>';
-    print '<td>'.dol_escape_htmltag($b->msg_id).'</td>';
-    print '<td>'.dol_escape_htmltag($b->status).'</td>';
-    print '<td class="right">'.((int) $b->nb_of_txs).'</td>';
-    print '<td class="right">'.price($b->control_sum).'</td>';
-    print '<td>'.($b->date_sent ? dol_print_date($db->jdate($b->date_sent), 'dayhour') : '—').'</td>';
-    print '</tr>';
+print '<table class="noborder centpercent"><tr class="liste_titre"><th>ID</th><th>MsgId</th><th>Status</th>'
+    .'<th class="right">Txs</th><th class="right">Sum</th><th>Sent</th><th></th></tr>';
+$res = $db->query('SELECT rowid, msg_id, status, nb_of_txs, control_sum, date_sent FROM '.MAIN_DB_PREFIX
+    .'bankconnect_batch WHERE entity='.$entity.' ORDER BY rowid DESC LIMIT 20');
+if ($res === false) setEventMessages($langs->trans('BankConnectPaymentActionFailed'), null, 'errors');
+$any = false;
+while ($res && ($batch = $db->fetch_object($res))) {
+    $any = true;
+    print '<tr class="oddeven"><td>'.(int)$batch->rowid.'</td><td>'.dol_escape_htmltag($batch->msg_id)
+        .'</td><td>'.dol_escape_htmltag($batch->status).'</td><td class="right">'.(int)$batch->nb_of_txs
+        .'</td><td class="right">'.price($batch->control_sum).'</td><td>'
+        .($batch->date_sent ? dol_print_date($db->jdate($batch->date_sent), 'dayhour') : '—').'</td><td>';
+    $batchAction = match ((string)$batch->status) {
+        'draft', 'validated', 'prepared' => 'send_batch',
+        'unknown' => 'resolve_unknown',
+        'submitted', 'pending', 'partial' => 'refresh_status',
+        default => null,
+    };
+    if ($batchAction !== null) {
+        $label = match ($batchAction) {
+            'send_batch' => 'BankConnectSendBatch',
+            'resolve_unknown' => 'BankConnectResolveUnknown',
+            default => 'BankConnectRefreshStatus',
+        };
+        print '<form method="POST" action="'.dol_escape_htmltag($_SERVER['PHP_SELF']).'">'
+            .'<input type="hidden" name="token" value="'.newToken().'">'
+            .'<input type="hidden" name="action" value="'.$batchAction.'">'
+            .'<input type="hidden" name="batch_id" value="'.(int)$batch->rowid.'">'
+            .'<button class="button" type="submit">'.$langs->trans($label).'</button></form>';
+    }
+    print '</td></tr>';
 }
-if (!$anyB) {
-    print '<tr><td colspan="6">'.$langs->trans('BankConnectNoBatches').'</td></tr>';
-}
+if (!$any) print '<tr><td colspan="7">'.$langs->trans('BankConnectNoBatches').'</td></tr>';
 print '</table>';
-
 llxFooter();

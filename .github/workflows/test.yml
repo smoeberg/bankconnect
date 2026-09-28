@@ -29,3 +29,16 @@ jobs:
           php phpunit.phar --version
       - name: Run unit tests
         run: php phpunit.phar --bootstrap tests/unit/bootstrap.php tests/unit
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build installable module
+        run: |
+          bash scripts/build-module-package.sh
+          package=$(find dist -maxdepth 1 -name 'module_bankconnect-*.zip' -print -quit)
+          test -n "$package"
+          unzip -Z1 "$package" | grep -Fx 'bankconnect/core/modules/modBankConnect.class.php'
+          unzip -Z1 "$package" | grep -Fx 'bankconnect/class/PaymentPageService.php'
+          unzip -Z1 "$package" | grep -Fx 'bankconnect/pages/payments.php'
