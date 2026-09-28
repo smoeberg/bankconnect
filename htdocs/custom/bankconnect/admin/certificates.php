@@ -31,7 +31,12 @@ if (in_array($action, ['onboard', 'map_account', 'unmap_account', 'test_connecti
 if ($action === 'onboard') {
     $activation = GETPOST('activation_code', 'alpha');
     $functionId = GETPOST('function_identification', 'alpha');
-    $mainReg = GETPOST('main_registration_number', 'alpha') ?: '8079';
+    $mainReg = trim(GETPOST('main_registration_number', 'alpha') ?? '');
+    if ($mainReg === '') {
+        setEventMessages('Angiv hovedregistreringsnummeret (CVR). Testværdien 8079 bruges ikke længere automatisk.', null, 'errors');
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit;
+    }
     $label = GETPOST('label', 'alphanohtml');
 	$dryRun = 0;
 	$environment = GETPOST('environment', 'alpha') === 'production' ? 'production' : 'test';
@@ -141,7 +146,7 @@ print '<input type="hidden" name="action" value="onboard">';
 print '<table class="border centpercent">';
 print '<tr><td>Label</td><td><input name="label" class="minwidth200" value="Testaftale"></td></tr>';
 print '<tr><td>Function identification (Bank Connect ID)</td><td><input name="function_identification" class="minwidth200" required placeholder="0010888100007"></td></tr>';
-print '<tr><td>Main registration number</td><td><input name="main_registration_number" value="8079" class="minwidth100"> (8079 = test/Sydbank)</td></tr>';
+print '<tr><td>Main registration number</td><td><input name="main_registration_number" class="minwidth100" required placeholder="fx 12345678"> (Dit CVR / hovedregistreringsnummer - påkrævet, ingen testværdi)</td></tr>';
 print '<tr><td>Activation code (SMS)</td><td><input type="password" name="activation_code" class="minwidth200" required autocomplete="new-password"></td></tr>';
 print '<tr><td>'.$langs->trans('BankConnectEnvironment').'</td><td><select name="environment"><option value="test">Systemtest</option><option value="production">Produktion</option></select></td></tr>';
 print '<tr><td>'.$langs->trans('BankConnectDatacenter').'</td><td><select name="datacenter"><option value="BANKDATA">Bankdata</option><option value="NBS">NBS/SDC</option><option value="BEC">BEC</option></select></td></tr>';

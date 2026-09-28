@@ -90,13 +90,16 @@ class BankConnectCertificateManager
     {
         $activationCode = preg_replace('/[^0-9A-Za-z]/', '', $opts['activation_code'] ?? '');
         $functionId     = (string) ($opts['function_identification'] ?? '');
-        $mainReg        = (string) ($opts['main_registration_number'] ?? '8079'); // test default Sydbank
+        $mainReg        = trim((string) ($opts['main_registration_number'] ?? '')); // fail-closed: no test default
         $dryRun         = !empty($opts['dry_run']);
         $datacenter     = strtoupper(trim($opts['datacenter'] ?? 'BANKDATA'));
         $environment    = $this->getEnvironmentFromEndpoint($opts['endpoint'] ?? '');
 
         if ($activationCode === '' || $functionId === '') {
             throw new BankConnectException('activation_code and function_identification are required');
+        }
+        if (trim($mainReg) === '') {
+            throw new BankConnectException('main_registration_number is required; the Sydbank test value 8079 is not applied automatically');
         }
 
         $keypair = $this->generateKeyPairAndCsr([
