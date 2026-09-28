@@ -66,6 +66,32 @@ class PaymentBatchServiceTest extends TestCase
         $this->assertNull($row->response_code);
     }
 
+    public function testPreparationFailureStoresOnlyFixedMessageAndNeverCallsBank(): void
+    {
+        $client = new class($this->conf) extends BankConnectClient {
+            public int $calls = 0;
+            public function transferPayments(string $paymentMessageXml, string $endToEndMessageId): string
+            {
+                $this->calls++;
+                throw new RuntimeException('unexpected bank call');
+            }
+        };
+        $svc = new PaymentBatchService($this->db, $this->conf, $client);
+        $created = $svc->createBatch($this->sampleBuilder(), 1);
+
+        try {
+            $svc->sendBatch($created['batch_id']);
+            $this->fail('Missing signing material must stop payment preparation');
+        } catch (BankConnectException $e) {
+            $this->assertSame('Payment preparation failed', $e->getMessage());
+        }
+
+        $row = $this->db->findFirst('llx_bankconnect_batch', 'rowid', $created['batch_id']);
+        $this->assertSame('rejected', $row['status']);
+        $this->assertSame('Payment preparation failed', $row['message']);
+        $this->assertSame(0, $client->calls);
+    }
+
     public function testTransferPaymentUsesBankConnectSoapAction(): void
     {
         $client = new class($this->conf) extends BankConnectClient {
@@ -209,7 +235,7 @@ class PaymentBatchServiceTest extends TestCase
             public function transferPayments(string $paymentMessageXml, string $endToEndMessageId): string
             {
                 $this->calls++;
-                throw new RuntimeException('simulated timeout');
+                throw new RuntimeException('simulated timeout; private-key=secret');
             }
         };
         $svc = new PaymentBatchService($this->db, $this->conf, $client);
@@ -222,6 +248,7 @@ class PaymentBatchServiceTest extends TestCase
         } finally {
             $row = $this->db->findFirst('llx_bankconnect_batch', 'rowid', $created['batch_id']);
             $this->assertSame('unknown', $row['status']);
+            $this->assertSame('BankConnect transport outcome is unknown', $row['message']);
 
             try {
                 $svc->sendBatch($created['batch_id']);

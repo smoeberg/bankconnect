@@ -153,8 +153,8 @@ class PaymentBatchService
                 throw new BankConnectException('Failed to attach BankConnect serviceHeader to payment request');
             }
         } catch (Throwable $e) {
-            $this->updateBatchStatus($batchId, 'rejected', ['message' => 'Payment preparation failed: '.$e->getMessage()]);
-            throw new BankConnectException('Payment preparation failed: '.$e->getMessage(), 0, $e);
+            $this->updateBatchStatus($batchId, 'rejected', ['message' => 'Payment preparation failed']);
+            throw new BankConnectException('Payment preparation failed', 0, $e);
         }
 
         try {
@@ -162,7 +162,7 @@ class PaymentBatchService
         } catch (Throwable $e) {
             // The transport outcome is unknown. Never claim rejection or success.
             $this->transitionBatchStatus($batchId, PaymentStateMachine::SUBMITTING, PaymentStateMachine::UNKNOWN, [
-                'message' => 'BankConnect transport outcome is unknown: '.$e->getMessage(),
+                'message' => 'BankConnect transport outcome is unknown',
                 'date_status' => date('Y-m-d H:i:s'),
             ]);
             $this->logger->error('payment_unknown', ['batch_id' => $batchId, 'error_class' => get_class($e)]);
