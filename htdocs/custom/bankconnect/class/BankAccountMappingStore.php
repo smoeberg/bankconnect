@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__.'/BankConnectDatabasePrefix.php';
+require_once __DIR__.'/CamtAccountVerifier.php';
 /**
  * Maps a BankConnect agreement to a native Dolibarr bank account.
  *
@@ -138,6 +139,13 @@ class BankAccountMappingStore
     public function assertUsableBankAccount(int $entity, int $bankAccountId): void
     {
         $this->assertBankAccount(max(1, $entity), $bankAccountId);
+    }
+
+    /** The bank's signed CAMT account must equal the mapped native bank account. */
+    public function assertStatementMatchesAccount(int $entity, int $bankAccountId, string $camtXml): void
+    {
+        (new CamtAccountVerifier($this->db, $this->bankConnectDbPrefix))
+            ->verify($camtXml, $bankAccountId, $entity);
     }
 
     private function assertAgreement(int $entity, int $agreementId): void

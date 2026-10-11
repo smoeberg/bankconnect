@@ -96,7 +96,24 @@ class BankConnectStore
     private function canonicalHash(array $t, int $fkBankAccount): string
     {
         $accountReference = trim((string)($t['acctSvcrRef'] ?? ''));
-        if ($accountReference !== '' && strtoupper($accountReference) !== 'NOTPROVIDED') {
+        if (!empty($t['isSplitDetail'])) {
+            // The Ntry-level bank reference belongs to the whole batch. It is
+            // shared by all TxDtls and cannot identify an individual detail.
+            $transactionId = trim((string)($t['transaction_id'] ?? ''));
+            $identity = 'split-detail|'.$accountReference.'|'.$transactionId;
+            if ($accountReference === '') {
+                // Without a bank-provided entry reference an index only has
+                // meaning inside its statement and entry. Avoid losing another
+                // unreferenced batch with the same detail index.
+                $identity .= '|'.implode('|', [
+                    (string)($t['statement_id'] ?? ''),
+                    (string)($t['date'] ?? ''),
+                    sprintf('%.2F', (float)($t['amount'] ?? 0)),
+                    trim((string)($t['reference'] ?? '')),
+                    trim((string)($t['counterparty'] ?? '')),
+                ]);
+            }
+        } elseif ($accountReference !== '' && strtoupper($accountReference) !== 'NOTPROVIDED') {
             $identity = 'account-service-reference|'.$accountReference;
         } else {
             $transactionId = trim((string)($t['transaction_id'] ?? ''));
@@ -127,7 +144,12 @@ class BankConnectStore
 
         $sql = "SELECT rowid, fk_bankentry, bank_entry_state FROM llx_bankconnect_transaction"
             ." WHERE fk_bank_account=".(int)$fkBankAccount
-            ." AND acct_svcr_ref='".$this->db->escape($accountReference)."' LIMIT 1";
+            ." AND acct_svcr_ref='".$this->db->escape($accountReference)."'";
+        if (!empty($t['isSplitDetail'])) {
+            $sql .= " AND transaction_id='".$this->db->escape((string)($t['transaction_id'] ?? ''))."'"
+                ." AND amount=".(float)$t['amount'];
+        }
+        $sql .= ' LIMIT 1';
         $res = $this->query($sql);
         $row = $res ? $this->db->fetch_object($res) : false;
         return $row ?: null;

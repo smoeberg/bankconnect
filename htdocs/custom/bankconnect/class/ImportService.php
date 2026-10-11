@@ -44,6 +44,7 @@ class ImportService
 				'acctSvcrRef' => $t->acctSvcrRef,
 				'statement_id' => $t->statementId,
 				'transaction_id' => $t->transactionId,
+				'isSplitDetail' => $t->isSplitDetail,
 				'isReversal' => $t->isReversal,
 				'requiresManualReview' => $t->requiresManualReview,
 				'hash' => $t->hash,

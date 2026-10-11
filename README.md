@@ -118,6 +118,11 @@ interval på én time. Når BankConnect-aftale, aktivt certifikat og bankkonto-
 mapping er konfigureret, aktiveres jobbet **Hent BankConnect-kontoudtog** under
 Dolibarrs planlagte jobs. Det automatiske flow bruger samme importservice som
 manuel CAMT-upload og er derfor underlagt samme dubletbeskyttelse.
+Før automatisk import kontrolleres kontoen i hvert CAMT.053/052/054-dokument
+mod den valgte Dolibarr-bankkontos fulde IBAN. Dokumenter uden kontonummer eller
+med en anden konto afvises uden bankposteringer. Den nuværende opsætning tillader
+én Dolibarr-bankkonto pr. BankConnect-aftale; aftaler med flere konti kræver
+kontobaseret routing, før automatisk import aktiveres.
 
 ## Opsætning
 

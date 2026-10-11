@@ -25,6 +25,9 @@ class BankTransaction
     /** Stable transaction identity from bank references. */
     public string $transactionId = '';
 
+    /** Detail belongs to an entry with multiple individually posted TxDtls. */
+    public bool $isSplitDetail = false;
+
 	/** @param array<string,mixed> $row */
 	public static function fromArray(array $row): self
 	{
@@ -41,6 +44,7 @@ class BankTransaction
 		$transaction->requiresManualReview = !empty($row['requires_manual_review']) || !empty($row['requiresManualReview']);
 		$transaction->statementId = (string)($row['statement_id'] ?? '');
 		$transaction->transactionId = (string)($row['transaction_id'] ?? '');
+		$transaction->isSplitDetail = !empty($row['is_split_detail']) || !empty($row['isSplitDetail']);
 		return $transaction;
 	}
 }
