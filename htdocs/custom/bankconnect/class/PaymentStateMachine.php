@@ -23,7 +23,9 @@ class PaymentStateMachine
     private const TRANSITIONS = [
         self::DRAFT => [self::VALIDATED],
         self::VALIDATED => [self::PREPARED],
-        self::PREPARED => [self::SUBMITTING],
+        // A locally invalid/unbuildable request can fail before any
+        // remote submission has started.
+        self::PREPARED => [self::SUBMITTING, self::REJECTED],
         self::SUBMITTING => [self::SUBMITTED, self::UNKNOWN],
         self::SUBMITTED => [self::PENDING, self::ACCEPTED, self::PARTIAL, self::REJECTED],
         self::PENDING => [self::ACCEPTED, self::PARTIAL, self::REJECTED],
