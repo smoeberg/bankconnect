@@ -349,6 +349,29 @@ class BankConnectClient
         return $response;
     }
 
+    /**
+     * Supply agreement-scoped signing material without placing private keys in
+     * Dolibarr's global configuration.
+     */
+    public function setCustomerPrivateKey(string $privateKeyPem): void
+    {
+        $this->xmlSecurity?->setCustomerPrivateKey($privateKeyPem);
+    }
+
+    /**
+     * Build the signed business payment using the same security instance that
+     * signs/encrypts the SOAP transport envelope.
+     *
+     * @return array{xml:string,compressed:int}
+     */
+    public function buildTransferPayment(string $pain001Xml, string $endToEndMessageId): array
+    {
+        if ($this->xmlSecurity === null) {
+            throw new BankConnectException('BankConnect XML security is not initialized');
+        }
+        return $this->xmlSecurity->buildTransferPayment($pain001Xml, $endToEndMessageId);
+    }
+
     public function setXmlSecurity(BankConnectXmlSecurity $xmlSecurity): void
     {
         $this->xmlSecurity = $xmlSecurity;
