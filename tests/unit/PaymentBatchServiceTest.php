@@ -318,6 +318,47 @@ class PaymentBatchServiceTest extends TestCase
         }
     }
 
+    public function testStaleSubmittingBatchRecoversToUnknownWithoutResubmitting(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->db->query(
+            "UPDATE llx_bankconnect_batch SET status = 'submitting', date_status = '2000-01-01 00:00:00' WHERE rowid = "
+            .(int)$created['batch_id']
+        );
+
+        $this->assertTrue($this->svc->recoverStaleSubmission($created['batch_id'], 300));
+        $batch = $this->db->findFirst('llx_bankconnect_batch', 'rowid', $created['batch_id']);
+        $this->assertSame('unknown', $batch['status']);
+        $this->assertSame('Submission interrupted; remote outcome requires reconciliation', $batch['message']);
+        $this->assertFalse($this->svc->recoverStaleSubmission($created['batch_id'], 300));
+
+        try {
+            $this->svc->sendBatch($created['batch_id']);
+            $this->fail('Recovered UNKNOWN payment must not be resubmitted');
+        } catch (BankConnectException $e) {
+            $this->assertStringContainsString('cannot be submitted from status unknown', $e->getMessage());
+        }
+    }
+
+    public function testFreshSubmittingBatchIsNotRecovered(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->db->query(
+            "UPDATE llx_bankconnect_batch SET status = 'submitting', date_status = '".date('Y-m-d H:i:s')."' WHERE rowid = "
+            .(int)$created['batch_id']
+        );
+
+        $this->assertFalse($this->svc->recoverStaleSubmission($created['batch_id'], 300));
+        $batch = $this->db->findFirst('llx_bankconnect_batch', 'rowid', $created['batch_id']);
+        $this->assertSame('submitting', $batch['status']);
+    }
+
+    public function testStaleSubmissionRecoveryRejectsInvalidThreshold(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->svc->recoverStaleSubmission(1, 0);
+    }
+
     public function testUnknownPain002StatusBecomesUnknownAndManualReview(): void
     {
         $created = $this->svc->createBatch($this->sampleBuilder(), 1);
