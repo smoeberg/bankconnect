@@ -217,10 +217,8 @@ class PaymentBatchService
         $updated = 0;
         $unknown = 0;
         $batchStatus = $this->deriveBatchStatus($parsed['group_status'], $parsed['transactions']);
-        if ($batchStatus === Pain002Parser::INTERNAL_UNKNOWN) {
-            throw new BankConnectException('pain.002 contains unresolved transaction statuses; batch status remains unchanged');
-        }
-
+        // A complete report with an unrecognized transaction status is useful
+        // evidence: persist UNKNOWN and require manual review rather than guessing.
         $this->begin();
         try {
             foreach ($parsed['transactions'] as $tx) {
