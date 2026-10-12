@@ -123,19 +123,6 @@ class PaymentBatchService
             throw new BankConnectException('Payment state transition failed: '.$e->getMessage(), 0, $e);
         }
 
-        // Claim the submission slot before performing network I/O. The
-        // conditional UPDATE is the local idempotency boundary: only a batch
-        // still in PREPARED may become SUBMITTING. A concurrent caller that
-        // loses the race will observe the new state and fail closed.
-        $claimed = $this->claimSubmission($batchId);
-        if (!$claimed) {
-            $current = $this->fetchBatch($batchId);
-            $currentStatus = (string) ($current['status'] ?? '');
-            throw new BankConnectException(
-                "Batch {$batchId} cannot be submitted from status {$currentStatus}"
-            );
-        }
-
         try {
             // Use the client's agreement-scoped signer so business XML signing
             // and SOAP transport signing share the same in-memory key context.
@@ -153,8 +140,35 @@ class PaymentBatchService
                 throw new BankConnectException('Failed to attach BankConnect serviceHeader to payment request');
             }
         } catch (Throwable $e) {
-            $this->updateBatchStatus($batchId, 'rejected', ['message' => 'Payment preparation failed']);
+            // Preparation has no remote side effect. Record the local failure
+            // through the state machine while the batch is still PREPARED.
+            try {
+                $this->transitionBatchStatus(
+                    $batchId,
+                    PaymentStateMachine::PREPARED,
+                    PaymentStateMachine::REJECTED,
+                    ['message' => 'Payment preparation failed']
+                );
+            } catch (Throwable $persistError) {
+                throw new BankConnectException(
+                    'Payment preparation failed and batch status could not be recorded',
+                    0,
+                    $persistError
+                );
+            }
             throw new BankConnectException('Payment preparation failed', 0, $e);
+        }
+
+        // Signing, XML construction and service-header assembly are local-only.
+        // Claim immediately before the network call so SUBMITTING means a
+        // remote submission may actually have begun.
+        $claimed = $this->claimSubmission($batchId);
+        if (!$claimed) {
+            $current = $this->fetchBatch($batchId);
+            $currentStatus = (string) ($current['status'] ?? '');
+            throw new BankConnectException(
+                "Batch {$batchId} cannot be submitted from status {$currentStatus}"
+            );
         }
 
         try {
