@@ -131,6 +131,11 @@ class PaymentPageService
         return $this->serviceForBatch($entity, $batchId)->resolveUnknownBatch($batchId);
     }
 
+    public function recoverStaleSubmission(int $entity, int $batchId): bool
+    {
+        return $this->serviceForBatch($entity, $batchId)->recoverStaleSubmission($batchId);
+    }
+
     private function serviceForBatch(int $entity, int $batchId): PaymentBatchService
     {
         $res = $this->db->query('SELECT fk_agreement FROM '.$this->prefix.'bankconnect_batch WHERE rowid='.(int)$batchId.' AND entity='.(int)$entity);
