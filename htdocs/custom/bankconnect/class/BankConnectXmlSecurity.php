@@ -13,6 +13,7 @@
  */
 
 require_once __DIR__.'/BankConnectException.php';
+require_once __DIR__.'/BankConnectSecretStore.php';
 
 if (!class_exists('Conf')) {
     class Conf
@@ -39,6 +40,7 @@ class BankConnectXmlSecurity
     public const PACK_VERSION = 1;
 
     private Conf $conf;
+    private BankConnectSecretStore $secretStore;
     private ?string $customerPrivateKeyPem = null;
     private ?string $customerCertificatePem = null;
     private ?string $bankCertificatePem = null;
@@ -46,11 +48,11 @@ class BankConnectXmlSecurity
     public function __construct(Conf $conf)
     {
         $this->conf = $conf;
+        $this->secretStore = new BankConnectSecretStore($conf);
         $g = (array) ($conf->global ?? []);
 
-        if (!empty($g['BANKCONNECT_CUSTOMER_PRIVATE_KEY'])) {
-            $this->customerPrivateKeyPem = (string) $g['BANKCONNECT_CUSTOMER_PRIVATE_KEY'];
-        }
+        // Private key is intentionally not read from Dolibarr configuration.
+        // Public certificates may remain in conf->global.
         if (!empty($g['BANKCONNECT_CUSTOMER_CERTIFICATE'])) {
             $this->customerCertificatePem = (string) $g['BANKCONNECT_CUSTOMER_CERTIFICATE'];
         }
@@ -319,7 +321,9 @@ class BankConnectXmlSecurity
 
     private function requireCustomerSigningMaterial(): void
     {
-        if (!$this->customerPrivateKeyPem) throw new BankConnectException('Customer private key is required for BankConnect signing');
+        if (!$this->customerPrivateKeyPem) {
+            $this->customerPrivateKeyPem = $this->secretStore->get('BANKCONNECT_CUSTOMER_PRIVATE_KEY');
+        }
         if (!$this->customerCertificatePem) throw new BankConnectException('Customer certificate is required for BankConnect signing');
         if (openssl_pkey_get_private($this->customerPrivateKeyPem)===false) throw new BankConnectException('Invalid customer private key');
     }
@@ -423,6 +427,6 @@ class BankConnectXmlSecurity
 
     public function isXmlSecLibsAvailable(): bool
     {
-        return class_exists('\RobRichards\XMLSecLibs\XMLSecurityDSig');
+        return class_exists('\\RobRichards\\XMLSecLibs\\XMLSecurityDSig');
     }
 }

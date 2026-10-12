@@ -43,7 +43,7 @@ final class FailureInjectionQualificationTest extends TestCase
             ]);
     }
 
-    private function credentials(): void
+    private function credentials(): string
     {
         $key = openssl_pkey_new([
             'private_key_bits' => 2048,
@@ -67,13 +67,16 @@ final class FailureInjectionQualificationTest extends TestCase
         $certificate = '';
         $this->assertTrue(openssl_x509_export($cert, $certificate));
 
-        $this->conf->global['BANKCONNECT_CUSTOMER_PRIVATE_KEY'] = $private;
+        // Public certificate remains configuration; private key is injected
+        // into the client's in-memory signer and never placed in conf->global.
         $this->conf->global['BANKCONNECT_CUSTOMER_CERTIFICATE'] = $certificate;
+        $this->assertArrayNotHasKey('BANKCONNECT_CUSTOMER_PRIVATE_KEY', $this->conf->global);
+        return $private;
     }
 
     public function testTransportFailureProducesUnknownAndNeverRetries(): void
     {
-        $this->credentials();
+        $privateKey = $this->credentials();
 
         $client = new class($this->conf) extends BankConnectClient {
             public int $calls = 0;
@@ -85,6 +88,7 @@ final class FailureInjectionQualificationTest extends TestCase
             }
         };
 
+        $client->setCustomerPrivateKey($privateKey);
         $service = new PaymentBatchService($this->db, $this->conf, $client);
         $created = $service->createBatch($this->builder(), 1);
 
@@ -110,7 +114,7 @@ final class FailureInjectionQualificationTest extends TestCase
 
     public function testInjectedSuccessfulTransportIsCalledExactlyOnceForSubmittedBatch(): void
     {
-        $this->credentials();
+        $privateKey = $this->credentials();
 
         $client = new class($this->conf) extends BankConnectClient {
             public int $calls = 0;
@@ -122,6 +126,7 @@ final class FailureInjectionQualificationTest extends TestCase
             }
         };
 
+        $client->setCustomerPrivateKey($privateKey);
         $service = new PaymentBatchService($this->db, $this->conf, $client);
         $created = $service->createBatch($this->builder(), 1);
 

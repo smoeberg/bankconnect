@@ -44,6 +44,30 @@ class BankConnectXmlSecurityTest extends TestCase
             ->setBankCertificate($this->bankCert);
     }
 
+    public function testConfGlobalPrivateKeyIsIgnoredAndEnvironmentSecretIsUsed(): void
+    {
+        $previous = getenv('BANKCONNECT_CUSTOMER_PRIVATE_KEY');
+        putenv('BANKCONNECT_CUSTOMER_PRIVATE_KEY='.$this->customerPrivate);
+
+        try {
+            $conf = new Conf();
+            $conf->global['BANKCONNECT_CUSTOMER_PRIVATE_KEY'] = 'not-the-customer-private-key';
+            $conf->global['BANKCONNECT_CUSTOMER_CERTIFICATE'] = $this->customerCert;
+            $conf->global['BANKCONNECT_BANK_CERTIFICATE'] = $this->bankCert;
+
+            $security = new BankConnectXmlSecurity($conf);
+            $result = $security->buildTransferPayment('<Document><A>1</A></Document>', 'e2e-secret-boundary');
+
+            $this->assertStringContainsString('<ds:Signature', $result['xml']);
+        } finally {
+            if ($previous === false) {
+                putenv('BANKCONNECT_CUSTOMER_PRIVATE_KEY');
+            } else {
+                putenv('BANKCONNECT_CUSTOMER_PRIVATE_KEY='.$previous);
+            }
+        }
+    }
+
     public function testContentPreparationIsBase64AndGzipOnly(): void
     {
         $xml='<?xml version="1.0"?><Document><A>test</A></Document>';

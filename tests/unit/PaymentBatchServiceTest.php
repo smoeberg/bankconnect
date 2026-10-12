@@ -178,7 +178,6 @@ class PaymentBatchServiceTest extends TestCase
         $certificate = '';
         $this->assertTrue(openssl_x509_export($cert, $certificate));
 
-        $this->conf->global['BANKCONNECT_CUSTOMER_PRIVATE_KEY'] = $private;
         $this->conf->global['BANKCONNECT_CUSTOMER_CERTIFICATE'] = $certificate;
         $this->db->tables['llx_bankconnect_agreement'] = [[
             'rowid' => 1,
@@ -195,6 +194,7 @@ class PaymentBatchServiceTest extends TestCase
                 return '<response><responseCode>OK</responseCode></response>';
             }
         };
+        $client->setCustomerPrivateKey($private);
         $svc = new PaymentBatchService($this->db, $this->conf, $client);
         $created = $svc->createBatch($this->sampleBuilder(), 1);
 
@@ -232,7 +232,6 @@ class PaymentBatchServiceTest extends TestCase
         $certificate = '';
         $this->assertTrue(openssl_x509_export($cert, $certificate));
 
-        $this->conf->global['BANKCONNECT_CUSTOMER_PRIVATE_KEY'] = $private;
         $this->conf->global['BANKCONNECT_CUSTOMER_CERTIFICATE'] = $certificate;
         $this->db->tables['llx_bankconnect_agreement'] = [[
             'rowid' => 1,
@@ -250,6 +249,7 @@ class PaymentBatchServiceTest extends TestCase
                 return '<response><responseCode>OK</responseCode></response>';
             }
         };
+        $client->setCustomerPrivateKey($private);
         $svc = new PaymentBatchService($this->db, $this->conf, $client);
         $created = $svc->createBatch($this->sampleBuilder(), 1);
 
@@ -279,7 +279,6 @@ class PaymentBatchServiceTest extends TestCase
         $certificate = '';
         $this->assertTrue(openssl_x509_export($cert, $certificate));
 
-        $this->conf->global['BANKCONNECT_CUSTOMER_PRIVATE_KEY'] = $private;
         $this->conf->global['BANKCONNECT_CUSTOMER_CERTIFICATE'] = $certificate;
         $this->db->tables['llx_bankconnect_agreement'] = [[
             'rowid' => 1,
@@ -296,6 +295,7 @@ class PaymentBatchServiceTest extends TestCase
                 throw new RuntimeException('simulated timeout; private-key=secret');
             }
         };
+        $client->setCustomerPrivateKey($private);
         $svc = new PaymentBatchService($this->db, $this->conf, $client);
         $created = $svc->createBatch($this->sampleBuilder(), 1);
 
