@@ -216,19 +216,22 @@ class PaymentBatchService
             return false;
         }
 
-        $claimedAt = strtotime((string)($batch['date_status'] ?? ''));
+        // Older batches may predate the submission timestamp fix. Their
+        // auto-updated table timestamp (tms) still provides a safe age bound.
+        $timestampField = !empty($batch['date_status']) ? 'date_status' : 'tms';
+        $claimedAtValue = (string)($batch[$timestampField] ?? '');
+        $claimedAt = strtotime($claimedAtValue);
         if ($claimedAt === false || $claimedAt > time() - $staleAfterSeconds) {
             return false;
         }
 
         PaymentStateMachine::assertTransition(PaymentStateMachine::SUBMITTING, PaymentStateMachine::UNKNOWN);
-        $claimedAtValue = (string)$batch['date_status'];
         $sql = "UPDATE llx_bankconnect_batch SET status = '".PaymentStateMachine::UNKNOWN."'"
              . ", message = '".$this->db->escape('Submission interrupted; remote outcome requires reconciliation')."'"
              . ", date_status = NOW()"
              . ' WHERE rowid = '.(int)$batchId
              . " AND status = '".$this->db->escape(PaymentStateMachine::SUBMITTING)."'"
-             . " AND date_status = '".$this->db->escape($claimedAtValue)."'";
+             . " AND ".$timestampField." = '".$this->db->escape($claimedAtValue)."'";
         if (!$this->prefixQuery($sql)) {
             throw new BankConnectException('Failed to recover stale payment submission');
         }
