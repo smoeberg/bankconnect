@@ -340,6 +340,19 @@ class PaymentBatchServiceTest extends TestCase
         }
     }
 
+    public function testLegacyStaleSubmittingBatchUsesTableTimestampWhenDateStatusIsMissing(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->db->query(
+            "UPDATE llx_bankconnect_batch SET status = 'submitting', tms = '2000-01-01 00:00:00' WHERE rowid = "
+            .(int)$created['batch_id']
+        );
+
+        $this->assertTrue($this->svc->recoverStaleSubmission($created['batch_id'], 300));
+        $batch = $this->db->findFirst('llx_bankconnect_batch', 'rowid', $created['batch_id']);
+        $this->assertSame('unknown', $batch['status']);
+    }
+
     public function testFreshSubmittingBatchIsNotRecovered(): void
     {
         $created = $this->svc->createBatch($this->sampleBuilder(), 1);
