@@ -200,6 +200,51 @@ class PaymentBatchService
     }
 
     /**
+     * Recover a process interrupted while a payment was SUBMITTING.
+     *
+     * A stale submission is never retried: it is moved to UNKNOWN and must be
+     * reconciled against a complete matching pain.002 response.
+     */
+    public function recoverStaleSubmission(int $batchId, int $staleAfterSeconds = 300): bool
+    {
+        if ($staleAfterSeconds < 1 || $staleAfterSeconds > 86400) {
+            throw new InvalidArgumentException('Stale submission age must be between 1 and 86400 seconds');
+        }
+
+        $batch = $this->fetchBatch($batchId);
+        if (!$batch || (string)($batch['status'] ?? '') !== PaymentStateMachine::SUBMITTING) {
+            return false;
+        }
+
+        $claimedAt = strtotime((string)($batch['date_status'] ?? ''));
+        if ($claimedAt === false || $claimedAt > time() - $staleAfterSeconds) {
+            return false;
+        }
+
+        PaymentStateMachine::assertTransition(PaymentStateMachine::SUBMITTING, PaymentStateMachine::UNKNOWN);
+        $claimedAtValue = (string)$batch['date_status'];
+        $sql = "UPDATE llx_bankconnect_batch SET status = '".PaymentStateMachine::UNKNOWN."'"
+             . ", message = '".$this->db->escape('Submission interrupted; remote outcome requires reconciliation')."'"
+             . ", date_status = NOW()"
+             . ' WHERE rowid = '.(int)$batchId
+             . " AND status = '".$this->db->escape(PaymentStateMachine::SUBMITTING)."'"
+             . " AND date_status = '".$this->db->escape($claimedAtValue)."'";
+        if (!$this->prefixQuery($sql)) {
+            throw new BankConnectException('Failed to recover stale payment submission');
+        }
+
+        if (method_exists($this->db, 'affected_rows')) {
+            return (int)$this->db->affected_rows() === 1;
+        }
+
+        // Test doubles may not expose affected_rows(); the conditional UPDATE
+        // still guards the production path against concurrent recovery calls.
+        $current = $this->fetchBatch($batchId);
+        return (string)($current['status'] ?? '') === PaymentStateMachine::UNKNOWN
+            && (string)($current['message'] ?? '') === 'Submission interrupted; remote outcome requires reconciliation';
+    }
+
+    /**
      * Fetch and apply a verified pain.002 status report.
      *
      * A supplied XML string is test-only input; live getStatus() already passes
@@ -523,6 +568,7 @@ class PaymentBatchService
     private function claimSubmission(int $batchId): bool
     {
         $sql = "UPDATE llx_bankconnect_batch SET status = '".PaymentStateMachine::SUBMITTING."'"
+             . ", date_status = NOW()"
              . " WHERE rowid = ".(int)$batchId
              . " AND status = '".PaymentStateMachine::PREPARED."'";
         if (!$this->prefixQuery($sql)) {
