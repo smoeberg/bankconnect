@@ -542,7 +542,9 @@ XML;
         ]];
         $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03">'
             .'<CstmrPmtStsRpt><OrgnlGrpInfAndSts><OrgnlMsgId>'.$created['msg_id'].'</OrgnlMsgId>'
-            .'<GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts></CstmrPmtStsRpt></Document>';
+            .'<GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>'
+            .'<OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>'
+            .'</CstmrPmtStsRpt></Document>';
         $client = new class($this->conf, $pain002) extends BankConnectClient {
             public string $header = '';
             private string $response;
@@ -554,4 +556,79 @@ XML;
         $this->assertStringContainsString('AGREEMENT-1', $client->header);
         $this->assertStringContainsString($created['end_to_end_message_id'], $client->header);
     }
+
+    public function testResolveUnknownBatchRejectsIncompleteReportWithoutChangingBatchOrLines(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->db->query("UPDATE llx_bankconnect_batch SET status = 'unknown' WHERE rowid = ".(int)$created['batch_id']);
+        $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03"><CstmrPmtStsRpt>'
+            .'<OrgnlGrpInfAndSts><OrgnlMsgId>'.$created['msg_id'].'</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>'
+            .'</CstmrPmtStsRpt></Document>';
+
+        try {
+            $this->svc->resolveUnknownBatch($created['batch_id'], null, $pain002);
+            $this->fail('Group status without transaction status must not resolve a payment batch');
+        } catch (BankConnectException $e) {
+            $this->assertStringContainsString('incomplete', $e->getMessage());
+        }
+        $this->assertSame('unknown', $this->db->findFirst('llx_bankconnect_batch', 'rowid', $created['batch_id'])['status']);
+        $this->assertSame('draft', $this->db->findFirst('llx_bankconnect_batch_line', 'fk_batch', $created['batch_id'])['status']);
+    }
+
+    public function testResolveUnknownBatchRejectsDuplicateTransactionStatus(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->db->query("UPDATE llx_bankconnect_batch SET status = 'unknown' WHERE rowid = ".(int)$created['batch_id']);
+        $tx = '<TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts>';
+        $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03"><CstmrPmtStsRpt>'
+            .'<OrgnlGrpInfAndSts><OrgnlMsgId>'.$created['msg_id'].'</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>'
+            .'<OrgnlPmtInfAndSts>'.$tx.$tx.'</OrgnlPmtInfAndSts></CstmrPmtStsRpt></Document>';
+
+        try {
+            $this->svc->resolveUnknownBatch($created['batch_id'], null, $pain002);
+            $this->fail('Duplicate transaction status must not resolve a payment batch');
+        } catch (BankConnectException $e) {
+            $this->assertStringContainsString('duplicate payment', $e->getMessage());
+        }
+        $this->assertSame('unknown', $this->db->findFirst('llx_bankconnect_batch', 'rowid', $created['batch_id'])['status']);
+    }
+
+    public function testRefreshStatusRejectsGroupOnlyReportAndKeepsBatchUnchanged(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->db->query("UPDATE llx_bankconnect_batch SET status = 'submitted' WHERE rowid = ".(int)$created['batch_id']);
+        $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03"><CstmrPmtStsRpt>'
+            .'<OrgnlGrpInfAndSts><OrgnlMsgId>'.$created['msg_id'].'</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>'
+            .'</CstmrPmtStsRpt></Document>';
+
+        try {
+            $this->svc->refreshStatus($created['batch_id'], null, $pain002);
+            $this->fail('Group status without transaction status must not finalize payment lines');
+        } catch (BankConnectException $e) {
+            $this->assertStringContainsString('incomplete', $e->getMessage());
+        }
+        $this->assertSame('submitted', $this->db->findFirst('llx_bankconnect_batch', 'rowid', $created['batch_id'])['status']);
+        $this->assertSame('draft', $this->db->findFirst('llx_bankconnect_batch_line', 'fk_batch', $created['batch_id'])['status']);
+    }
+
+    public function testStatusRefreshRollsBackLineUpdatesWhenLaterPersistenceFails(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->db->query("UPDATE llx_bankconnect_batch SET status = 'submitted' WHERE rowid = ".(int)$created['batch_id']);
+        $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03"><CstmrPmtStsRpt>'
+            .'<OrgnlGrpInfAndSts><OrgnlMsgId>'.$created['msg_id'].'</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>'
+            .'<OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>'
+            .'</CstmrPmtStsRpt></Document>';
+        $this->db->failNextQueryContaining('UPDATE llx_bankconnect_batch SET status', 'injected batch status persistence failure');
+
+        try {
+            $this->svc->refreshStatus($created['batch_id'], null, $pain002);
+            $this->fail('Batch status persistence failure must abort the transaction');
+        } catch (BankConnectException $e) {
+            $this->assertStringContainsString('persist payment batch status', $e->getMessage());
+        }
+        $this->assertSame('submitted', $this->db->findFirst('llx_bankconnect_batch', 'rowid', $created['batch_id'])['status']);
+        $this->assertSame('draft', $this->db->findFirst('llx_bankconnect_batch_line', 'fk_batch', $created['batch_id'])['status']);
+    }
+
 }
