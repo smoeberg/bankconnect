@@ -137,9 +137,9 @@ class PaymentBatchService
         }
 
         try {
-            require_once __DIR__.'/BankConnectXmlSecurity.php';
-            $security = new BankConnectXmlSecurity($this->conf);
-            $built = $security->buildTransferPayment($batch['pain001_xml'], $batch['end_to_end_message_id']);
+            // Use the client's agreement-scoped signer so business XML signing
+            // and SOAP transport signing share the same in-memory key context.
+            $built = $this->client->buildTransferPayment($batch['pain001_xml'], $batch['end_to_end_message_id']);
             $paymentMessage = $built['xml'];
             $serviceHeader = $this->buildServiceHeaderForBatch($batch);
             $paymentMessage = preg_replace(
