@@ -30,7 +30,8 @@ class BankConnectClientFactory
 		$manager = new BankConnectCertificateManager($this->conf, null, null, $this->agreements);
 		$global = (array)($this->conf->global ?? []);
 		$global['BANKCONNECT_CUSTOMER_CERTIFICATE'] = (string)$certificate['certificate_pem'];
-		$global['BANKCONNECT_CUSTOMER_PRIVATE_KEY'] = $manager->decryptPrivateKey((string)$certificate['private_key_enc']);
+		// Keep decrypted key in local memory only; never copy it into conf->global.
+		$customerPrivateKey = $manager->decryptPrivateKey((string)$certificate['private_key_enc']);
 		if (!empty($agreement['endpoint'])) {
 			$global['BANKCONNECT_ENDPOINT'] = (string)$agreement['endpoint'];
 			$global['BANKCONNECT_ENVIRONMENT'] = str_contains((string)$agreement['endpoint'], 'stest.bankconnect.dk') ? 'test' : 'production';
@@ -67,6 +68,8 @@ class BankConnectClientFactory
 
 		$clientConf = new Conf();
 		$clientConf->global = $global;
-		return new BankConnectClient($clientConf);
+		$client = new BankConnectClient($clientConf);
+		$client->setCustomerPrivateKey($customerPrivateKey);
+		return $client;
 	}
 }
