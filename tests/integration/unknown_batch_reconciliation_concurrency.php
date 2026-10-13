@@ -31,6 +31,13 @@ if (!$dsn) {
     exit(1);
 }
 
+// Safety guard: this test drops and recreates the BankConnect tables. Refuse to
+// run against a DSN that does not clearly name a dedicated test database.
+if (!preg_match('/(?:dbname|Database)=([A-Za-z0-9_]+)/i', $dsn, $m) || stripos($m[1], 'test') === false) {
+    fwrite(STDERR, "Refusing to run: BANKCONNECT_DSN must point at a database whose name contains 'test' (this script DROPs and recreates llx_bankconnect_* tables)\n");
+    exit(1);
+}
+
 $markers = [
     'A' => [getenv('BANKCONNECT_MARKER_A') ?: '/tmp/bk-marker-a', 'UPDATE llx_bankconnect_batch SET', true],
     'B' => [getenv('BANKCONNECT_MARKER_B') ?: '/tmp/bk-marker-b', 'UPDATE llx_bankconnect_batch_line', true],
@@ -336,13 +343,17 @@ if ($role === '') {
     }
 
     $batch = $parentPdo->query('SELECT status, message, date_status FROM llx_bankconnect_batch WHERE rowid = 1')->fetch(PDO::FETCH_ASSOC);
-    $line = $parentPdo->query('SELECT status, pain002_status, requires_manual_review FROM llx_bankconnect_batch_line WHERE fk_batch = 1')->fetch(PDO::FETCH_ASSOC);
+    $line = $parentPdo->query('SELECT status, pain002_status, status_reason, requires_manual_review FROM llx_bankconnect_batch_line WHERE fk_batch = 1')->fetch(PDO::FETCH_ASSOC);
 
     if ($batch['status'] !== 'accepted') {
         fail('batch must be accepted after the winning reconciliation; got '.var_export($batch['status'], true));
     }
     if ($line['pain002_status'] !== 'ACSC') {
         fail('line must carry the winning ACSC report; got '.var_export($line['pain002_status'], true));
+    }
+    // The losing process (RJCT) must not leave its rejection reason behind.
+    if ($line['status_reason'] !== null) {
+        fail('losing RJCT reason must be rolled back; status_reason = '.var_export($line['status_reason'], true));
     }
     if ($line['status'] !== 'accepted') {
         fail('line status must be accepted; got '.var_export($line['status'], true));
