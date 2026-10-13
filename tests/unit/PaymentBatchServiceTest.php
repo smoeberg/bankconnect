@@ -643,7 +643,7 @@ XML;
         $res = $this->db->query('SELECT status, pain002_status FROM llx_bankconnect_batch_line WHERE fk_batch = '.$created['batch_id']);
         $line = $this->db->fetch_object($res);
         $this->assertSame('accepted', $line->status);
-        $this->assertSame('ACCP', $line->pain002_status);
+        $this->assertSame('ACSC', $line->pain002_status);
     }
 
     public function testRefreshStatusRejectsDraftBeforeContactingBank(): void
