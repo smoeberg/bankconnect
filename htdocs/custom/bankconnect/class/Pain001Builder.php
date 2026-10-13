@@ -114,7 +114,7 @@ class Pain001Builder
             throw new BankConnectException('Payment amount must not have more than two decimal places');
         }
         if (!is_string($tx['currency']) || !preg_match('/^[A-Z]{3}$/D', $tx['currency'])) {
-            throw new BankConnectException('Currency must be a three-letter uppercase ISO currency code');
+            throw new BankConnectException('Currency must be three uppercase letters');
         }
 
         $this->transactions[] = $tx;
