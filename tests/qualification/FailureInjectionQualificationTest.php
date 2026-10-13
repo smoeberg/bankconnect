@@ -25,6 +25,9 @@ final class FailureInjectionQualificationTest extends TestCase
             'entity' => 1,
             'fk_statut' => 1,
             'paye' => 0,
+            'total_ttc' => 100.0,
+            'multicurrency_total_ttc' => 100.0,
+            'multicurrency_code' => 'DKK',
         ]];
         $this->db->tables['llx_bankconnect_agreement'] = [[
             'rowid' => 1,
