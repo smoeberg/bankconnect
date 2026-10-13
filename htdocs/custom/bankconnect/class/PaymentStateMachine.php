@@ -27,10 +27,13 @@ class PaymentStateMachine
         // remote submission has started.
         self::PREPARED => [self::SUBMITTING, self::REJECTED],
         self::SUBMITTING => [self::SUBMITTED, self::UNKNOWN],
-        self::SUBMITTED => [self::PENDING, self::ACCEPTED, self::PARTIAL, self::REJECTED],
-        self::PENDING => [self::ACCEPTED, self::PARTIAL, self::REJECTED],
-        self::PARTIAL => [self::PENDING, self::ACCEPTED, self::REJECTED],
-        self::UNKNOWN => [],
+        // A verified pain.002 can report an unrecognized transaction state.
+        // Preserve UNKNOWN as a manual-review hold, and allow later verified
+        // reconciliation to resolve it without permitting resubmission.
+        self::SUBMITTED => [self::PENDING, self::ACCEPTED, self::PARTIAL, self::REJECTED, self::UNKNOWN],
+        self::PENDING => [self::ACCEPTED, self::PARTIAL, self::REJECTED, self::UNKNOWN],
+        self::PARTIAL => [self::PENDING, self::ACCEPTED, self::REJECTED, self::UNKNOWN],
+        self::UNKNOWN => [self::PENDING, self::ACCEPTED, self::PARTIAL, self::REJECTED],
         self::ACCEPTED => [],
         self::REJECTED => [],
     ];
