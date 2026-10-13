@@ -689,6 +689,17 @@ class PaymentBatchService
 
     private function updateBatchStatus(int $batchId, string $status, array $extra = [], ?string $expectedStatus = null): void
     {
+        if ($expectedStatus !== null && $expectedStatus !== $status) {
+            try {
+                PaymentStateMachine::assertTransition($expectedStatus, $status);
+            } catch (InvalidArgumentException $e) {
+                throw new BankConnectException(
+                    "Invalid reconciled payment state transition: {$expectedStatus} -> {$status}",
+                    0,
+                    $e
+                );
+            }
+        }
         $sets = ["status = '".$this->db->escape($status)."'"];
         foreach (['response_code','message','correlation_id','date_sent','date_status'] as $field) {
             if (isset($extra[$field])) $sets[] = $field." = '".$this->db->escape($extra[$field])."'";
