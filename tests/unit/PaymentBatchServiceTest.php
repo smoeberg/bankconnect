@@ -24,6 +24,7 @@ class PaymentBatchServiceTest extends TestCase
         $this->db->tables['llx_bankconnect_batch_line'] = [];
         $this->db->tables['llx_facture_fourn'] = [[
             'rowid' => 42, 'entity' => 1, 'fk_statut' => 1, 'paye' => 0,
+            'total_ttc' => 12450.0, 'multicurrency_total_ttc' => 12450.0, 'multicurrency_code' => 'DKK',
         ]];
     }
 
@@ -52,6 +53,23 @@ class PaymentBatchServiceTest extends TestCase
         $line = $this->db->fetch_object($res);
         $this->assertSame('E2E-FA240891', $line->end_to_end_id);
         $this->assertSame('draft', $line->status);
+    }
+
+    public function testCreateBatchRejectsAmountAboveCurrentInvoiceBalance(): void
+    {
+        $this->db->tables['llx_facture_fourn'][0]['total_ttc'] = 100.0;
+        $this->db->tables['llx_facture_fourn'][0]['multicurrency_total_ttc'] = 100.0;
+
+        try {
+            $this->svc->createBatch($this->sampleBuilder(), 1, 1);
+            $this->fail('A stale payment amount must not exceed the current invoice balance');
+        } catch (BankConnectException $e) {
+            $this->assertSame('Failed to create payment batch', $e->getMessage());
+            $this->assertSame('Payment amount exceeds the current supplier invoice balance', $e->getPrevious()->getMessage());
+        }
+
+        $this->assertSame(0, $this->db->countRows('llx_bankconnect_batch'));
+        $this->assertSame(0, $this->db->countRows('llx_bankconnect_batch_line'));
     }
 
     public function testCreateBatchRejectsAnInvoiceAlreadyReservedByAnActiveBatch(): void
@@ -103,6 +121,7 @@ class PaymentBatchServiceTest extends TestCase
         };
         $db->tables['llx_facture_fourn'] = [[
             'rowid' => 42, 'entity' => 1, 'fk_statut' => 1, 'paye' => 0,
+            'total_ttc' => 12450.0, 'multicurrency_total_ttc' => 12450.0, 'multicurrency_code' => 'DKK',
         ]];
         $svc = new PaymentBatchService($db, $this->conf, null);
 
