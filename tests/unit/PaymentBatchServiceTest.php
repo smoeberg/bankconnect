@@ -22,6 +22,9 @@ class PaymentBatchServiceTest extends TestCase
         $this->svc = new PaymentBatchService($this->db, $this->conf, null);
         $this->db->tables['llx_bankconnect_batch'] = [];
         $this->db->tables['llx_bankconnect_batch_line'] = [];
+        $this->db->tables['llx_facture_fourn'] = [[
+            'rowid' => 42, 'entity' => 1, 'fk_statut' => 1, 'paye' => 0,
+        ]];
     }
 
     private function sampleBuilder(): Pain001Builder
@@ -49,6 +52,24 @@ class PaymentBatchServiceTest extends TestCase
         $line = $this->db->fetch_object($res);
         $this->assertSame('E2E-FA240891', $line->end_to_end_id);
         $this->assertSame('draft', $line->status);
+    }
+
+    public function testCreateBatchRejectsAnInvoiceAlreadyReservedByAnActiveBatch(): void
+    {
+        $first = $this->svc->createBatch($this->sampleBuilder(), 1, 1);
+        $this->assertSame(1, $this->db->countRows('llx_bankconnect_batch'));
+
+        try {
+            $this->svc->createBatch($this->sampleBuilder(), 1, 1);
+            $this->fail('The same supplier invoice must not be reserved by two active batches');
+        } catch (BankConnectException $e) {
+            $this->assertSame('Failed to create payment batch', $e->getMessage());
+            $this->assertSame('Supplier invoice already belongs to a payment batch', $e->getPrevious()->getMessage());
+        }
+
+        $this->assertSame(1, $this->db->countRows('llx_bankconnect_batch'));
+        $this->assertSame(1, $this->db->countRows('llx_bankconnect_batch_line'));
+        $this->assertSame($first['batch_id'], $this->db->findFirst('llx_bankconnect_batch_line', 'fk_batch', $first['batch_id'])['fk_batch']);
     }
 
     public function testCreateBatchStopsBeforeInsertingWhenTransactionCannotStart(): void
@@ -80,6 +101,9 @@ class PaymentBatchServiceTest extends TestCase
                 return false;
             }
         };
+        $db->tables['llx_facture_fourn'] = [[
+            'rowid' => 42, 'entity' => 1, 'fk_statut' => 1, 'paye' => 0,
+        ]];
         $svc = new PaymentBatchService($db, $this->conf, null);
 
         try {
