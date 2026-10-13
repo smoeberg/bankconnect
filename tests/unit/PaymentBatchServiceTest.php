@@ -714,6 +714,79 @@ XML;
         $this->assertSame('unknown', $this->db->findFirst('llx_bankconnect_batch', 'rowid', $created['batch_id'])['status']);
     }
 
+    public function testResolveUnknownBatchCannotOverwriteConcurrentTerminalStatus(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->db->query("UPDATE llx_bankconnect_batch SET status = 'unknown' WHERE rowid = ".(int)$created['batch_id']);
+        $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03"><CstmrPmtStsRpt>'
+            .'<OrgnlGrpInfAndSts><OrgnlMsgId>'.$created['msg_id'].'</OrgnlMsgId><GrpSts>RJCT</GrpSts></OrgnlGrpInfAndSts>'
+            .'<OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>RJCT</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>'
+            .'</CstmrPmtStsRpt></Document>';
+
+        $db = $this->db;
+        $batchId = (int)$created['batch_id'];
+        $client = new class($this->conf, $db, $batchId, $pain002) extends BankConnectClient {
+            private MockDoliDB $db;
+            private int $batchId;
+            private string $response;
+
+            public function __construct(Conf $conf, MockDoliDB $db, int $batchId, string $response)
+            {
+                parent::__construct($conf);
+                $this->db = $db;
+                $this->batchId = $batchId;
+                $this->response = $response;
+            }
+
+            public function getStatus(string $serviceHeaderXml): string
+            {
+                // A competing reconciliation resolves the unknown batch while
+                // this request is waiting for its bank response.
+                $this->db->query("UPDATE llx_bankconnect_batch SET status = 'accepted' WHERE rowid = ".$this->batchId);
+                return $this->response;
+            }
+        };
+
+        try {
+            (new PaymentBatchService($this->db, $this->conf, $client))
+                ->resolveUnknownBatch($batchId, '<serviceHeader/>');
+            $this->fail('A stale RJCT report must not overwrite a concurrent resolution of an unknown batch');
+        } catch (BankConnectException $e) {
+            $this->assertStringContainsString('changed concurrently', $e->getMessage());
+        }
+
+        $this->assertSame('accepted', $this->db->findFirst('llx_bankconnect_batch', 'rowid', $batchId)['status']);
+        $this->assertSame('draft', $this->db->findFirst('llx_bankconnect_batch_line', 'fk_batch', $batchId)['status']);
+    }
+
+    public function testConcurrentUnknownReconciliationsPersistOnlyOneOutcome(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->db->query("UPDATE llx_bankconnect_batch SET status = 'unknown' WHERE rowid = ".(int)$created['batch_id']);
+        $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03"><CstmrPmtStsRpt>'
+            .'<OrgnlGrpInfAndSts><OrgnlMsgId>'.$created['msg_id'].'</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>'
+            .'<OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACSC</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>'
+            .'</CstmrPmtStsRpt></Document>';
+
+        // Two reconciliations read the same unknown batch. The first wins the
+        // compare-and-set; the second must fail without changing any row.
+        $first = $this->svc->resolveUnknownBatch((int)$created['batch_id'], null, $pain002);
+        $this->assertSame('accepted', $first['status']);
+
+        try {
+            $this->svc->resolveUnknownBatch((int)$created['batch_id'], null, $pain002);
+            $this->fail('A second reconciliation must not run against a batch that is no longer unknown');
+        } catch (BankConnectException $e) {
+            $this->assertStringContainsString('not in unknown status', $e->getMessage());
+        }
+
+        $this->assertSame(1, (int)$this->db->countRows('llx_bankconnect_batch'));
+        $this->assertSame('accepted', $this->db->findFirst('llx_bankconnect_batch', 'rowid', (int)$created['batch_id'])['status']);
+        $line = $this->db->findFirst('llx_bankconnect_batch_line', 'fk_batch', (int)$created['batch_id']);
+        $this->assertSame('accepted', $line['status']);
+        $this->assertSame('ACSC', $line['pain002_status']);
+    }
+
     public function testRefreshStatusRejectsGroupOnlyReportAndKeepsBatchUnchanged(): void
     {
         $created = $this->svc->createBatch($this->sampleBuilder(), 1);
