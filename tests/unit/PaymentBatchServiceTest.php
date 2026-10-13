@@ -685,4 +685,49 @@ XML;
         $this->assertSame('draft', $this->db->findFirst('llx_bankconnect_batch_line', 'fk_batch', $created['batch_id'])['status']);
     }
 
+    public function testRefreshStatusCannotOverwriteConcurrentTerminalStatus(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->db->query("UPDATE llx_bankconnect_batch SET status = 'submitted' WHERE rowid = ".(int)$created['batch_id']);
+        $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03"><CstmrPmtStsRpt>'
+            .'<OrgnlGrpInfAndSts><OrgnlMsgId>'.$created['msg_id'].'</OrgnlMsgId><GrpSts>RJCT</GrpSts></OrgnlGrpInfAndSts>'
+            .'<OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>RJCT</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>'
+            .'</CstmrPmtStsRpt></Document>';
+
+        $db = $this->db;
+        $batchId = (int)$created['batch_id'];
+        $client = new class($this->conf, $db, $batchId, $pain002) extends BankConnectClient {
+            private MockDoliDB $db;
+            private int $batchId;
+            private string $response;
+
+            public function __construct(Conf $conf, MockDoliDB $db, int $batchId, string $response)
+            {
+                parent::__construct($conf);
+                $this->db = $db;
+                $this->batchId = $batchId;
+                $this->response = $response;
+            }
+
+            public function getStatus(string $serviceHeaderXml): string
+            {
+                // Simulate a separate reconciliation completing while this
+                // request is waiting for its bank response.
+                $this->db->query("UPDATE llx_bankconnect_batch SET status = 'accepted' WHERE rowid = ".$this->batchId);
+                return $this->response;
+            }
+        };
+
+        try {
+            (new PaymentBatchService($this->db, $this->conf, $client))
+                ->refreshStatus($batchId, '<serviceHeader/>');
+            $this->fail('A stale RJCT response must not overwrite a newer terminal status');
+        } catch (BankConnectException $e) {
+            $this->assertStringContainsString('status changed concurrently', $e->getMessage());
+        }
+
+        $this->assertSame('accepted', $this->db->findFirst('llx_bankconnect_batch', 'rowid', $batchId)['status']);
+        $this->assertSame('draft', $this->db->findFirst('llx_bankconnect_batch_line', 'fk_batch', $batchId)['status']);
+    }
+
 }
