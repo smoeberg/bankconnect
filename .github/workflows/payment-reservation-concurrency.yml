@@ -1,0 +1,35 @@
+name: payment reservation concurrency integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  mysql-concurrency:
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: bankconnect-test
+          MARIADB_DATABASE: bankconnect_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: pdo_mysql
+      - name: Run real-database reservation concurrency regression
+        env:
+          BANKCONNECT_TEST_DSN: mysql:host=127.0.0.1;port=3306;dbname=bankconnect_test;charset=utf8mb4
+          BANKCONNECT_TEST_USER: root
+          BANKCONNECT_TEST_PASSWORD: bankconnect-test
+        run: php tests/integration/payment_reservation_concurrency.php
