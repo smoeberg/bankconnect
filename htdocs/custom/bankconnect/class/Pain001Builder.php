@@ -96,9 +96,27 @@ class Pain001Builder
                 throw new BankConnectException("Missing required transaction field: {$req}");
             }
         }
-        if (strlen((string) $tx['endToEndId']) > 35) {
+        $endToEndId = (string) $tx['endToEndId'];
+        if (strlen($endToEndId) > 35) {
             throw new BankConnectException('endToEndId must be <= 35 characters');
         }
+        foreach ($this->transactions as $existing) {
+            if (hash_equals((string) $existing['endToEndId'], $endToEndId)) {
+                throw new BankConnectException('endToEndId must be unique within a payment batch');
+            }
+        }
+
+        if (!is_numeric($tx['amount']) || !is_finite((float) $tx['amount']) || (float) $tx['amount'] <= 0) {
+            throw new BankConnectException('Payment amount must be a finite positive number');
+        }
+        $amountInMinorUnits = (float) $tx['amount'] * 100;
+        if (abs($amountInMinorUnits - round($amountInMinorUnits)) > 0.00001) {
+            throw new BankConnectException('Payment amount must not have more than two decimal places');
+        }
+        if (!is_string($tx['currency']) || !preg_match('/^[A-Z]{3}$/D', $tx['currency'])) {
+            throw new BankConnectException('Currency must be a three-letter uppercase ISO currency code');
+        }
+
         $this->transactions[] = $tx;
         return $this;
     }
