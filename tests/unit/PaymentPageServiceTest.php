@@ -28,6 +28,9 @@ final class PaymentPageServiceTest extends TestCase
                 return parent::query($sql);
             }
         };
+        $this->db->tables['llx_facture_fourn'] = [[
+            'rowid' => 42, 'entity' => 1, 'fk_statut' => 1, 'paye' => 0,
+        ]];
         $this->db->tables['llx_bankconnect_agreement'] = [[
             'rowid' => 7, 'entity' => 1, 'status' => 'active', 'label' => 'Test agreement',
             'bank_connect_id' => 'AGREEMENT-7', 'main_registration_number' => '12345678',

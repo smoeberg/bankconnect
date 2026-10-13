@@ -43,6 +43,7 @@ class PaymentBatchService
 
         $this->begin();
         try {
+            $this->lockAndAssertInvoiceAvailability($txs, $entity);
             $batchId = $this->insertBatch([
                 'entity' => $entity,
                 'fk_agreement' => $fkAgreement,
@@ -75,6 +76,74 @@ class PaymentBatchService
         } catch (Throwable $e) {
             $this->rollback();
             throw new BankConnectException('Failed to create payment batch', 0, $e);
+        }
+    }
+
+    /**
+     * Serialize creation attempts by locking the underlying supplier invoice rows.
+     * The lock and reservation check must live in the same transaction as batch
+     * creation; the earlier page-level check is only a user-friendly preflight.
+     *
+     * @param list<array<string,mixed>> $transactions
+     */
+    private function lockAndAssertInvoiceAvailability(array $transactions, int $entity): void
+    {
+        $invoiceIds = [];
+        foreach ($transactions as $tx) {
+            $rawId = $tx['fk_facture_fourn'] ?? null;
+            if ($rawId === null || (int)$rawId <= 0) continue;
+            $invoiceId = (int)$rawId;
+            if (isset($invoiceIds[$invoiceId])) {
+                throw new BankConnectException('A supplier invoice may only appear once in a payment batch');
+            }
+            $invoiceIds[$invoiceId] = true;
+        }
+        if (!$invoiceIds) return;
+
+        $ids = array_keys($invoiceIds);
+        sort($ids, SORT_NUMERIC);
+        $idList = implode(',', array_map('intval', $ids));
+
+        // Lock in deterministic order so overlapping multi-invoice batches do
+        // not acquire invoice locks in different orders.
+        $res = $this->prefixQuery(
+            'SELECT rowid FROM llx_facture_fourn'
+            .' WHERE rowid IN ('.$idList.') AND entity = '.(int)$entity
+            .' AND fk_statut = 1 AND paye = 0 ORDER BY rowid FOR UPDATE'
+        );
+        if ($res === false) {
+            throw new BankConnectException('Unable to reserve supplier invoices for payment');
+        }
+        $locked = [];
+        while ($row = $this->db->fetch_object($res)) {
+            $locked[(int)$row->rowid] = true;
+        }
+        if (count($locked) !== count($ids)) {
+            throw new BankConnectException('Supplier invoice is no longer payable in this entity');
+        }
+
+        // Every creator takes the invoice-row lock before checking the batch
+        // lines. A concurrent creator therefore waits here, then sees the
+        // committed reservation instead of creating a second payment batch.
+        $lines = $this->prefixQuery(
+            'SELECT rowid, fk_batch FROM llx_bankconnect_batch_line'
+            .' WHERE fk_facture_fourn IN ('.$idList.') FOR UPDATE'
+        );
+        if ($lines === false) {
+            throw new BankConnectException('Unable to check supplier invoice payment reservations');
+        }
+        while ($line = $this->db->fetch_object($lines)) {
+            $batch = $this->prefixQuery(
+                'SELECT rowid FROM llx_bankconnect_batch'
+                .' WHERE rowid = '.(int)$line->fk_batch
+                ." AND status IN ('draft','validated','prepared','submitting','unknown','submitted','pending','accepted','partial')"
+            );
+            if ($batch === false) {
+                throw new BankConnectException('Unable to verify supplier invoice payment reservation');
+            }
+            if ($this->db->fetch_object($batch)) {
+                throw new BankConnectException('Supplier invoice already belongs to a payment batch');
+            }
         }
     }
 
