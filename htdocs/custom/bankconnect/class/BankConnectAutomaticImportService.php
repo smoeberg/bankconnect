@@ -84,6 +84,28 @@ class BankConnectAutomaticImportService
 		return $result;
 	}
 
+	/**
+	 * Backoff delay before retry attempt $attempt (0-based).
+	 *
+	 * Base delay doubles each attempt and is capped at $capSeconds so a long
+	 * outage cannot push the next try past the cron interval. A half-window of
+	 * random jitter spreads concurrent processes; with base 0 the delay is 0
+	 * (used by tests to keep the retry path synchronous).
+	 */
+	public static function backoffDelaySeconds(int $attempt, int $baseSeconds, int $capSeconds): int
+	{
+		if ($baseSeconds <= 0) {
+			return 0;
+		}
+		$exponent = max(0, min($attempt, 6));
+		$delay = $baseSeconds * (1 << $exponent);
+		if ($capSeconds > 0 && $delay > $capSeconds) {
+			$delay = $capSeconds;
+		}
+		// Jitter within [delay/2, delay]; random_int keeps it uniform.
+		return random_int((int)($delay / 2), $delay);
+	}
+
 	public static function safeImportError(Throwable $error): string
 	{
 		$message = $error->getMessage();
@@ -119,6 +141,7 @@ class BankConnectAutomaticImportService
 		// get limited retries with linear backoff before failing the agreement.
 		$retriesLeft = (int) ($this->settings['transient_retries'] ?? 2);
 		$retryDelay = (int) ($this->settings['retry_delay_seconds'] ?? 5);
+		$retryCap = (int) ($this->settings['retry_backoff_cap_seconds'] ?? 60);
 		$transient = static function (\Throwable $e): bool {
 			$msg = $e->getMessage();
 			return (bool) preg_match('/(timed out|timeout|connection reset|temporar|5[0-9]{2}|502|503|504)/i', $msg);
@@ -150,8 +173,15 @@ class BankConnectAutomaticImportService
 						if ($attempt >= $retriesLeft || !$transient($e)) {
 							throw $e;
 						}
-						if ($retryDelay > 0) {
-							sleep($retryDelay);
+						// Task 25: exponential backoff with jitter. Doubling per attempt
+						// gives a struggling bank endpoint room to recover, while the
+						// random jitter prevents many Dolibarr installs hitting the same
+						// recovery moment in lockstep. The retry itself is duplicate-safe:
+						// it only re-sends reads, and the import path deduplicates on the
+						// canonical transaction hash (see BankConnectStore).
+						$delay = self::backoffDelaySeconds($attempt, $retryDelay, $retryCap);
+						if ($delay > 0) {
+							sleep($delay);
 						}
 					}
 				}
