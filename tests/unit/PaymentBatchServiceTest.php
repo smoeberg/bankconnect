@@ -447,7 +447,7 @@ XML;
                 .'<CstmrPmtStsRpt><GrpHdr><MsgId>ST3</MsgId></GrpHdr>'
                 .'<OrgnlGrpInfAndSts>'.$originalMessageId.'<GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>'
                 .'<OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId>'
-                .'<TxSts>ACCP</TxSts></TxInfAndSts></OrgnlPmtInfAndSts></CstmrPmtStsRpt></Document>';
+                .'<TxSts>ACSC</TxSts></TxInfAndSts></OrgnlPmtInfAndSts></CstmrPmtStsRpt></Document>';
 
             try {
                 $this->svc->refreshStatus($created['batch_id'], null, $pain002);
@@ -480,7 +480,7 @@ XML;
   <CstmrPmtStsRpt>
     <GrpHdr><MsgId>ST2</MsgId></GrpHdr>
     <OrgnlGrpInfAndSts><OrgnlMsgId>OTHER-MSG</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>
-    <OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>
+    <OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACSC</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>
   </CstmrPmtStsRpt>
 </Document>
 XML;
@@ -504,7 +504,7 @@ XML;
   <CstmrPmtStsRpt>
     <GrpHdr><MsgId>ST3</MsgId></GrpHdr>
     <OrgnlGrpInfAndSts><OrgnlMsgId>{$created['msg_id']}</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>
-    <OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>
+    <OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACSC</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>
   </CstmrPmtStsRpt>
 </Document>
 XML;
@@ -538,9 +538,9 @@ XML;
         $this->db->query("UPDATE llx_bankconnect_batch SET status = 'unknown' WHERE rowid = ".(int)$created['batch_id']);
 
         foreach ([
-            '<TxInfAndSts><OrgnlEndToEndId>OTHER</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts>',
-            '<TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts>'
-                .'<TxInfAndSts><OrgnlEndToEndId>OTHER</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts>',
+            '<TxInfAndSts><OrgnlEndToEndId>OTHER</OrgnlEndToEndId><TxSts>ACSC</TxSts></TxInfAndSts>',
+            '<TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACSC</TxSts></TxInfAndSts>'
+                .'<TxInfAndSts><OrgnlEndToEndId>OTHER</OrgnlEndToEndId><TxSts>ACSC</TxSts></TxInfAndSts>',
         ] as $transactions) {
             $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03">'
                 .'<CstmrPmtStsRpt><GrpHdr><MsgId>ST5</MsgId></GrpHdr>'
@@ -602,6 +602,28 @@ XML;
         $this->assertSame('rejected', $row->status);
     }
 
+    public function testPreliminaryAcceptanceRemainsPendingUntilSettlementCompletes(): void
+    {
+        $created = $this->svc->createBatch($this->sampleBuilder(), 1);
+        $this->db->query("UPDATE llx_bankconnect_batch SET status = 'submitted' WHERE rowid = ".(int)$created['batch_id']);
+
+        $preliminary = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03"><CstmrPmtStsRpt>'
+            .'<GrpHdr><MsgId>PRELIMINARY-1</MsgId></GrpHdr>'
+            .'<OrgnlGrpInfAndSts><OrgnlMsgId>'.$created['msg_id'].'</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>'
+            .'<OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>'
+            .'</CstmrPmtStsRpt></Document>';
+
+        $first = $this->svc->refreshStatus($created['batch_id'], null, $preliminary);
+        $this->assertSame('pending', $this->db->findFirst('llx_bankconnect_batch', 'rowid', $created['batch_id'])['status']);
+        $this->assertSame('pending', $first['transactions'][0]['semantic_status']);
+
+        $settled = str_replace(['PRELIMINARY-1', '<GrpSts>ACCP</GrpSts>', '<TxSts>ACCP</TxSts>'],
+            ['SETTLED-1', '<GrpSts>ACSC</GrpSts>', '<TxSts>ACSC</TxSts>'], $preliminary);
+        $second = $this->svc->refreshStatus($created['batch_id'], null, $settled);
+        $this->assertSame('accepted', $this->db->findFirst('llx_bankconnect_batch', 'rowid', $created['batch_id'])['status']);
+        $this->assertSame('accepted', $second['transactions'][0]['semantic_status']);
+    }
+
     public function testRefreshStatusUpdatesLines(): void
     {
         $created = $this->svc->createBatch($this->sampleBuilder(), 1);
@@ -611,7 +633,7 @@ XML;
 <Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03">
   <CstmrPmtStsRpt><GrpHdr><MsgId>ST1</MsgId><CreDtTm>2026-09-19T12:00:00</CreDtTm></GrpHdr>
     <OrgnlGrpInfAndSts><OrgnlMsgId>{$created['msg_id']}</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>
-    <OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>
+    <OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACSC</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>
   </CstmrPmtStsRpt>
 </Document>
 XML;
@@ -621,7 +643,7 @@ XML;
         $res = $this->db->query('SELECT status, pain002_status FROM llx_bankconnect_batch_line WHERE fk_batch = '.$created['batch_id']);
         $line = $this->db->fetch_object($res);
         $this->assertSame('accepted', $line->status);
-        $this->assertSame('ACCP', $line->pain002_status);
+        $this->assertSame('ACSC', $line->pain002_status);
     }
 
     public function testRefreshStatusRejectsDraftBeforeContactingBank(): void
@@ -642,7 +664,7 @@ XML;
         $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03">'
             .'<CstmrPmtStsRpt><OrgnlGrpInfAndSts><OrgnlMsgId>'.$created['msg_id'].'</OrgnlMsgId>'
             .'<GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>'
-            .'<OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>'
+            .'<OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACSC</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>'
             .'</CstmrPmtStsRpt></Document>';
         $client = new class($this->conf, $pain002) extends BankConnectClient {
             public string $header = '';
@@ -678,7 +700,7 @@ XML;
     {
         $created = $this->svc->createBatch($this->sampleBuilder(), 1);
         $this->db->query("UPDATE llx_bankconnect_batch SET status = 'unknown' WHERE rowid = ".(int)$created['batch_id']);
-        $tx = '<TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts>';
+        $tx = '<TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACSC</TxSts></TxInfAndSts>';
         $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03"><CstmrPmtStsRpt>'
             .'<OrgnlGrpInfAndSts><OrgnlMsgId>'.$created['msg_id'].'</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>'
             .'<OrgnlPmtInfAndSts>'.$tx.$tx.'</OrgnlPmtInfAndSts></CstmrPmtStsRpt></Document>';
@@ -716,7 +738,7 @@ XML;
         $this->db->query("UPDATE llx_bankconnect_batch SET status = 'submitted' WHERE rowid = ".(int)$created['batch_id']);
         $pain002 = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03"><CstmrPmtStsRpt>'
             .'<OrgnlGrpInfAndSts><OrgnlMsgId>'.$created['msg_id'].'</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>'
-            .'<OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACCP</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>'
+            .'<OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>ACSC</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>'
             .'</CstmrPmtStsRpt></Document>';
         $this->db->failNextQueryContaining('UPDATE llx_bankconnect_batch SET status', 'injected batch status persistence failure');
 

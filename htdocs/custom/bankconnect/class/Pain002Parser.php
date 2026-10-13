@@ -108,7 +108,10 @@ class Pain002Parser
     public static function mapToInternalStatus(string $pain002Status): string
     {
         return match (strtoupper(trim($pain002Status))) {
-            'ACCP', 'ACSC', 'ACSP', 'ACWC', 'ACTC' => self::INTERNAL_ACCEPTED,
+            'ACSC' => self::INTERNAL_ACCEPTED,
+            // ACCP/ACTC/ACWC/ACSP indicate acceptance or processing before
+            // settlement is complete; keep them non-terminal and reconcilable.
+            'ACCP', 'ACTC', 'ACWC', 'ACSP' => self::INTERNAL_PENDING,
             'PART' => self::INTERNAL_PARTIAL,
             'PDNG', 'RCVD' => self::INTERNAL_PENDING,
             'RJCT' => self::INTERNAL_REJECTED,
