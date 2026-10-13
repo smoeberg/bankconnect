@@ -57,8 +57,10 @@ class PaymentBatchServiceTest extends TestCase
 
     public function testCreateBatchRejectsAmountAboveCurrentInvoiceBalance(): void
     {
-        $this->db->tables['llx_facture_fourn'][0]['total_ttc'] = 100.0;
-        $this->db->tables['llx_facture_fourn'][0]['multicurrency_total_ttc'] = 100.0;
+        // Simulate a Dolibarr payment posted after the page computed the amount.
+        $this->db->tables['llx_paiementfourn_facturefourn'] = [[
+            'rowid' => 1, 'fk_facturefourn' => 42, 'amount' => 100.0, 'multicurrency_amount' => 100.0,
+        ]];
 
         try {
             $this->svc->createBatch($this->sampleBuilder(), 1, 1);
