@@ -131,6 +131,19 @@ class PaymentPageService
         return $this->serviceForBatch($entity, $batchId)->resolveUnknownBatch($batchId);
     }
 
+    public function recoverStaleSubmission(int $entity, int $batchId): bool
+    {
+        // Recovery is local-only; it must not depend on valid bank credentials
+        // or construct a transport client just to mark an interrupted request UNKNOWN.
+        $res = $this->db->query('SELECT rowid FROM '.$this->prefix.'bankconnect_batch'
+            .' WHERE rowid='.(int)$batchId.' AND entity='.(int)$entity);
+        if ($res === false) throw new BankConnectException('Unable to load payment batch');
+        if (!$this->db->fetch_object($res)) throw new BankConnectException('Payment batch not found in this entity');
+
+        $service = new PaymentBatchService($this->db, $this->conf, null, null, $this->prefix);
+        return $service->recoverStaleSubmission($batchId);
+    }
+
     private function serviceForBatch(int $entity, int $batchId): PaymentBatchService
     {
         $res = $this->db->query('SELECT fk_agreement FROM '.$this->prefix.'bankconnect_batch WHERE rowid='.(int)$batchId.' AND entity='.(int)$entity);

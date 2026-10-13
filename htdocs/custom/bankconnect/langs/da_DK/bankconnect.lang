@@ -97,3 +97,4 @@ BankConnectSyncFailed=BankConnect-synkronisering fejlede
 BankConnectLastSync=Sidste synkronisering
 BankConnectLastSyncFailed=Seneste synkronisering fejlede
 BankConnectNeverSynced=Endnu ikke synkroniseret
+BankConnectRecoverStaleSubmission=Gendan fastlåst afsendelse

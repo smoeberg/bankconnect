@@ -9,7 +9,7 @@ $entity = (int)$conf->entity;
 $action = GETPOST('action', 'aZ09');
 $payments = new PaymentPageService($db, $conf);
 
-if (in_array($action, ['create_batch', 'send_batch', 'refresh_status', 'resolve_unknown'], true)) {
+if (in_array($action, ['create_batch', 'send_batch', 'refresh_status', 'resolve_unknown', 'recover_stale'], true)) {
     if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST' || !checkToken()) accessforbidden();
     try {
         if ($action === 'create_batch') {
@@ -25,6 +25,11 @@ if (in_array($action, ['create_batch', 'send_batch', 'refresh_status', 'resolve_
             setEventMessages($langs->trans('BankConnectBatchSubmitted'), null);
         } elseif ($action === 'resolve_unknown') {
             $payments->resolveUnknown($entity, GETPOSTINT('batch_id'));
+            setEventMessages($langs->trans('BankConnectStatusUpdated'), null);
+        } elseif ($action === 'recover_stale') {
+            if (!$payments->recoverStaleSubmission($entity, GETPOSTINT('batch_id'))) {
+                throw new BankConnectException('Submission is not stale or has already changed');
+            }
             setEventMessages($langs->trans('BankConnectStatusUpdated'), null);
         } else {
             $payments->refresh($entity, GETPOSTINT('batch_id'));
@@ -113,6 +118,7 @@ while ($res && ($batch = $db->fetch_object($res))) {
     $batchAction = match ((string)$batch->status) {
         'draft', 'validated', 'prepared' => 'send_batch',
         'unknown' => 'resolve_unknown',
+        'submitting' => 'recover_stale',
         'submitted', 'pending', 'partial' => 'refresh_status',
         default => null,
     };
@@ -120,6 +126,7 @@ while ($res && ($batch = $db->fetch_object($res))) {
         $label = match ($batchAction) {
             'send_batch' => 'BankConnectSendBatch',
             'resolve_unknown' => 'BankConnectResolveUnknown',
+            'recover_stale' => 'BankConnectRecoverStaleSubmission',
             default => 'BankConnectRefreshStatus',
         };
         print '<form method="POST" action="'.dol_escape_htmltag($_SERVER['PHP_SELF']).'">'

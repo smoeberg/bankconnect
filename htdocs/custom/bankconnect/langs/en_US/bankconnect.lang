@@ -97,3 +97,4 @@ BankConnectSyncFailed=BankConnect sync failed
 BankConnectLastSync=Last sync
 BankConnectLastSyncFailed=Last sync failed
 BankConnectNeverSynced=Never synced yet
+BankConnectRecoverStaleSubmission=Recover interrupted submission
