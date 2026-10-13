@@ -136,7 +136,6 @@ class PaymentBatchService
             $batch = $this->prefixQuery(
                 'SELECT rowid FROM llx_bankconnect_batch'
                 .' WHERE rowid = '.(int)$line->fk_batch
-                .' AND entity = '.(int)$entity
                 ." AND status IN ('draft','validated','prepared','submitting','unknown','submitted','pending','accepted','partial')"
             );
             if ($batch === false) {
