@@ -108,6 +108,50 @@ class Pain001BuilderTest extends TestCase
         $this->baseBuilder()->addTransaction($this->sampleTx(str_repeat('Y', 36)));
     }
 
+    public function testRejectsZeroAndNegativePaymentAmounts(): void
+    {
+        foreach ([0, -0.01, -100] as $amount) {
+            try {
+                $this->baseBuilder()->addTransaction(array_merge($this->sampleTx(), ['amount' => $amount]));
+                $this->fail('Non-positive payment amounts must be rejected');
+            } catch (BankConnectException $e) {
+                $this->assertStringContainsString('finite positive', $e->getMessage());
+            }
+        }
+    }
+
+    public function testRejectsNonFiniteAndOverPrecisionAmounts(): void
+    {
+        foreach ([INF, NAN, 'not-a-number', 12.345] as $amount) {
+            try {
+                $this->baseBuilder()->addTransaction(array_merge($this->sampleTx(), ['amount' => $amount]));
+                $this->fail('Invalid payment amounts must be rejected');
+            } catch (BankConnectException $e) {
+                $this->assertStringContainsString('Payment amount', $e->getMessage());
+            }
+        }
+    }
+
+    public function testRejectsMalformedCurrencyCode(): void
+    {
+        foreach (['dkk', 'DK', 'DKKK', '1UR'] as $currency) {
+            try {
+                $this->baseBuilder()->addTransaction(array_merge($this->sampleTx(), ['currency' => $currency]));
+                $this->fail('Malformed currency codes must be rejected');
+            } catch (BankConnectException $e) {
+                $this->assertStringContainsString('Currency must', $e->getMessage());
+            }
+        }
+    }
+
+    public function testRejectsDuplicateEndToEndIds(): void
+    {
+        $builder = $this->baseBuilder()->addTransaction($this->sampleTx('DUPLICATE'));
+        $this->expectException(BankConnectException::class);
+        $this->expectExceptionMessage('endToEndId must be unique');
+        $builder->addTransaction($this->sampleTx('DUPLICATE'));
+    }
+
     public function testBuildWithoutTransactionsThrows(): void
     {
         $this->expectException(BankConnectException::class);
