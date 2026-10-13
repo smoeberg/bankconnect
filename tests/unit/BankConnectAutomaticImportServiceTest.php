@@ -466,6 +466,110 @@ class BankConnectAutomaticImportServiceTest extends TestCase
 		$this->assertSame(1, $result['imported']);
 	}
 
+	public function testRetryDoesNotDuplicateImportedTransactions(): void
+	{
+		// Task 25: a transient failure on the FIRST request must not cause the
+		// same statement to be imported twice once the retry succeeds. The
+		// retry only re-sends reads; a successful response is imported once,
+		// and a second full run after a crashed run counts duplicates instead
+		// of inserting the same rows again.
+		$agreements = new class extends AgreementStore {
+			public int $runs = 0;
+			public function __construct() {}
+			public function getAgreement(int $id): ?array
+			{
+				return ['rowid' => 1, 'entity' => 1, 'status' => 'active', 'main_registration_number' => '8079', 'bank_connect_id' => 'BC1'];
+			}
+			public function recordSyncResult(int $agreementId, string $summary, string $error = ''): void {}
+			public function advanceImportCursor(int $agreementId, string $dateTimeUtc): void
+			{
+				// Crash after import, before cursor advance — the next cron run
+				// must re-fetch the same statement and hit the dedup path.
+				$this->runs++;
+				if ($this->runs === 1) {
+					throw new RuntimeException('connection reset by peer');
+				}
+			}
+		};
+		$mappings = new class extends TransportTestMappingStore {
+			public function __construct() {}
+			public function assertUsableBankAccount(int $entity, int $bankAccountId): void {}
+			public function listMappings(int $entity): array
+			{
+				return [['fk_agreement' => 1, 'fk_bank_account' => 1004]];
+			}
+		};
+		$calls = 0;
+		$importer = new class($calls) extends ImportService {
+			public int $calls = 0;
+			public int $insertedRows = 0;
+			public function __construct(&$calls) { $this->calls = &$calls; }
+			public function import(string $xml, int $fkBankAccount = 0, string $sourceFile = 'import', $user = null): array
+			{
+				// Simulate the store: the first import inserts two rows, any
+				// re-import of the same statement inserts nothing and reports
+				// duplicates instead (canonical hash upsert).
+				$this->calls++;
+				if ($this->calls === 1) {
+					$this->insertedRows = 2;
+					return ['imported' => 2, 'duplicates' => 0, 'total' => 2];
+				}
+				return ['imported' => 0, 'duplicates' => 2, 'total' => 2];
+			}
+		};
+		$client = new class extends BankConnectClient {
+			public function __construct() {}
+			public function getCustomerStatement(string $serviceHeaderXml): string
+			{
+				return '<Envelope><content>'.base64_encode('<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"><BkToCstmrStmt/></Document>').'</content></Envelope>';
+			}
+			public function getCustomerAccountReport(string $serviceHeaderXml): string
+			{
+				return '<Envelope><content></content></Envelope>';
+			}
+			public function getDebitCreditNotification(string $serviceHeaderXml): string
+			{
+				return '<Envelope><content></content></Envelope>';
+			}
+		};
+		$clients = new class($client) extends BankConnectClientFactory {
+			private BankConnectClient $client;
+			public function __construct(BankConnectClient $client) { $this->client = $client; }
+			public function create(array $agreement): BankConnectClient { return $this->client; }
+		};
+		$service = new BankConnectAutomaticImportService($agreements, $mappings, $importer, $clients, null, ['transient_retries' => 2, 'retry_delay_seconds' => 0]);
+
+		$first = $service->run(1, (object)['id' => 1]);
+		$this->assertSame(1, $importer->calls, 'run 1 imports the statement exactly once');
+		$this->assertSame(['Agreement #1: BankConnect automatic import failed'], $first['errors'], 'cursor crash surfaces as agreement error');
+
+		$second = $service->run(1, (object)['id' => 1]);
+		$this->assertSame(2, $importer->calls, 'run 2 re-imports through the dedup path');
+		$this->assertSame(0, $second['imported'], 'run 2 imports nothing new');
+		$this->assertSame(2, $second['duplicates'], 'run 2 reports duplicates instead of double-inserting');
+		$this->assertSame(2, $importer->insertedRows, 'insert count stays at two across both runs');
+	}
+
+	public function testBackoffDelayDoublesAndCaps(): void
+	{
+		// Task 25: exponential backoff with jitter, base 5 s.
+		foreach (range(0, 49) as $i) {
+			$d0 = BankConnectAutomaticImportService::backoffDelaySeconds(0, 5, 60);
+			$d1 = BankConnectAutomaticImportService::backoffDelaySeconds(1, 5, 60);
+			$d2 = BankConnectAutomaticImportService::backoffDelaySeconds(2, 5, 60);
+			$d9 = BankConnectAutomaticImportService::backoffDelaySeconds(9, 5, 60);
+			$this->assertGreaterThanOrEqual(2, $d0, 'attempt 0 jitter lower bound');
+			$this->assertLessThanOrEqual(5, $d0, 'attempt 0 jitter upper bound');
+			$this->assertGreaterThanOrEqual(5, $d1);
+			$this->assertLessThanOrEqual(10, $d1);
+			$this->assertGreaterThanOrEqual(10, $d2);
+			$this->assertLessThanOrEqual(20, $d2);
+			$this->assertGreaterThanOrEqual(30, $d9, 'capped delay keeps jitter half-window');
+			$this->assertLessThanOrEqual(60, $d9, 'delay is capped at 60 s');
+		}
+		$this->assertSame(0, BankConnectAutomaticImportService::backoffDelaySeconds(3, 0, 60), 'base 0 keeps tests synchronous');
+	}
+
 	public function testNonTransientErrorFailsImmediatelyWithoutRetry(): void
 	{
 		$agreements = new class extends AgreementStore {
