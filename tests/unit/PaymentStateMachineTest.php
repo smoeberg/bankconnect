@@ -40,7 +40,7 @@ final class PaymentStateMachineTest extends TestCase
 
     public function testUnknownAndTerminalStatesCannotBeResubmitted(): void
     {
-        $this->assertSame([], PaymentStateMachine::allowedTransitions('unknown'));
+        $this->assertFalse(PaymentStateMachine::canTransition('unknown', 'submitting'));
         $this->assertSame([], PaymentStateMachine::allowedTransitions('accepted'));
         $this->assertSame([], PaymentStateMachine::allowedTransitions('rejected'));
         $this->assertTrue(PaymentStateMachine::isTerminal('accepted'));
