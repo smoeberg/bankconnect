@@ -13,7 +13,7 @@ class BankConnectLogger
     private $sink;
 
     private const SECRET_KEYS = [
-        'api_key', 'apikey', 'authorization', 'password', 'private_key', 'private_key_pem',
+        'api_key', 'apikey', 'authorization', 'password', 'error', 'private_key', 'private_key_pem',
         'private_key_enc', 'secret', 'token', 'certificate_pem', 'soap_credentials', 'activation_code'
     ];
 
