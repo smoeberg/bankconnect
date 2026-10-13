@@ -30,6 +30,10 @@ final class PaymentPageServiceTest extends TestCase
         };
         $this->db->tables['llx_facture_fourn'] = [[
             'rowid' => 42, 'entity' => 1, 'fk_statut' => 1, 'paye' => 0,
+            'total_ttc' => 100.0, 'multicurrency_total_ttc' => 100.0, 'multicurrency_code' => 'DKK',
+        ]];
+        $this->db->tables['llx_paiementfourn_facturefourn'] = [[
+            'rowid' => 1, 'fk_facturefourn' => 42, 'amount' => 25.0, 'multicurrency_amount' => 25.0,
         ]];
         $this->db->tables['llx_bankconnect_agreement'] = [[
             'rowid' => 7, 'entity' => 1, 'status' => 'active', 'label' => 'Test agreement',

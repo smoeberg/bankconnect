@@ -107,7 +107,7 @@ class PaymentBatchService
         // Lock in deterministic order so overlapping multi-invoice batches do
         // not acquire invoice locks in different orders.
         $res = $this->prefixQuery(
-            'SELECT rowid FROM llx_facture_fourn'
+            'SELECT rowid, total_ttc, multicurrency_total_ttc, multicurrency_code FROM llx_facture_fourn'
             .' WHERE rowid IN ('.$idList.') AND entity = '.(int)$entity
             .' AND fk_statut = 1 AND paye = 0 ORDER BY rowid FOR UPDATE'
         );
@@ -116,10 +116,51 @@ class PaymentBatchService
         }
         $locked = [];
         while ($row = $this->db->fetch_object($res)) {
-            $locked[(int)$row->rowid] = true;
+            $locked[(int)$row->rowid] = $row;
         }
         if (count($locked) !== count($ids)) {
             throw new BankConnectException('Supplier invoice is no longer payable in this entity');
+        }
+
+        // Recompute the outstanding balance after acquiring the invoice-row
+        // locks. The payment page's earlier balance is only a preflight and may
+        // be stale if a Dolibarr payment was registered in the meantime.
+        $payments = $this->prefixQuery(
+            'SELECT fk_facturefourn, amount, multicurrency_amount FROM llx_paiementfourn_facturefourn'
+            .' WHERE fk_facturefourn IN ('.$idList.')'
+        );
+        if ($payments === false) {
+            throw new BankConnectException('Unable to revalidate supplier invoice balances');
+        }
+        $paidMain = [];
+        $paidMulti = [];
+        while ($payment = $this->db->fetch_object($payments)) {
+            $invoiceId = (int)$payment->fk_facturefourn;
+            $paidMain[$invoiceId] = ($paidMain[$invoiceId] ?? 0.0) + (float)$payment->amount;
+            $paidMulti[$invoiceId] = ($paidMulti[$invoiceId] ?? 0.0) + (float)($payment->multicurrency_amount ?? 0);
+        }
+
+        $baseCurrency = strtoupper((string)($this->conf->currency ?? 'DKK'));
+        foreach ($transactions as $tx) {
+            $invoiceId = (int)($tx['fk_facture_fourn'] ?? 0);
+            if ($invoiceId <= 0) continue;
+            $invoice = $locked[$invoiceId];
+            $currency = strtoupper((string)($tx['currency'] ?? $baseCurrency));
+            $invoiceCurrency = strtoupper((string)($invoice->multicurrency_code ?? ''));
+            if ($invoiceCurrency !== '' && $currency === $invoiceCurrency) {
+                $total = (float)($invoice->multicurrency_total_ttc ?? 0);
+                $paid = $paidMulti[$invoiceId] ?? 0.0;
+            } elseif ($currency === $baseCurrency) {
+                $total = (float)($invoice->total_ttc ?? 0);
+                $paid = $paidMain[$invoiceId] ?? 0.0;
+            } else {
+                throw new BankConnectException('Payment currency does not match supplier invoice currency');
+            }
+            $remaining = round($total - $paid, 2);
+            $amount = round((float)($tx['amount'] ?? 0), 2);
+            if ($remaining <= 0 || $amount > $remaining + 0.00001) {
+                throw new BankConnectException('Payment amount exceeds the current supplier invoice balance');
+            }
         }
 
         // Every creator takes the invoice-row lock before checking the batch
