@@ -130,9 +130,18 @@ class BankConnectClient
             $this->logger->error('soap_call_failed', [
                 'operation' => $operation,
                 'duration_ms' => $duration,
-                'error' => $e->getMessage(),
+                // Exception messages from SOAP, TLS and transport layers may
+                // contain sensitive request or certificate details. Log only
+                // the exception type; never persist the raw message.
+                'error_class' => get_class($e),
             ]);
-            throw new BankConnectException('BankConnect call failed: '.$e->getMessage(), 0, $e);
+            // Keep the original exception chained for controlled internal
+            // diagnostics, but do not expose its potentially sensitive message.
+            throw new BankConnectException(
+                'BankConnect operation failed. Consult the sanitized application log.',
+                0,
+                $e
+            );
         }
     }
 
