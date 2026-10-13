@@ -38,9 +38,6 @@ trap 'rm -rf "$stage_dir"' EXIT
 
 mkdir -p "$dist_dir" "$stage_dir/bankconnect"
 cp -R "$module_dir/." "$stage_dir/bankconnect/"
-# The legacy prototype writes directly to llx_bank and is intentionally not
-# part of an installable release. It remains in the repository until the
-# standard Dolibarr Account/Paiement adapter replaces it.
 cp "$project_dir/README.md" "$stage_dir/bankconnect/README.md"
 cp "$project_dir/INSTALL.md" "$stage_dir/bankconnect/INSTALL.md"
 cp "$project_dir/RELEASE_CHECKLIST.md" "$stage_dir/bankconnect/RELEASE_CHECKLIST.md"
