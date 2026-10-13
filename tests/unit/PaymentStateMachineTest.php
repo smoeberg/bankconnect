@@ -26,6 +26,18 @@ final class PaymentStateMachineTest extends TestCase
         PaymentStateMachine::assertTransition('accepted', 'submitting');
     }
 
+    public function testVerifiedReconciliationTransitionsAreExplicitButNeverAllowResubmission(): void
+    {
+        $this->assertTrue(PaymentStateMachine::canTransition('submitted', 'unknown'));
+        $this->assertTrue(PaymentStateMachine::canTransition('pending', 'unknown'));
+        $this->assertTrue(PaymentStateMachine::canTransition('partial', 'unknown'));
+        $this->assertTrue(PaymentStateMachine::canTransition('unknown', 'accepted'));
+        $this->assertTrue(PaymentStateMachine::canTransition('unknown', 'rejected'));
+        $this->assertTrue(PaymentStateMachine::canTransition('unknown', 'pending'));
+        $this->assertFalse(PaymentStateMachine::canTransition('unknown', 'submitting'));
+        $this->assertFalse(PaymentStateMachine::canTransition('accepted', 'unknown'));
+    }
+
     public function testUnknownAndTerminalStatesCannotBeResubmitted(): void
     {
         $this->assertSame([], PaymentStateMachine::allowedTransitions('unknown'));
