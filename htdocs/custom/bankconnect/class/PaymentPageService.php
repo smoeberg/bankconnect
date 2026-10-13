@@ -85,7 +85,12 @@ class PaymentPageService
                 throw new BankConnectException('SEPA payment requires a EUR invoice');
             }
             $baseCurrency = strtoupper((string)($this->conf->currency ?? 'DKK'));
-            $multi = $currency !== $baseCurrency;
+            // Match PaymentBatchService: an explicit invoice currency selects
+            // the multicurrency total/payment columns, even when it equals the
+            // configured base currency. Both preflight and reservation must use
+            // the same balance basis.
+            $invoiceCurrency = strtoupper(trim((string)($invoice->multicurrency_code ?? '')));
+            $multi = $invoiceCurrency !== '' && $currency === $invoiceCurrency;
             $total = (float)($multi ? $invoice->multicurrency_total_ttc : $invoice->total_ttc);
             $paid = (float)($multi ? $invoice->paid_multi : $invoice->paid_main);
             $remaining = round($total - $paid, 2);
