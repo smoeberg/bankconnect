@@ -19,8 +19,8 @@ final class PaymentPageServiceTest extends TestCase
                     if (!str_contains($sql, 'f.rowid=42') || !str_contains($sql, 'f.entity=1')) return [];
                     return [[
                         'rowid' => 42, 'ref' => 'FF-42', 'total_ttc' => 100.0,
-                        'multicurrency_total_ttc' => 100.0, 'multicurrency_code' => 'DKK',
-                        'paid_main' => 25.0, 'paid_multi' => 25.0,
+                        'multicurrency_total_ttc' => 120.0, 'multicurrency_code' => 'DKK',
+                        'paid_main' => 25.0, 'paid_multi' => 30.0,
                         'nom' => 'Supplier', 'iban' => 'DK0689000000054321', 'bic' => 'SXPYDKKK',
                     ]];
                 }
@@ -30,10 +30,10 @@ final class PaymentPageServiceTest extends TestCase
         };
         $this->db->tables['llx_facture_fourn'] = [[
             'rowid' => 42, 'entity' => 1, 'fk_statut' => 1, 'paye' => 0,
-            'total_ttc' => 100.0, 'multicurrency_total_ttc' => 100.0, 'multicurrency_code' => 'DKK',
+            'total_ttc' => 100.0, 'multicurrency_total_ttc' => 120.0, 'multicurrency_code' => 'DKK',
         ]];
         $this->db->tables['llx_paiementfourn_facturefourn'] = [[
-            'rowid' => 1, 'fk_facturefourn' => 42, 'amount' => 25.0, 'multicurrency_amount' => 25.0,
+            'rowid' => 1, 'fk_facturefourn' => 42, 'amount' => 25.0, 'multicurrency_amount' => 30.0,
         ]];
         $this->db->tables['llx_bankconnect_agreement'] = [[
             'rowid' => 7, 'entity' => 1, 'status' => 'active', 'label' => 'Test agreement',
@@ -57,10 +57,10 @@ final class PaymentPageServiceTest extends TestCase
         $result = $this->payments->create(1, 7, [42], 'Test ApS', (new DateTimeImmutable('+1 day'))->format('Y-m-d'), 'dk_transfer', false);
         $batch = $this->db->findFirst('llx_bankconnect_batch', 'rowid', $result['batch_id']);
 
-        $this->assertSame(75.0, $result['control_sum']);
+        $this->assertSame(90.0, $result['control_sum']);
         $this->assertSame(7, $batch['fk_agreement']);
         $this->assertStringContainsString('<IBAN>DK5089000000012345</IBAN>', $batch['pain001_xml']);
-        $this->assertStringContainsString('75.00</InstdAmt>', $batch['pain001_xml']);
+        $this->assertStringContainsString('90.00</InstdAmt>', $batch['pain001_xml']);
     }
 
     public function testCannotCreateBatchFromAnotherEntityInvoice(): void
