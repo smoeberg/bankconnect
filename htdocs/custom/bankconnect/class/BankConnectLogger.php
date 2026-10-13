@@ -60,6 +60,10 @@ class BankConnectLogger
         $out = [];
         foreach ($context as $key => $value) {
             $normalized = strtolower((string)$key);
+            if ($normalized === 'error') {
+                $out[$key] = '[REDACTED]';
+                continue;
+            }
             foreach (self::SECRET_KEYS as $secretKey) {
                 if ($normalized === $secretKey || str_contains($normalized, $secretKey)) {
                     $out[$key] = '[REDACTED]';
