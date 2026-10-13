@@ -607,14 +607,6 @@ XML;
         $created = $this->svc->createBatch($this->sampleBuilder(), 1);
         $this->db->query("UPDATE llx_bankconnect_batch SET status = 'submitted' WHERE rowid = ".(int)$created['batch_id']);
 
-        $report = static function (string $status, string $messageId): string {
-            return '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03"><CstmrPmtStsRpt>'
-                .'<GrpHdr><MsgId>'.$messageId.'</MsgId></GrpHdr>'
-                .'<OrgnlGrpInfAndSts><OrgnlMsgId>'.$createdMsgId.'</OrgnlMsgId><GrpSts>'.$status.'</GrpSts></OrgnlGrpInfAndSts>'
-                .'<OrgnlPmtInfAndSts><TxInfAndSts><OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId><TxSts>'.$status.'</TxSts></TxInfAndSts></OrgnlPmtInfAndSts>'
-                .'</CstmrPmtStsRpt></Document>';
-        };
-        $createdMsgId = $created['msg_id'];
         $preliminary = '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03"><CstmrPmtStsRpt>'
             .'<GrpHdr><MsgId>PRELIMINARY-1</MsgId></GrpHdr>'
             .'<OrgnlGrpInfAndSts><OrgnlMsgId>'.$created['msg_id'].'</OrgnlMsgId><GrpSts>ACCP</GrpSts></OrgnlGrpInfAndSts>'
