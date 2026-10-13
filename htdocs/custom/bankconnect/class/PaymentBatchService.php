@@ -303,7 +303,7 @@ class PaymentBatchService
             $this->updateBatchStatus($batchId, $batchStatus, [
                 'date_status' => date('Y-m-d H:i:s'),
                 'message' => 'Status refreshed from verified pain.002',
-            ]);
+            ], (string)$batch['status']);
             $this->commit();
         } catch (Throwable $e) {
             $this->rollback();
@@ -394,7 +394,7 @@ class PaymentBatchService
             $this->updateBatchStatus($batchId, $batchStatus, [
                 'date_status' => date('Y-m-d H:i:s'),
                 'message' => 'Unknown submission reconciled from matching pain.002 status',
-            ]);
+            ], PaymentStateMachine::UNKNOWN);
             $this->commit();
         } catch (Throwable $e) {
             $this->rollback();
@@ -618,14 +618,34 @@ class PaymentBatchService
         }
     }
 
-    private function updateBatchStatus(int $batchId, string $status, array $extra = []): void
+    private function updateBatchStatus(int $batchId, string $status, array $extra = [], ?string $expectedStatus = null): void
     {
         $sets = ["status = '".$this->db->escape($status)."'"];
         foreach (['response_code','message','correlation_id','date_sent','date_status'] as $field) {
             if (isset($extra[$field])) $sets[] = $field." = '".$this->db->escape($extra[$field])."'";
         }
-        if (!$this->prefixQuery('UPDATE llx_bankconnect_batch SET '.implode(', ', $sets).' WHERE rowid = '.(int)$batchId)) {
+        $where = ' WHERE rowid = '.(int)$batchId;
+        if ($expectedStatus !== null) {
+            // A bank response can arrive after another reconciliation has already
+            // moved the batch forward. Compare-and-set prevents stale reports
+            // from overwriting a newer or terminal state.
+            $where .= " AND status = '".$this->db->escape($expectedStatus)."'";
+        }
+        if (!$this->prefixQuery('UPDATE llx_bankconnect_batch SET '.implode(', ', $sets).$where)) {
             throw new BankConnectException('Failed to persist payment batch status');
+        }
+
+        if ($expectedStatus !== null) {
+            if (method_exists($this->db, 'affected_rows')) {
+                if ((int)$this->db->affected_rows() !== 1) {
+                    throw new BankConnectException('Payment batch status changed concurrently; no status changes were retained');
+                }
+            } else {
+                $current = $this->fetchBatch($batchId);
+                if ((string)($current['status'] ?? '') !== $status) {
+                    throw new BankConnectException('Payment batch status changed concurrently; no status changes were retained');
+                }
+            }
         }
     }
 
