@@ -22,11 +22,11 @@ class Pain002ParserTest extends TestCase
     <OrgnlPmtInfAndSts>
       <TxInfAndSts>
         <OrgnlEndToEndId>E2E-FA240891</OrgnlEndToEndId>
-        <TxSts>ACCP</TxSts>
+        <TxSts>ACSC</TxSts>
       </TxInfAndSts>
       <TxInfAndSts>
         <OrgnlEndToEndId>E2E-FA240892</OrgnlEndToEndId>
-        <TxSts>ACCP</TxSts>
+        <TxSts>ACSC</TxSts>
       </TxInfAndSts>
     </OrgnlPmtInfAndSts>
   </CstmrPmtStsRpt>
@@ -56,7 +56,7 @@ XML;
       </TxInfAndSts>
       <TxInfAndSts>
         <OrgnlEndToEndId>E2E-OK</OrgnlEndToEndId>
-        <TxSts>ACCP</TxSts>
+        <TxSts>ACSC</TxSts>
       </TxInfAndSts>
     </OrgnlPmtInfAndSts>
   </CstmrPmtStsRpt>
@@ -73,7 +73,7 @@ XML;
         $this->assertSame('ACCP', $r['group_status']);
         $this->assertCount(2, $r['transactions']);
         $this->assertSame('E2E-FA240891', $r['transactions'][0]['end_to_end_id']);
-        $this->assertSame('ACCP', $r['transactions'][0]['status']);
+        $this->assertSame('ACSC', $r['transactions'][0]['status']);
     }
 
     public function testParseRejectedWithReason(): void
@@ -90,7 +90,7 @@ XML;
         $this->assertSame('AC01', $rej['reason_code']);
         $this->assertSame('IncorrectAccountNumber', $rej['reason_text']);
 
-        $this->assertSame('ACCP', $r['transactions'][1]['status']);
+        $this->assertSame('ACSC', $r['transactions'][1]['status']);
     }
 
     public function testEmptyThrows(): void
@@ -101,7 +101,7 @@ XML;
 
     public function testUnknownStatusRequiresManualReview(): void
     {
-        $xml = str_replace('<TxSts>ACCP</TxSts>', '<TxSts>WTF1</TxSts>', self::PAIN002_ACCP);
+        $xml = str_replace('<TxSts>ACSC</TxSts>', '<TxSts>WTF1</TxSts>', self::PAIN002_ACCP);
         $r = (new Pain002Parser())->parse($xml);
         $this->assertSame('unknown', $r['transactions'][0]['semantic_status']);
         $this->assertTrue($r['transactions'][0]['requires_manual_review']);
@@ -115,8 +115,11 @@ XML;
 
     public function testMapToInternalStatus(): void
     {
-        $this->assertSame('accepted', Pain002Parser::mapToInternalStatus('ACCP'));
-        $this->assertSame('accepted', Pain002Parser::mapToInternalStatus('ACSP'));
+        $this->assertSame('pending', Pain002Parser::mapToInternalStatus('ACCP'));
+        $this->assertSame('pending', Pain002Parser::mapToInternalStatus('ACSP'));
+        $this->assertSame('pending', Pain002Parser::mapToInternalStatus('ACTC'));
+        $this->assertSame('pending', Pain002Parser::mapToInternalStatus('ACWC'));
+        $this->assertSame('accepted', Pain002Parser::mapToInternalStatus('ACSC'));
         $this->assertSame('rejected', Pain002Parser::mapToInternalStatus('RJCT'));
         $this->assertSame('pending', Pain002Parser::mapToInternalStatus('PDNG'));
         $this->assertSame('pending', Pain002Parser::mapToInternalStatus('RCVD'));
