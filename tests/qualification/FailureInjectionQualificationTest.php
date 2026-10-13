@@ -20,6 +20,12 @@ final class FailureInjectionQualificationTest extends TestCase
         $this->conf = new Conf();
         $this->db->tables['llx_bankconnect_batch'] = [];
         $this->db->tables['llx_bankconnect_batch_line'] = [];
+        $this->db->tables['llx_facture_fourn'] = [[
+            'rowid' => 42,
+            'entity' => 1,
+            'fk_statut' => 1,
+            'paye' => 0,
+        ]];
         $this->db->tables['llx_bankconnect_agreement'] = [[
             'rowid' => 1,
             'bank_connect_id' => 'AGREEMENT-1',
