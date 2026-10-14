@@ -70,6 +70,35 @@ class DolibarrBankEntryServiceTest extends TestCase
 		);
 	}
 
+	public function testPassesCreditAndDebitAmountsWithCentsUnchangedToAccountAddline(): void
+	{
+		foreach ([1234.56, -1234.56] as $amount) {
+			$account = new class {
+				public array $arguments = [];
+				public function fetch(int $id): int { return 1; }
+				public function addline(...$arguments): int
+				{
+					$this->arguments = $arguments;
+					return 7631;
+				}
+			};
+			$service = new DolibarrBankEntryService(new stdClass(), fn() => $account);
+			$service->create([
+				'date' => '2026-09-17',
+				'amount' => $amount,
+				'text' => 'Signed amount regression',
+				'statement_id' => 'STMT-SIGNED',
+				'acctSvcrRef' => 'SIGNED-REF',
+			], 1004, (object)['id' => 42]);
+
+			$this->assertSame(
+				$amount,
+				$account->arguments[3],
+				'Account::addline must receive the CAMT amount and sign unchanged.'
+			);
+		}
+	}
+
 	public function testRejectsUnknownBankAccount(): void
 	{
 		$account = new class {
