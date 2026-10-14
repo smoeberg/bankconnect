@@ -29,6 +29,52 @@ class BankJournalHandoffServiceTest extends TestCase
 		$this->assertTrue($status['transferred']);
 	}
 
+	public function testJournalIdComesFromTheBankAccountRelationForStandardJournal(): void
+	{
+		$db = new BankJournalStatusDb();
+		(new BankJournalHandoffService($db))->status(7631, 4, 2);
+
+		$this->assertCount(4, $db->queries);
+		$this->assertStringContainsString('ba.fk_accountancy_journal', $db->queries[0]);
+		$this->assertStringContainsString('JOIN llx_bank_account ba', $db->queries[0]);
+		$this->assertStringContainsString('ba.entity=2', $db->queries[0]);
+	}
+
+	public function testTransferLifecycleFlipsFromReadyToTransferred(): void
+	{
+		$service = new BankJournalHandoffService(new BankJournalStatusDb());
+		$this->assertFalse($service->status(7631, 4, 2)['transferred']);
+
+		$db = new BankJournalStatusDb();
+		$db->bookkeeping = [['rowid' => 55]];
+		$status = (new BankJournalHandoffService($db))->status(7631, 4, 2);
+
+		$this->assertTrue($status['transferred']);
+		$this->assertSame(3, $status['journal_id']);
+		$this->assertSame(901, $status['payment_id']);
+	}
+
+	public function testMissingBankEntryReportsMissingState(): void
+	{
+		$db = new BankJournalStatusDb();
+		$db->bank = [];
+		$status = (new BankJournalHandoffService($db))->status(7631, 4, 2);
+
+		$this->assertSame('missing_bank_entry', $status['state']);
+		$this->assertFalse($status['transferred']);
+		$this->assertCount(1, $db->queries);
+	}
+
+	public function testMissingPaymentLinkStopsBeforeBookkeepingQuery(): void
+	{
+		$db = new BankJournalStatusDb();
+		$db->links = [];
+		$status = (new BankJournalHandoffService($db))->status(7631, 4, 2);
+
+		$this->assertSame('missing_payment_link', $status['state']);
+		$this->assertCount(2, $db->queries);
+	}
+
 	public function testMissingJournalStopsBeforePaymentAndBookkeepingQueries(): void
 	{
 		$db = new BankJournalStatusDb();
