@@ -8,17 +8,21 @@
  * algorithms, duplicate IDs, invalid reference digests or bad signatures.
  */
 require_once __DIR__.'/BankConnectException.php';
+require_once __DIR__.'/BankConnectSecretStore.php';
 
 class BankConnectResponseSecurity
 {
     public const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
     private Conf $conf;
+    private BankConnectSecretStore $secretStore;
+    private ?string $customerPrivateKeyPem = null;
     private int $maxResponseBytes;
 
     public function __construct(Conf $conf, int $maxResponseBytes = self::DEFAULT_MAX_RESPONSE_BYTES)
     {
         $this->conf = $conf;
+        $this->secretStore = new BankConnectSecretStore($conf);
         if ($maxResponseBytes < 1024) {
             throw new BankConnectException('BankConnect response size limit is too small');
         }
@@ -454,16 +458,27 @@ class BankConnectResponseSecurity
         }
     }
 
+    /**
+     * Inject customer private key material explicitly when required.
+     * The injected PEM takes precedence over the environment secret.
+     */
+    public function setCustomerPrivateKey(string $pem): self
+    {
+        $this->customerPrivateKeyPem = $pem;
+        return $this;
+    }
+
     private function configuredCustomerPrivateKey(): string
     {
-        $key = $this->conf->global['BANKCONNECT_CUSTOMER_PRIVATE_KEY'] ?? null;
-        if (!is_string($key) || trim($key) === '') {
-            throw new BankConnectException('Customer private key is not configured for BankConnect response decryption');
+        if ($this->customerPrivateKeyPem === null || trim($this->customerPrivateKeyPem) === '') {
+            $this->customerPrivateKeyPem = $this->secretStore->get('BANKCONNECT_CUSTOMER_PRIVATE_KEY');
         }
-        if (openssl_pkey_get_private($key) === false) {
+
+        if (openssl_pkey_get_private($this->customerPrivateKeyPem) === false) {
             throw new BankConnectException('Invalid customer private key for BankConnect response decryption');
         }
-        return $key;
+
+        return $this->customerPrivateKeyPem;
     }
 
     private function loadDocument(string $responseXml): DOMDocument
