@@ -40,13 +40,34 @@ class DolibarrBankEntryServiceTest extends TestCase
 
 		$this->assertSame(7631, $id);
 		$this->assertSame(1004, $account->id);
+		$this->assertSame(
+			gmmktime(12, 0, 0, 9, 17, 2026),
+			$account->arguments[0],
+			'The bank entry must use the CAMT transaction date.'
+		);
 		$this->assertSame('VIR', $account->arguments[1]);
 		$this->assertSame('Customer payment', $account->arguments[2]);
 		$this->assertSame(550.0, $account->arguments[3]);
 		$this->assertSame('BANK-REF-1', $account->arguments[4]);
 		$this->assertSame($user, $account->arguments[6]);
 		$this->assertSame('TechCorp Retail', $account->arguments[7]);
+		$this->assertSame(
+			gmmktime(12, 0, 0, 9, 17, 2026),
+			$account->arguments[10],
+			'The value date must follow the configured transaction-date behavior.'
+		);
 		$this->assertSame('STMT-17', $account->arguments[11]);
+		$this->assertSame(
+			'BANKCONNECT:'.hash('sha256', implode('|', [
+				'STMT-17',
+				'',
+				'2026-09-17',
+				550.0,
+				'BANK-REF-1',
+			])),
+			$account->arguments[13],
+			'The private idempotency marker must be passed to Dolibarr.'
+		);
 	}
 
 	public function testRejectsUnknownBankAccount(): void
