@@ -24,6 +24,8 @@ final class BankConnectResponseSecurityTest extends TestCase
             $this->markTestSkipped('ext-dom is required');
         }
         [$this->private, $this->cert] = $this->certificate();
+        // The private key is environment-only now; provide the test key via env.
+        putenv('BANKCONNECT_CUSTOMER_PRIVATE_KEY='.$this->private);
     }
 
     private function certificate(): array
@@ -420,8 +422,36 @@ final class BankConnectResponseSecurityTest extends TestCase
         $otherPrivate = '';
         $this->assertTrue(openssl_pkey_export($otherKey, $otherPrivate));
         $conf->global['BANKCONNECT_CUSTOMER_PRIVATE_KEY'] = $otherPrivate;
+        putenv('BANKCONNECT_CUSTOMER_PRIVATE_KEY='.$otherPrivate);
         $this->expectException(BankConnectException::class);
         (new BankConnectResponseSecurity($conf))->decrypt($verified, 'getStatusResponse');
+    }
+
+    public function testCustomerPrivateKeyInDolibarrGlobalConfigurationIsRejected(): void
+    {
+        $verified = $this->security()->verify($this->encryptedResponse());
+
+        $conf = new Conf();
+        $conf->global['BANKCONNECT_BANK_CERTIFICATE'] = $this->cert;
+        $conf->global['BANKCONNECT_CUSTOMER_PRIVATE_KEY'] = $this->private;
+
+        $environmentValue = getenv('BANKCONNECT_CUSTOMER_PRIVATE_KEY');
+        putenv('BANKCONNECT_CUSTOMER_PRIVATE_KEY');
+
+        try {
+            try {
+                (new BankConnectResponseSecurity($conf))->decrypt($verified, 'getStatusResponse');
+                $this->fail('Expected BankConnectException when the private key is only in Dolibarr global configuration');
+            } catch (BankConnectException $e) {
+                $this->assertStringContainsString('BANKCONNECT_CUSTOMER_PRIVATE_KEY is not configured', $e->getMessage());
+            }
+        } finally {
+            if ($environmentValue === false) {
+                putenv('BANKCONNECT_CUSTOMER_PRIVATE_KEY');
+            } else {
+                putenv('BANKCONNECT_CUSTOMER_PRIVATE_KEY='.$environmentValue);
+            }
+        }
     }
 
     public function testTamperedBodyFailsClosed(): void
