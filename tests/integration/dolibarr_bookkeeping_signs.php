@@ -81,8 +81,17 @@ try {
     bcAssert($account->fetch($bankAccountId) > 0, "Test bank account {$bankAccountId} was not found.");
     bcAssert(!empty($account->fk_accountancy_journal), 'Test bank account must have an accounting journal assigned.');
 
+    $journalRows = bcQueryRows(
+        $db,
+        'SELECT code, label FROM '.$prefix.'accounting_journal WHERE rowid='.(int) $account->fk_accountancy_journal.' LIMIT 1'
+    );
+    bcAssert(count($journalRows) === 1, 'The assigned Dolibarr accounting journal was not found.');
+    $journalCode = (string) $journalRows[0]->code;
+    $journalLabel = (string) $journalRows[0]->label;
+    bcAssert($journalCode !== '', 'The assigned Dolibarr accounting journal has no code.');
+
     $amounts = [1234.56, -1234.56];
-    $date = dol_mktime(12, 0, 0, (int) dol_print_date(dol_now(), '%m'), (int) dol_print_date(dol_now(), '%d'), (int) dol_print_date(dol_now(), '%Y'));
+    $date = dol_now();
     $dateText = dol_print_date($date, '%Y-%m-%d');
     $runToken = 'BCIT-'.strtoupper(bin2hex(random_bytes(6)));
     $bankService = new DolibarrBankEntryService($db);
@@ -126,8 +135,8 @@ try {
                 'BankConnect integration test',
                 $line['label'],
                 $line['amount'],
-                (string) $account->fk_accountancy_journal,
-                'BankConnect integration test',
+                $journalCode,
+                $journalLabel,
                 ''
             );
             if ($result < 0) {
@@ -179,7 +188,6 @@ try {
     echo "PASS: {$checks} assertions against Dolibarr's live database.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, 'FAIL: '.$e->getMessage()."\n");
-    exitCode:
     $exitCode = 1;
 } finally {
     // Cleanup is restricted to IDs created during this run.
