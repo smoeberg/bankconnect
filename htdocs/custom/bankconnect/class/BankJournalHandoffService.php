@@ -16,7 +16,7 @@ class BankJournalHandoffService
 	public function status(int $bankEntryId, int $bankAccountId, int $entity): array
 	{
 		$result = ['state' => 'missing_bank_entry', 'journal_id' => 0, 'payment_type' => '', 'payment_id' => 0, 'transferred' => false];
-		$sql = 'SELECT b.rowid, ba.fk_accountancy_journal FROM '.$this->prefix.'bank b'
+		$sql = 'SELECT b.rowid, b.amount, b.amount_main_currency, ba.fk_accountancy_journal FROM '.$this->prefix.'bank b'
 			.' JOIN '.$this->prefix.'bank_account ba ON ba.rowid=b.fk_account'
 			.' WHERE b.rowid='.(int)$bankEntryId.' AND b.fk_account='.(int)$bankAccountId.' AND ba.entity='.(int)$entity.' LIMIT 1';
 		$res = $this->db->query($sql);
@@ -50,10 +50,26 @@ class BankJournalHandoffService
 			return $result;
 		}
 
-		$bookRes = $this->db->query('SELECT rowid FROM '.$this->prefix."accounting_bookkeeping WHERE doc_type='bank' AND fk_doc=".(int)$bankEntryId.' LIMIT 1');
-		if ($bookRes && $this->db->fetch_object($bookRes)) {
-			$result['state'] = 'transferred';
-			$result['transferred'] = true;
+		$bookSql = 'SELECT COUNT(rowid) AS line_count, COALESCE(SUM(debit), 0) AS debit_total, COALESCE(SUM(credit), 0) AS credit_total'
+			.' FROM '.$this->prefix."accounting_bookkeeping WHERE doc_type='bank' AND fk_doc=".(int)$bankEntryId;
+		$bookRes = $this->db->query($bookSql);
+		$bookkeeping = $bookRes ? $this->db->fetch_object($bookRes) : false;
+		if ($bookkeeping && (int)$bookkeeping->line_count > 0) {
+			// The standard Dolibarr transfer posts a balanced bank-side and counterparty-side entry.
+			// A partial/incorrect posting must not be presented as transferred just because a row exists.
+			$debit = (float)$bookkeeping->debit_total;
+			$credit = (float)$bookkeeping->credit_total;
+			$amount = !empty($bank->amount_main_currency) ? (float)$bank->amount_main_currency : (float)$bank->amount;
+			$expected = abs($amount);
+			$tolerance = 0.00001;
+			$balanced = abs($debit - $credit) <= $tolerance;
+			$matchesBankAmount = abs($debit - $expected) <= $tolerance && abs($credit - $expected) <= $tolerance;
+			if ((int)$bookkeeping->line_count >= 2 && $debit > $tolerance && $credit > $tolerance && $balanced && $matchesBankAmount) {
+				$result['state'] = 'transferred';
+				$result['transferred'] = true;
+				return $result;
+			}
+			$result['state'] = 'incomplete_accounting';
 			return $result;
 		}
 		$result['state'] = 'ready';
