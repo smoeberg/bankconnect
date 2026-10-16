@@ -128,7 +128,7 @@ class BankJournalHandoffServiceTest extends TestCase
 
 class BankJournalStatusDb
 {
-	public array $bank = [['rowid' => 7631, 'amount' => '100.00', 'amount_main_currency' => '0.00', 'fk_accountancy_journal' => 3]];
+	public array $bank = [['rowid' => 7631, 'amount' => '100.00', 'amount_main_currency' => null, 'fk_accountancy_journal' => 3]];
 	public array $links = [['type' => 'payment', 'url_id' => 901]];
 	public array $payment = [['rowid' => 901]];
 	public array $bookkeeping = [];
