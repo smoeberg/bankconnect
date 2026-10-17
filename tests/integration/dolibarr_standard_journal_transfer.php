@@ -69,16 +69,20 @@ try {
 
     $bank = bcStandardTransferOneRow(
         $db,
-        'SELECT rowid, fk_account, amount, amount_main_currency, entity FROM '.$prefix.'bank'
-        .' WHERE rowid='.(int) $bankEntryId.' AND fk_account='.(int) $bankAccountId.' LIMIT 1'
+        'SELECT b.rowid, b.fk_account, b.amount, b.amount_main_currency, ba.entity AS account_entity FROM '.$prefix.'bank b'
+        .' JOIN '.$prefix.'bank_account ba ON ba.rowid=b.fk_account'
+        .' WHERE b.rowid='.(int) $bankEntryId.' AND b.fk_account='.(int) $bankAccountId
+        .' AND ba.entity='.(int) $conf->entity.' LIMIT 1'
     );
     bcStandardTransferAssert((int) $bank->fk_account === $bankAccountId, 'Bank entry belongs to a different bank account.');
+    bcStandardTransferAssert((int) $bank->account_entity === (int) $conf->entity, 'Bank account belongs to a different Dolibarr entity.');
 
     $ledger = bcStandardTransferOneRow(
         $db,
         "SELECT COUNT(rowid) AS line_count, COALESCE(SUM(debit), 0) AS debit_total,"
         ." COALESCE(SUM(credit), 0) AS credit_total"
-        ." FROM ".$prefix."accounting_bookkeeping WHERE doc_type='bank' AND fk_doc=".(int) $bankEntryId
+        ." FROM ".$prefix."accounting_bookkeeping WHERE entity=".(int) $conf->entity
+        ." AND doc_type='bank' AND fk_doc=".(int) $bankEntryId
     );
     $lineCount = (int) $ledger->line_count;
     $debit = (float) $ledger->debit_total;
