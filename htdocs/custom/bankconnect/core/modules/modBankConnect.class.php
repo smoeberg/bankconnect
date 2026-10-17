@@ -97,8 +97,7 @@ class modBankConnect extends DolibarrModules
 
 		$this->menu = array();
 		$this->menu[0] = array(
-			'fk_mainmenu' => 'bank',
-			'fk_leftmenu' => '',
+			'fk_menu' => 'fk_mainmenu=bank',
 			'type' => 'left',
 			'titre' => 'BankConnectReconcile',
 			'mainmenu' => 'bank',
@@ -112,8 +111,7 @@ class modBankConnect extends DolibarrModules
 			'user' => 0,
 		);
 		$this->menu[1] = array(
-			'fk_mainmenu' => 'bank',
-			'fk_leftmenu' => '',
+			'fk_menu' => 'fk_mainmenu=bank',
 			'type' => 'left',
 			'titre' => 'BankConnectPayments',
 			'mainmenu' => 'bank',

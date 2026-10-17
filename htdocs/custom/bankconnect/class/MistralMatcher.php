@@ -58,13 +58,10 @@ class MistralMatcher
 
     private function apiKey(): string
     {
-        // Production secret boundary: prefer the process environment; fall
-        // back to legacy configuration for backwards compatibility only.
+        // Secret boundary: the API key must come only from the process
+        // environment. Dolibarr global configuration is not a secret store.
         $env = getenv('BANKCONNECT_MISTRAL_API_KEY');
-        if ($env !== false && trim((string)$env) !== '') {
-            return trim((string)$env);
-        }
-        return (string) ($this->conf->global['BANKCONNECT_MISTRAL_API_KEY'] ?? '');
+        return $env !== false ? trim((string) $env) : '';
     }
 
     private function model(): string
