@@ -239,17 +239,30 @@ class MistralMatcherTest extends TestCase
     /** 7. testConnection */
     public function testConnectionSuccessAndFailure(): void
     {
-        $ok = new MistralMatcher(bcMatcherConf());
-        $ok->setTransport(fn () => ['status' => 200, 'body' => bcApiBody(['match_type' => 'none', 'confidence' => 0.0, 'suggested' => []])]);
-        $res = $ok->testConnection();
-        $this->assertTrue($res['success']);
-        $this->assertGreaterThanOrEqual(0, $res['latency_ms']);
+        // API credentials now come only from the process environment.
+        // Keep this transport-injected test deterministic without a real secret.
+        $previousKey = getenv('BANKCONNECT_MISTRAL_API_KEY');
+        putenv('BANKCONNECT_MISTRAL_API_KEY=test-only-key');
 
-        $fail = new MistralMatcher(bcMatcherConf());
-        $fail->setTransport(fn () => ['status' => 401, 'body' => '{"error":"unauthorized"}']);
-        $res2 = $fail->testConnection();
-        $this->assertFalse($res2['success']);
-        $this->assertStringContainsString('401', $res2['message']);
+        try {
+            $ok = new MistralMatcher(bcMatcherConf());
+            $ok->setTransport(fn () => ['status' => 200, 'body' => bcApiBody(['match_type' => 'none', 'confidence' => 0.0, 'suggested' => []])]);
+            $res = $ok->testConnection();
+            $this->assertTrue($res['success']);
+            $this->assertGreaterThanOrEqual(0, $res['latency_ms']);
+
+            $fail = new MistralMatcher(bcMatcherConf());
+            $fail->setTransport(fn () => ['status' => 401, 'body' => '{"error":"unauthorized"}']);
+            $res2 = $fail->testConnection();
+            $this->assertFalse($res2['success']);
+            $this->assertStringContainsString('401', $res2['message']);
+        } finally {
+            if ($previousKey === false) {
+                putenv('BANKCONNECT_MISTRAL_API_KEY');
+            } else {
+                putenv('BANKCONNECT_MISTRAL_API_KEY='.$previousKey);
+            }
+        }
     }
 
     /** 12. Batch: multiple-svar med to kandidater */
