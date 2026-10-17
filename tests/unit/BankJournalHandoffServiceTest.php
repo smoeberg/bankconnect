@@ -16,7 +16,8 @@ class BankJournalHandoffServiceTest extends TestCase
 		$this->assertSame('payment', $status['payment_type']);
 		$this->assertSame(901, $status['payment_id']);
 		$this->assertFalse($status['transferred']);
-		$this->assertStringContainsString("doc_type='bank' AND fk_doc=7631", implode("\n", $db->queries));
+		$bookkeepingSql = implode("\n", $db->queries);
+		$this->assertStringContainsString("entity=2 AND doc_type='bank' AND fk_doc=7631", $bookkeepingSql);
 	}
 
 	public function testDetectsCompleteBalancedStandardAccountingTransfer(): void
