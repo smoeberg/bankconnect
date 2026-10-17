@@ -19,14 +19,59 @@ class BankJournalHandoffServiceTest extends TestCase
 		$this->assertStringContainsString("doc_type='bank' AND fk_doc=7631", implode("\n", $db->queries));
 	}
 
-	public function testDetectsStandardAccountingTransfer(): void
+	public function testDetectsCompleteBalancedStandardAccountingTransfer(): void
 	{
 		$db = new BankJournalStatusDb();
-		$db->bookkeeping = [['rowid' => 55]];
+		$db->bookkeeping = [['line_count' => 2, 'debit_total' => '100.00', 'credit_total' => '100.00']];
 		$status = (new BankJournalHandoffService($db))->status(7631, 4, 2);
 
 		$this->assertSame('transferred', $status['state']);
 		$this->assertTrue($status['transferred']);
+	}
+
+	public function testOneBookkeepingLineIsNotEnoughToDeclareTransfer(): void
+	{
+		$db = new BankJournalStatusDb();
+		$db->bookkeeping = [['line_count' => 1, 'debit_total' => '100.00', 'credit_total' => '0.00']];
+		$status = (new BankJournalHandoffService($db))->status(7631, 4, 2);
+
+		$this->assertSame('incomplete_accounting', $status['state']);
+		$this->assertFalse($status['transferred']);
+	}
+
+	public function testUnbalancedBookkeepingIsNotDeclaredTransferred(): void
+	{
+		$db = new BankJournalStatusDb();
+		$db->bookkeeping = [['line_count' => 2, 'debit_total' => '100.00', 'credit_total' => '90.00']];
+		$status = (new BankJournalHandoffService($db))->status(7631, 4, 2);
+
+		$this->assertSame('incomplete_accounting', $status['state']);
+		$this->assertFalse($status['transferred']);
+	}
+
+	public function testBalancedBookkeepingMustMatchBankAmount(): void
+	{
+		$db = new BankJournalStatusDb();
+		$db->bookkeeping = [['line_count' => 2, 'debit_total' => '50.00', 'credit_total' => '50.00']];
+		$status = (new BankJournalHandoffService($db))->status(7631, 4, 2);
+
+		$this->assertSame('incomplete_accounting', $status['state']);
+		$this->assertFalse($status['transferred']);
+	}
+
+	public function testTransferLifecycleFlipsFromReadyToTransferred(): void
+	{
+		$db = new BankJournalStatusDb();
+		$service = new BankJournalHandoffService($db);
+		$this->assertSame('ready', $service->status(7631, 4, 2)['state']);
+
+		$db = new BankJournalStatusDb();
+		$db->bookkeeping = [['line_count' => 2, 'debit_total' => '100.00', 'credit_total' => '100.00']];
+		$status = (new BankJournalHandoffService($db))->status(7631, 4, 2);
+
+		$this->assertTrue($status['transferred']);
+		$this->assertSame(3, $status['journal_id']);
+		$this->assertSame(901, $status['payment_id']);
 	}
 
 	public function testJournalIdComesFromTheBankAccountRelationForStandardJournal(): void
@@ -38,20 +83,6 @@ class BankJournalHandoffServiceTest extends TestCase
 		$this->assertStringContainsString('ba.fk_accountancy_journal', $db->queries[0]);
 		$this->assertStringContainsString('JOIN llx_bank_account ba', $db->queries[0]);
 		$this->assertStringContainsString('ba.entity=2', $db->queries[0]);
-	}
-
-	public function testTransferLifecycleFlipsFromReadyToTransferred(): void
-	{
-		$service = new BankJournalHandoffService(new BankJournalStatusDb());
-		$this->assertFalse($service->status(7631, 4, 2)['transferred']);
-
-		$db = new BankJournalStatusDb();
-		$db->bookkeeping = [['rowid' => 55]];
-		$status = (new BankJournalHandoffService($db))->status(7631, 4, 2);
-
-		$this->assertTrue($status['transferred']);
-		$this->assertSame(3, $status['journal_id']);
-		$this->assertSame(901, $status['payment_id']);
 	}
 
 	public function testMissingBankEntryReportsMissingState(): void
@@ -97,7 +128,7 @@ class BankJournalHandoffServiceTest extends TestCase
 
 class BankJournalStatusDb
 {
-	public array $bank = [['rowid' => 7631, 'fk_accountancy_journal' => 3]];
+	public array $bank = [['rowid' => 7631, 'amount' => '100.00', 'amount_main_currency' => null, 'fk_accountancy_journal' => 3]];
 	public array $links = [['type' => 'payment', 'url_id' => 901]];
 	public array $payment = [['rowid' => 901]];
 	public array $bookkeeping = [];
