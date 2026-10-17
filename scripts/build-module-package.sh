@@ -36,21 +36,21 @@ dist_dir="$project_dir/dist"
 stage_dir="$(mktemp -d "$project_dir/.bankconnect-build.XXXXXX")"
 trap 'rm -rf "$stage_dir"' EXIT
 
-mkdir -p "$dist_dir" "$stage_dir/bankconnect"
-cp -R "$module_dir/." "$stage_dir/bankconnect/"
-cp "$project_dir/README.md" "$stage_dir/bankconnect/README.md"
-cp "$project_dir/INSTALL.md" "$stage_dir/bankconnect/INSTALL.md"
-cp "$project_dir/RELEASE_CHECKLIST.md" "$stage_dir/bankconnect/RELEASE_CHECKLIST.md"
-cp "$project_dir/CHANGELOG.md" "$stage_dir/bankconnect/CHANGELOG.md"
+mkdir -p "$dist_dir" "$stage_dir/htdocs/bankconnect"
+cp -R "$module_dir/." "$stage_dir/htdocs/bankconnect/"
+cp "$project_dir/README.md" "$stage_dir/htdocs/bankconnect/README.md"
+cp "$project_dir/INSTALL.md" "$stage_dir/htdocs/bankconnect/INSTALL.md"
+cp "$project_dir/RELEASE_CHECKLIST.md" "$stage_dir/htdocs/bankconnect/RELEASE_CHECKLIST.md"
+cp "$project_dir/CHANGELOG.md" "$stage_dir/htdocs/bankconnect/CHANGELOG.md"
 
 package="$dist_dir/module_bankconnect-${version}.zip"
 rm -f "$package"
 (
 	cd "$stage_dir"
 	if [[ "$use_python_zip" == 1 ]]; then
-		python3 -c 'import sys,zipfile,pathlib; zf=zipfile.ZipFile(sys.argv[1],"w",zipfile.ZIP_DEFLATED); pkg=pathlib.Path("bankconnect"); [zf.write(f,arcname=str(f)) for f in sorted(pkg.rglob("*")) if f.is_file()]; zf.close()' "$package"
+		python3 -c 'import sys,zipfile,pathlib; zf=zipfile.ZipFile(sys.argv[1],"w",zipfile.ZIP_DEFLATED); pkg=pathlib.Path("htdocs/bankconnect"); [zf.write(f,arcname=str(f)) for f in sorted(pkg.rglob("*")) if f.is_file()]; zf.close()' "$package"
 	else
-		zip -qr "$package" bankconnect
+		zip -qr "$package" htdocs
 	fi
 )
 
