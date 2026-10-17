@@ -42,3 +42,10 @@ jobs:
           unzip -Z1 "$package" | grep -Fx 'htdocs/bankconnect/core/modules/modBankConnect.class.php'
           unzip -Z1 "$package" | grep -Fx 'htdocs/bankconnect/class/PaymentPageService.php'
           unzip -Z1 "$package" | grep -Fx 'htdocs/bankconnect/pages/payments.php'
+      - name: Publish installable module ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: bankconnect-dolibarr-module
+          path: dist/module_bankconnect-*.zip
+          if-no-files-found: error
+          retention-days: 14
