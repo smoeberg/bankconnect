@@ -51,7 +51,7 @@ class BankJournalHandoffService
 		}
 
 		$bookSql = 'SELECT COUNT(rowid) AS line_count, COALESCE(SUM(debit), 0) AS debit_total, COALESCE(SUM(credit), 0) AS credit_total'
-			.' FROM '.$this->prefix."accounting_bookkeeping WHERE doc_type='bank' AND fk_doc=".(int)$bankEntryId;
+			.' FROM '.$this->prefix.'accounting_bookkeeping WHERE entity='.(int)$entity." AND doc_type='bank' AND fk_doc=".(int)$bankEntryId;
 		$bookRes = $this->db->query($bookSql);
 		$bookkeeping = $bookRes ? $this->db->fetch_object($bookRes) : false;
 		if ($bookkeeping && (int)$bookkeeping->line_count > 0) {
