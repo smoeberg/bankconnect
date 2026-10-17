@@ -39,6 +39,6 @@ jobs:
           bash scripts/build-module-package.sh
           package=$(find dist -maxdepth 1 -name 'module_bankconnect-*.zip' -print -quit)
           test -n "$package"
-          unzip -Z1 "$package" | grep -Fx 'bankconnect/core/modules/modBankConnect.class.php'
-          unzip -Z1 "$package" | grep -Fx 'bankconnect/class/PaymentPageService.php'
-          unzip -Z1 "$package" | grep -Fx 'bankconnect/pages/payments.php'
+          unzip -Z1 "$package" | grep -Fx 'htdocs/bankconnect/core/modules/modBankConnect.class.php'
+          unzip -Z1 "$package" | grep -Fx 'htdocs/bankconnect/class/PaymentPageService.php'
+          unzip -Z1 "$package" | grep -Fx 'htdocs/bankconnect/pages/payments.php'
