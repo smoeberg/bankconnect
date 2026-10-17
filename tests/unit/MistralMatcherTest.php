@@ -352,7 +352,7 @@ class MistralMatcherTest extends TestCase
     public function testMissingKeyNeverCallsApi(): void
     {
         $called = false;
-        $conf = bcMatcherConf(['BANKCONNECT_AI_ENABLED' => 1, 'BANKCONNECT_MISTRAL_API_KEY' => '', 'BANKCONNECT_MISTRAL_ENDPOINT' => 'https://api.mistral.ai/v1/chat/completions']);
+        $conf = bcMatcherConf(['BANKCONNECT_AI_ENABLED' => 1, 'BANKCONNECT_MISTRAL_API_KEY' => 'legacy-conf-key', 'BANKCONNECT_MISTRAL_ENDPOINT' => 'https://api.mistral.ai/v1/chat/completions']);
         $matcher = new MistralMatcher($conf);
         $matcher->setTransport(function () use (&$called) {
             $called = true;
